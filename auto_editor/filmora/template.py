@@ -58,12 +58,23 @@ def _read_bundle(path: str) -> dict:
         if n.endswith("functionExtraData.json"):
             function_extra = inner.read(n).decode("utf-8")
 
+    # Small binary blobs Filmora writes into every project; carried verbatim.
+    import base64 as _b64
+    binaries = {}
+    tl_guid = project_info.get("timeline_mediaId", "")
+    for n in names:
+        if tl_guid and n.endswith(f"{tl_guid}/thumbnail.png"):
+            binaries["tl_thumbnail_png"] = _b64.b64encode(inner.read(n)).decode()
+        elif n.endswith("Anon/Cover/thumb.fsthumb"):
+            binaries["cover_fsthumb"] = _b64.b64encode(inner.read(n)).decode()
+
     return {
         "wesproj": wesproj,
         "project_info": project_info,
         "extra_json": extra_json,
         "media_jsons": media_jsons,
         "function_extra": function_extra,
+        "binaries": binaries,
     }
 
 
@@ -105,6 +116,10 @@ class Template:
     @property
     def function_extra(self):
         return self.raw["function_extra"]
+
+    @property
+    def binaries(self):
+        return self.raw.get("binaries", {})
 
 
 def _anim_name(clip: dict) -> str | None:

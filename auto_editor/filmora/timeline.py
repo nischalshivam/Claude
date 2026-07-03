@@ -74,6 +74,8 @@ class MediaEntry:
     source_uuid: str
     info: MediaInfo
     name: str  # basename without extension
+    md5: str = ""
+    original_path: str = ""  # path written into the project JSONs (Windows form)
 
     @property
     def basename(self) -> str:
@@ -84,9 +86,21 @@ class MediaEntry:
         return f"%DOCUMENT_DIR%/Medias/{self.guid}/{self.basename}"
 
 
+def _file_md5(path: str) -> str:
+    import hashlib
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class Registry:
-    def __init__(self):
+    def __init__(self, path_map: dict | None = None):
         self.by_path: dict[str, MediaEntry] = {}
+        # optional {abs local path -> path to write into the project JSONs};
+        # lets tests generated on Linux carry valid Windows paths
+        self.path_map = {os.path.abspath(k): v for k, v in (path_map or {}).items()}
 
     def get(self, path: str) -> MediaEntry:
         key = os.path.abspath(path)
@@ -95,7 +109,9 @@ class Registry:
             self.by_path[key] = MediaEntry(
                 path=key, kind=info.kind, guid=guid_upper(),
                 source_uuid=uuid_lower(), info=info,
-                name=os.path.splitext(os.path.basename(key))[0])
+                name=os.path.splitext(os.path.basename(key))[0],
+                md5=_file_md5(key),
+                original_path=self.path_map.get(key, _win_path(key)))
         return self.by_path[key]
 
     @property
@@ -113,30 +129,38 @@ def _win_path(path: str) -> str:
 
 def _patch_stream_lists(container: dict, e: MediaEntry) -> None:
     """Patch vid/aud stream info lists inside a resource entry or media.json
-    sourceInfo (key spellings differ: vidStreamInfo vs vidStreamInfos)."""
+    sourceInfo (key spellings differ: vidStreamInfo vs vidStreamInfos).
+    IMPORTANT: only update keys the prototype already has — never add new
+    keys, Filmora's deserializer may reject unknown fields."""
     info = e.info
+
+    def setk(d, key, value):
+        if key in d:
+            d[key] = value
+
     dur = info.duration_ticks
     for key in ("vidStreamInfo", "vidStreamInfos"):
         for s in container.get(key) or []:
-            s["width"] = info.width or s.get("width", 1920)
-            s["height"] = info.height or s.get("height", 1080)
-            s["xRatio"] = info.width or s.get("xRatio", 1920)
-            s["yRatio"] = info.height or s.get("yRatio", 1080)
+            setk(s, "width", info.width or s.get("width", 1920))
+            setk(s, "height", info.height or s.get("height", 1080))
+            setk(s, "xRatio", info.width or s.get("xRatio", 1920))
+            setk(s, "yRatio", info.height or s.get("yRatio", 1080))
             if e.kind == "video":
-                s["streamLength"] = dur
-                s["frameRate"] = {"num": info.fps_num, "den": info.fps_den}
-                s["lastframeRate"] = {"num": info.fps_num, "den": info.fps_den}
-                s["maxFrameRate"] = {"num": info.fps_num * 1000, "den": info.fps_den * 1000}
-                s["totalFrames"] = info.total_frames
+                setk(s, "streamLength", dur)
+                setk(s, "frameRate", {"num": info.fps_num, "den": info.fps_den})
+                setk(s, "lastframeRate", {"num": info.fps_num, "den": info.fps_den})
+                setk(s, "maxFrameRate", {"num": info.fps_num * 1000, "den": info.fps_den * 1000})
+                setk(s, "totalFrames", info.total_frames)
+                setk(s, "maxGopSize", info.total_frames)
                 if info.bit_rate:
-                    s["bitRate"] = info.bit_rate
+                    setk(s, "bitRate", info.bit_rate)
     for key in ("audStreamInfo", "audStreamInfos"):
         for s in container.get(key) or []:
-            s["streamLength"] = dur
-            s["sampleRate"] = info.sample_rate
-            s["channels"] = info.channels
-            s["duration"] = round(dur / TICKS, 8)
-            s["bitRate"] = info.audio_bit_rate
+            setk(s, "streamLength", dur)
+            setk(s, "sampleRate", info.sample_rate)
+            setk(s, "channels", info.channels)
+            setk(s, "duration", round(dur / TICKS, 8))
+            setk(s, "bitRate", info.audio_bit_rate)
 
 
 def _patch_basic(basic: dict, e: MediaEntry, now: int) -> None:
@@ -195,11 +219,11 @@ class BuildResult:
         self.warnings = []
 
 
-def build(plan: Plan, template) -> BuildResult:
+def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
     res = BuildResult()
     res.project_name = plan.project_name
     now = int(time.time())
-    reg = Registry()
+    reg = Registry(path_map)
 
     wes = copy.deepcopy(template.wesproj)
     main_tl = next(tl for tl in wes["timelineInfos"] if tl.get("type") == 0)
@@ -360,11 +384,13 @@ def build(plan: Plan, template) -> BuildResult:
             proto = next(iter(template.resources.values()))
             res.warnings.append(f"No {e.kind} resource prototype; used generic for {e.basename}.")
         r = copy.deepcopy(proto)
-        r["filename"] = "file:/" + _win_path(e.path)
+        r["filename"] = "file:/" + e.original_path
         r["sourceUuid"] = e.source_uuid
         _patch_basic(r, e, now)
         _patch_stream_lists(r, e)
         wes["resources"].append(r)
+
+    userdata_set(main_tl.setdefault("userData", []), 50, b64_str(plan.project_name))
 
     wes["currentTimelineId"] = main_tl_id
     wes["serialNumber"] = next_sub_id + 1
@@ -385,14 +411,14 @@ def build(plan: Plan, template) -> BuildResult:
     media_items = {}
     for e in reg.entries:
         media_items[e.guid] = {
-            "download_url": _win_path(e.path),
+            "download_url": e.original_path,
             "id": e.guid,
             "media_type": media_type_by_kind[e.kind],
             "media_length": e.info.duration_ticks if e.kind != "image" else 5 * TICKS,
             "name": e.name,
             "mediaCreationInfo": "{\"creationType\":0}",
             "import_time": now,
-            "src_md5": "",
+            "src_md5": e.md5,
             "stream_idx": 0 if e.kind != "image" else -1,
             "mark_info_list": [{"mark_in": -1, "mark_out": -1}],
             "scence_info": [],
@@ -413,6 +439,18 @@ def build(plan: Plan, template) -> BuildResult:
         "SerializeDataOnlyProjectUsered": "false",
         "media_item": tl_media_guid,
     }
+    audio_entries = [e for e in reg.entries if e.kind == "audio"]
+    if audio_entries:
+        media_structure = {
+            "visible": "true",
+            "SerializeDataOnlyProjectUsered": "false",
+            "Folder": {
+                "visible": "true",
+                "SerializeDataOnlyProjectUsered": "false",
+                "media_item": audio_entries[0].guid,
+            },
+            "media_item": tl_media_guid,
+        }
     res.medias_info = {"media_structure": media_structure, "media_items": media_items}
 
     # ---- extra.json ------------------------------------------------------------
@@ -437,6 +475,14 @@ def build(plan: Plan, template) -> BuildResult:
     pi["project_cover"] = False
     pi["project_custom_cover"] = False
     pi["project_backup"] = False
+    old_name = template.project_info.get("project_file_name", "")
+    zp = pi.get("proj_zip_save_path", "")
+    if old_name and zp:
+        pi["proj_zip_save_path"] = zp.replace(old_name + ".wfp", plan.project_name + ".wfp")
+    cp = pi.get("proj_cover_proj_path", "")
+    old_guid = template.project_info.get("project_guid", "")
+    if old_guid and cp:
+        pi["proj_cover_proj_path"] = cp.replace(old_guid, pi["project_guid"])
     res.project_info = pi
 
     res.wesproj = wes
