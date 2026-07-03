@@ -109,6 +109,23 @@ def parse_instructor(path: str) -> list[dict]:
     return beats
 
 
+def drop_black_frames(scenes: list[Scene], log=print) -> None:
+    """Remove near-black still frames (often grabbed from a clip's fade-in) so
+    they don't appear as black flashes in the rendered video."""
+    from filmora.probe import is_mostly_black
+    dropped = 0
+    for s in scenes:
+        keep = []
+        for f in s.frames:
+            if is_mostly_black(f):
+                dropped += 1
+            else:
+                keep.append(f)
+        s.frames = keep
+    if dropped:
+        log(f"  dropped {dropped} near-black frame image(s)")
+
+
 def apply_instructor(scenes: list[Scene], instructor_path: str, log=print) -> None:
     beats = parse_instructor(instructor_path)
     if not beats:

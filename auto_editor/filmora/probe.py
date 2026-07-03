@@ -137,3 +137,25 @@ def make_thumbnail(path: str, out_png: str, kind: str, seek_sec: float = 0.5) ->
 
 def audio_duration_secs(path: str) -> float:
     return probe(path).duration_ticks / TICKS
+
+
+def is_mostly_black(path: str, threshold: float = 10.0) -> bool:
+    """True if an image is (near-)uniformly black — common for frames grabbed
+    from the very start of a clip. Such frames are useless as visuals, so the
+    planner drops them. Uses ffmpeg's blackframe/signalstats; safe-fails False."""
+    ff = _exe("ffmpeg")
+    if not ff:
+        return False
+    try:
+        out = subprocess.run(
+            [ff, "-hide_banner", "-i", path, "-vf",
+             "signalstats,metadata=print:key=lavfi.signalstats.YAVG",
+             "-frames:v", "1", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30).stderr
+        import re
+        m = re.search(r"YAVG=([0-9.]+)", out)
+        if m:
+            return float(m.group(1)) < threshold
+    except Exception:
+        pass
+    return False
