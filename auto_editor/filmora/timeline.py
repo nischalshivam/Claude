@@ -11,7 +11,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from .ids import guid_upper, uuid_lower, b64_str, userdata_set
+from .ids import guid_upper, uuid_lower, b64_str, userdata_set, userdata_remove
 from .probe import MediaInfo, probe
 
 TICKS = 10_000_000
@@ -56,8 +56,10 @@ class Plan:
 
     @property
     def duration(self) -> int:
-        ends = [i.tl_end for i in self.items]
-        if self.narration_audio and getattr(self, "narration_ticks", 0):
+        # project duration == end of the last visual/text (narration is trimmed
+        # to that point, exactly like real Filmora saves)
+        ends = [i.tl_end for i in self.items] + [t.tl_end for t in self.texts]
+        if not ends and self.narration_audio and getattr(self, "narration_ticks", 0):
             ends.append(self.narration_ticks)
         return max(ends) if ends else 0
 
@@ -152,8 +154,8 @@ def _patch_stream_lists(container: dict, e: MediaEntry) -> None:
                 setk(s, "maxFrameRate", {"num": info.fps_num * 1000, "den": info.fps_den * 1000})
                 setk(s, "totalFrames", info.total_frames)
                 setk(s, "maxGopSize", info.total_frames)
-                if info.bit_rate:
-                    setk(s, "bitRate", info.bit_rate)
+                if info.video_bit_rate or info.bit_rate:
+                    setk(s, "bitRate", info.video_bit_rate or info.bit_rate)
     for key in ("audStreamInfo", "audStreamInfos"):
         for s in container.get(key) or []:
             setk(s, "streamLength", dur)
@@ -169,9 +171,11 @@ def _patch_basic(basic: dict, e: MediaEntry, now: int) -> None:
         basic["mediaLength"] = info.duration_ticks
         if info.bit_rate:
             basic["bitRate"] = info.bit_rate
-    basic["createDate"] = now
+    # Filmora: images carry createDate 0; av media carry the FILE's timestamps
+    ts = 0 if e.kind == "image" else int(os.path.getmtime(e.path))
+    basic["createDate"] = ts
     if "modifyDate" in basic:
-        basic["modifyDate"] = now
+        basic["modifyDate"] = ts
     if e.kind == "video":
         basic["audioStreamCount"] = 1 if info.has_audio else 0
 
@@ -200,6 +204,29 @@ def _retime_animation(anim: dict, item_ticks: int) -> dict:
                 if isinstance(kf.get("parameter"), str):
                     kf["parameter"] = _retime_keyframes(kf["parameter"], scale)
     return anim
+
+
+def _fix_origin_paths(userdata: list, original_path: str) -> None:
+    """userData keys 73/74 hold AI-effect JSON with the media's own path in
+    every OriginPath param. A prototype copy carries the WRONG media's path —
+    Filmora treats that as corruption. Rewrite them to this clip's file."""
+    import base64 as _b
+    for entry in userdata:
+        if entry.get("key") not in (73, 74):
+            continue
+        try:
+            raw = _b.b64decode(entry["data"] + "=" * (-len(entry["data"]) % 4))
+            cfg = json.loads(raw.decode("utf-8").rstrip("\x00"))
+            for eff in cfg.get("effectList", []):
+                for prm in eff.get("paramList", []):
+                    fx = prm.get("fxParam", {})
+                    if prm.get("name") == "OriginPath" and "unValue" in fx:
+                        fx["unValue"] = original_path
+            enc = json.dumps(cfg, ensure_ascii=True, separators=(",", ":")).encode()
+            entry["data"] = _b.b64encode(enc).decode("ascii")
+            entry["size"] = len(enc)
+        except Exception:
+            pass
 
 
 # ----------------------------------------------------------------------------
@@ -249,8 +276,10 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             clip["filename"] = e.doc_filename
             clip["sourceUuid"] = e.source_uuid
             clip["thisUId"] = uuid_lower()
-            clip["tlBegin"], clip["tlEnd"] = 0, narration_ticks
-            clip["inPoint"], clip["outPoint"] = 0, narration_ticks
+            visual_end = max((i.tl_end for i in plan.items), default=narration_ticks)
+            nar_end = min(narration_ticks, visual_end)
+            clip["tlBegin"], clip["tlEnd"] = 0, nar_end
+            clip["inPoint"], clip["outPoint"] = 0, nar_end
             clip.pop("postTransition", None)
             inst = guid_upper()
             ud = clip.setdefault("userData", [])
@@ -301,8 +330,8 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
         if item.animation:
             anim = template.animations.get(item.animation.lower())
             if anim:
-                clip["inAnimation"] = _retime_animation(anim, item.duration)
-                anim_applied = item.animation
+                clip["inAnimation"] = _retime_animation(anim["inAnimation"], item.duration)
+                anim_applied = anim
             else:
                 res.warnings.append(f"Animation {item.animation!r} not in template; skipped.")
 
@@ -328,10 +357,43 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
         userdata_set(ud, 3, b64_str(inst, pad_to=64, null=True))
         userdata_set(ud, 10, b64_str(e.guid))
         userdata_set(ud, 50, b64_str(e.name))
+        # the prototype carries ITS animation metadata; clear, then set ours
+        userdata_remove(ud, 13011)
+        userdata_remove(ud, 30316)
         if anim_applied:
-            userdata_set(ud, 13011, b64_str(anim_applied))
+            userdata_set(ud, 13011, b64_str(anim_applied["name"]))
+            if anim_applied.get("ud30316"):
+                userdata_set(ud, 30316, b64_str(anim_applied["ud30316"]))
+        _fix_origin_paths(ud, e.original_path)
         vtrack.append(clip)
         clip_map[inst] = e.guid
+
+        # Every video clip gets its PAIRED audio clip on the tag-1 audio track
+        # (same instance GUID links them; verified against a real Filmora save).
+        if (item.kind == "video" and e.info.has_audio
+                and template.clip_audio is not None
+                and template.clip_audio_track_idx >= 0):
+            ac = copy.deepcopy(template.clip_audio)
+            ac["filename"] = e.doc_filename
+            ac["sourceUuid"] = e.source_uuid
+            ac["thisUId"] = uuid_lower()
+            ac["tlBegin"], ac["tlEnd"] = clip["tlBegin"], clip["tlEnd"]
+            ac["inPoint"], ac["outPoint"] = clip["inPoint"], clip["outPoint"]
+            if isinstance(ac.get("speed"), dict) and isinstance(clip.get("speed"), dict):
+                ac["speed"]["offset"] = clip["speed"]["offset"]
+                ac["speed"]["offsetEnd"] = clip["speed"]["offsetEnd"]
+            ac.pop("postTransition", None)
+            if clip.get("postTransition") and "audio fade" in template.transitions:
+                at = copy.deepcopy(template.transitions["audio fade"])
+                at["tlBegin"] = clip["postTransition"]["tlBegin"]
+                at["tlEnd"] = clip["postTransition"]["tlEnd"]
+                at["thisUId"] = uuid_lower()
+                ac["postTransition"] = at
+            aud = ac.setdefault("userData", [])
+            # NOTE: on audio pairs key 3 is the bare 38-byte GUID (not 64-padded)
+            userdata_set(aud, 3, b64_str(inst))
+            userdata_set(aud, 10, b64_str(e.guid))
+            main_tl["trackInfos"][template.clip_audio_track_idx]["clipList"].append(ac)
 
     # ---- text overlays --------------------------------------------------------
     if plan.texts and (template.text_clip is None or template.text_subtimeline is None):
@@ -347,8 +409,11 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             sub_id = next_sub_id
             next_sub_id += 1
             sub["timelineId"] = sub_id
+            # real Filmora saves share most ids between duplicated titles but
+            # give each copy a fresh bus uid + inner clip uid
+            for bus in sub.get("audioBusInfos", []):
+                bus["busUid"] = uuid_lower()
             for str_ in sub["trackInfos"]:
-                str_["uuid"] = uuid_lower()
                 for sc in str_.get("clipList", []):
                     sc["thisUId"] = uuid_lower()
                     sc["tlBegin"], sc["tlEnd"] = 0, dur
@@ -397,10 +462,8 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
         _patch_stream_lists(r, e)
         wes["resources"].append(r)
 
-    userdata_set(main_tl.setdefault("userData", []), 50, b64_str(plan.project_name, null=True))
-
     wes["currentTimelineId"] = main_tl_id
-    wes["serialNumber"] = next_sub_id + 1
+    wes["serialNumber"] = next_sub_id
 
     duration = plan.duration
 
@@ -430,8 +493,12 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             "mark_info_list": [{"mark_in": -1, "mark_out": -1}],
             "scence_info": [],
         }
+    from .ids import userdata_get_raw as _udraw
+    tl_name_raw = _udraw(main_tl.get("userData", []), 50)
+    tl_name = (tl_name_raw.rstrip(b"\x00").decode("utf-8", "replace")
+               if tl_name_raw else plan.project_name)
     media_items[tl_media_guid] = {
-        "name": plan.project_name,
+        "name": tl_name,
         "download_url": "",
         "id": tl_media_guid,
         "timeline_uuid": tl_uuid or guid_upper(),

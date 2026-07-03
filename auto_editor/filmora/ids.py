@@ -48,6 +48,10 @@ def userdata_set(userdata: list, key: int, fields: dict) -> None:
     userdata.append({"key": key, **fields})
 
 
+def userdata_remove(userdata: list, key: int) -> None:
+    userdata[:] = [e for e in userdata if e.get("key") != key]
+
+
 def userdata_get_raw(userdata: list, key: int) -> bytes | None:
     for entry in userdata:
         if entry.get("key") == key:

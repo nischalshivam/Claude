@@ -29,6 +29,7 @@ class MediaInfo:
     fps_num: int = 30
     fps_den: int = 1
     bit_rate: int = 0
+    video_bit_rate: int = 0
     sample_rate: int = 44100
     channels: int = 2
     audio_bit_rate: int = 128000
@@ -77,6 +78,8 @@ def probe(path: str) -> MediaInfo:
                     nb = s.get("nb_frames")
                     if nb and str(nb).isdigit():
                         info.total_frames = int(nb)
+                    if s.get("bit_rate"):
+                        info.video_bit_rate = int(float(s["bit_rate"]))
                 elif s.get("codec_type") == "audio":
                     info.has_audio = True
                     info.sample_rate = int(s.get("sample_rate") or 44100)

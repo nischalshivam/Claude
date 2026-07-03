@@ -85,6 +85,8 @@ class Template:
     image_clip: dict = None
     video_clip: dict = None
     narration_clip: dict = None
+    clip_audio: dict = None           # paired audio of a video clip (tag-1 track)
+    clip_audio_track_idx: int = -1
     text_clip: dict = None            # the type-7 clip that sits on the text track
     text_subtimeline: dict = None     # the sub-timeline holding the actual title
     transitions: dict = field(default_factory=dict)  # lower name -> postTransition proto
@@ -173,9 +175,16 @@ def _index(t: Template) -> None:
                         t.image_clip = copy.deepcopy(c)
                     if kind == "video" and t.video_clip is None:
                         t.video_clip = copy.deepcopy(c)
-        elif tr.get("trackType") == 2 and clips and t.narration_clip is None:
-            t.narration_track_idx = i
-            t.narration_clip = copy.deepcopy(clips[0])
+        elif tr.get("trackType") == 2 and clips:
+            from .probe import kind_of
+            for c in clips:
+                kind = kind_of(c.get("filename", ""))
+                if kind == "audio" and t.narration_clip is None:
+                    t.narration_track_idx = i
+                    t.narration_clip = copy.deepcopy(c)
+                elif kind == "video" and t.clip_audio is None:
+                    t.clip_audio_track_idx = i
+                    t.clip_audio = copy.deepcopy(c)
 
     if t.video_track_idx < 0:
         raise ValueError("Template has no video track with media clips — "
@@ -192,7 +201,14 @@ def _index(t: Template) -> None:
                 if ia:
                     name = _anim_name(c)
                     if name:
-                        t.animations.setdefault(name.lower(), copy.deepcopy(ia))
+                        from .ids import userdata_get_raw
+                        blob = userdata_get_raw(c.get("userData", []), 30316)
+                        t.animations.setdefault(name.lower(), {
+                            "inAnimation": copy.deepcopy(ia),
+                            "name": name,
+                            "ud30316": blob.decode("utf-8", "replace").rstrip("\x00")
+                                       if blob else None,
+                        })
 
     # Resource prototypes by kind (streamType: 2 video, 5 image, 3 audio).
     for res in wes.get("resources", []):
