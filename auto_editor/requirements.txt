@@ -1,0 +1,6 @@
+# Core (small, always needed)
+Pillow>=10.0
+
+# Precise narration sync (recommended; ~200 MB with models on first run).
+# If this fails to install, the tool still works with --align weighted.
+faster-whisper>=1.0
