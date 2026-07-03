@@ -254,7 +254,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             clip.pop("postTransition", None)
             inst = guid_upper()
             ud = clip.setdefault("userData", [])
-            userdata_set(ud, 3, b64_str(inst, pad_to=64))
+            userdata_set(ud, 3, b64_str(inst, pad_to=64, null=True))
             userdata_set(ud, 10, b64_str(e.guid))
             userdata_set(ud, 50, b64_str(e.name))
             main_tl["trackInfos"][template.narration_track_idx]["clipList"].append(clip)
@@ -325,7 +325,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
 
         inst = guid_upper()
         ud = clip.setdefault("userData", [])
-        userdata_set(ud, 3, b64_str(inst, pad_to=64))
+        userdata_set(ud, 3, b64_str(inst, pad_to=64, null=True))
         userdata_set(ud, 10, b64_str(e.guid))
         userdata_set(ud, 50, b64_str(e.name))
         if anim_applied:
@@ -353,6 +353,9 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
                     sc["thisUId"] = uuid_lower()
                     sc["tlBegin"], sc["tlEnd"] = 0, dur
                     sc["inPoint"], sc["outPoint"] = 0, dur
+                    # userData key 6 = id of the timeline that owns this clip
+                    from .ids import b64_i32
+                    userdata_set(sc.setdefault("userData", []), 6, b64_i32(sub_id))
                     if isinstance(sc.get("inAnimation"), dict):
                         sc["inAnimation"] = _retime_animation(sc["inAnimation"], dur)
                     if isinstance(sc.get("scriptBuf"), str) and sc["scriptBuf"]:
@@ -362,7 +365,11 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
                             script["Text"] = text
                             for td in script.get("TextData", []):
                                 td["CharData"] = text
-                            sc["scriptBuf"] = json.dumps(script, ensure_ascii=False)
+                            # Filmora writes scriptBuf compact; scriptBufSize
+                            # must be byte length + 1 (verified against a real save)
+                            sc["scriptBuf"] = json.dumps(
+                                script, ensure_ascii=True, separators=(",", ":"))
+                            sc["scriptBufSize"] = len(sc["scriptBuf"].encode("utf-8")) + 1
                         except Exception:
                             res.warnings.append("Could not edit text scriptBuf; kept sample text.")
             wes["timelineInfos"].append(sub)
@@ -373,7 +380,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             tclip["tlBegin"], tclip["tlEnd"] = t.tl_begin, t.tl_end
             tclip["inPoint"], tclip["outPoint"] = 0, dur
             inst = guid_upper()
-            userdata_set(tclip.setdefault("userData", []), 3, b64_str(inst, pad_to=64))
+            userdata_set(tclip.setdefault("userData", []), 3, b64_str(inst, pad_to=64, null=True))
             ttrack.append(tclip)
             clip_map[inst] = "Basic_1"
 
@@ -390,7 +397,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
         _patch_stream_lists(r, e)
         wes["resources"].append(r)
 
-    userdata_set(main_tl.setdefault("userData", []), 50, b64_str(plan.project_name))
+    userdata_set(main_tl.setdefault("userData", []), 50, b64_str(plan.project_name, null=True))
 
     wes["currentTimelineId"] = main_tl_id
     wes["serialNumber"] = next_sub_id + 1

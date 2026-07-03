@@ -20,10 +20,15 @@ def uuid_lower() -> str:
     return str(uuid.uuid4())
 
 
-def b64_str(text: str, pad_to: int | None = None) -> dict:
-    """Encode a string the way Filmora stores it in userData: null-terminated,
-    optionally null-padded to a fixed size. Returns {data,size} fields."""
-    raw = text.encode("utf-8") + b"\x00"
+def b64_str(text: str, pad_to: int | None = None, null: bool = False) -> dict:
+    """Encode a string the way Filmora stores it in userData.
+    Byte conventions verified against a real save: plain strings (media GUID
+    key 10, names key 50, animation name key 13011) have NO null terminator;
+    instance GUIDs (key 3) are null-PADDED to 64 bytes; a few (timeline name)
+    are null-terminated. `size` must equal the raw byte length exactly."""
+    raw = text.encode("utf-8")
+    if null:
+        raw += b"\x00"
     if pad_to is not None and len(raw) < pad_to:
         raw = raw + b"\x00" * (pad_to - len(raw))
     return {"data": base64.b64encode(raw).decode("ascii"), "size": len(raw)}
