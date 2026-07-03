@@ -206,6 +206,52 @@ def _retime_animation(anim: dict, item_ticks: int) -> dict:
     return anim
 
 
+def _fresh_guid_blob(entry: dict) -> None:
+    """Replace the GUID inside a base64 userData blob with a fresh one, keeping
+    the exact byte length (GUIDs are fixed-width, so size stays valid)."""
+    import base64 as _b
+    import re as _re
+    import uuid as _uuid
+    try:
+        raw = _b.b64decode(entry["data"] + "=" * (-len(entry["data"]) % 4))
+        new = _re.sub(
+            rb"\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}",
+            lambda m: ("{" + str(_uuid.uuid4()).upper() + "}").encode(),
+            raw, count=1)
+        if new != raw and len(new) == len(raw):
+            entry["data"] = _b.b64encode(new).decode("ascii")
+    except Exception:
+        pass
+
+
+def _freshen_ids(node) -> None:
+    """Regenerate every OBJECT-IDENTITY id in a freshly deep-copied prototype
+    subtree, so no two copies share an identity — Filmora rejects a timeline
+    with duplicate object uuids/effect ids as "incompatible". Reference ids that
+    must keep pointing at their target are left untouched: sourceUuid (-> media
+    resource), userData key 10 (-> media GUID), effect-type `id`, transition
+    preset key 3, and the clip-level key 3 (set explicitly by the builder)."""
+    if isinstance(node, dict):
+        for k in ("thisUId", "uuid", "busUid"):
+            v = node.get(k)
+            if isinstance(v, str) and len(v) == 36 and v.count("-") == 4:
+                node[k] = uuid_lower()
+        # a real effect node (id like "video/effect/…") carries a UNIQUE instance
+        # GUID in userData key 3 — freshen it so copies don't collide
+        nid = node.get("id", "")
+        if isinstance(nid, str) and nid.startswith(("video/", "audio/", "image/")):
+            ud = node.get("userData")
+            if isinstance(ud, list):
+                for u in ud:
+                    if u.get("key") == 3 and isinstance(u.get("data"), str):
+                        _fresh_guid_blob(u)
+        for v in node.values():
+            _freshen_ids(v)
+    elif isinstance(node, list):
+        for v in node:
+            _freshen_ids(v)
+
+
 def _fix_origin_paths(userdata: list, original_path: str) -> None:
     """userData keys 73/74 hold AI-effect JSON with the media's own path in
     every OriginPath param. A prototype copy carries the WRONG media's path —
@@ -273,6 +319,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
         plan.narration_ticks = narration_ticks
         if template.narration_clip is not None and template.narration_track_idx >= 0:
             clip = copy.deepcopy(template.narration_clip)
+            _freshen_ids(clip)
             clip["filename"] = e.doc_filename
             clip["sourceUuid"] = e.source_uuid
             clip["thisUId"] = uuid_lower()
@@ -303,6 +350,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             res.warnings.append(
                 f"No {item.kind} prototype in template; used generic prototype for {e.basename}.")
         clip = copy.deepcopy(proto)
+        _freshen_ids(clip)
         clip["filename"] = e.doc_filename
         clip["sourceUuid"] = e.source_uuid
         clip["thisUId"] = uuid_lower()
@@ -374,6 +422,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
                 and template.clip_audio is not None
                 and template.clip_audio_track_idx >= 0):
             ac = copy.deepcopy(template.clip_audio)
+            _freshen_ids(ac)
             ac["filename"] = e.doc_filename
             ac["sourceUuid"] = e.source_uuid
             ac["thisUId"] = uuid_lower()
@@ -406,6 +455,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             if dur <= 0:
                 continue
             sub = copy.deepcopy(template.text_subtimeline)
+            _freshen_ids(sub)
             sub_id = next_sub_id
             next_sub_id += 1
             sub["timelineId"] = sub_id
@@ -440,6 +490,7 @@ def build(plan: Plan, template, path_map: dict | None = None) -> BuildResult:
             wes["timelineInfos"].append(sub)
 
             tclip = copy.deepcopy(template.text_clip)
+            _freshen_ids(tclip)
             tclip["thisUId"] = uuid_lower()
             tclip["timelineId"] = sub_id
             tclip["tlBegin"], tclip["tlEnd"] = t.tl_begin, t.tl_end
