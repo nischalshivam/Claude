@@ -34,9 +34,12 @@ def _font(path: str, size: int):
 
 
 def esc(t: str) -> str:
-    return (t.replace("\\", "").replace(":", "\\:").replace("'", "")
-             .replace(",", "\\,").replace("%", "\\%").replace('"', "")
-             .replace("“", "").replace("”", "").replace("’", "'").replace("‘", "")
+    # remove EVERY apostrophe form (straight/curly) — any apostrophe left in a
+    # drawtext text closes the filter's quote and corrupts the whole graph
+    for ch in ("'", "’", "‘", "`", "´", '"', "“", "”"):
+        t = t.replace(ch, "")
+    return (t.replace("\\", "").replace(":", "\\:")
+             .replace(",", "\\,").replace("%", "\\%")
              .replace("—", "-").replace("…", "..."))
 
 

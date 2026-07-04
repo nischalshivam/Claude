@@ -192,8 +192,13 @@ def render_job(job, shots, text_events, log=print):
 
         out = job.out_path
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+        # long timelines (many shots + text events) produce a filtergraph far
+        # bigger than the OS command-line limit -> pass it as a script file
+        graph_file = os.path.join(work, "graph.txt")
+        with open(graph_file, "w", encoding="utf-8") as f:
+            f.write(";\n".join(filt))
         _run(["ffmpeg", "-y", "-v", "error", *inputs,
-              "-filter_complex", ";".join(filt),
+              "-filter_complex_script", graph_file,
               "-map", f"[{prev}]", "-map", "[a]",
               "-c:v", "libx264", "-crf", str(job.crf), "-preset", job.preset,
               "-pix_fmt", "yuv420p", "-r", str(FPS),
