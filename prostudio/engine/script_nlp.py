@@ -109,13 +109,15 @@ def scene_mood(narration: str) -> str:
 
 
 def select_text_events(scene_chunks, windows, first_dense_secs=60.0,
-                       max_quiet=35.0, min_gap=5.0, hold=(2.2, 5.0)):
+                       max_quiet=38.0, min_gap=6.0, dense_gap=3.4,
+                       hold=(1.8, 4.2)):
     """Decide WHICH chunks become on-screen text and WHEN.
 
-    Returns [(t_start, t_end, scene_i, Chunk)]. Policy:
-      - first `first_dense_secs`: every chunk group (dense hook phase)
-      - after: crucial chunks only, >= min_gap apart
-      - if > max_quiet passes with no text, force the next chunk
+    Returns [(t_start, t_end, scene_i, Chunk)]. Policy (NOT captions):
+      - first `first_dense_secs`: punchy text but spaced >= dense_gap apart
+        (crucial words can appear sooner) — an accent, not a transcript
+      - after: crucial moments only, >= min_gap apart
+      - forced refresher if > max_quiet with nothing on screen
     """
     from .audio_sync import word_time
     events, last_end = [], -min_gap
@@ -126,9 +128,10 @@ def select_text_events(scene_chunks, windows, first_dense_secs=60.0,
             due = (t - last_end) >= max_quiet
             if not (dense or ch.crucial or due):
                 continue
-            if t - last_end < min_gap and not dense:
+            spacing = dense_gap if dense else min_gap
+            if (t - last_end) < spacing and not ch.crucial:
                 continue
-            dur = min(hold[1], max(hold[0], 0.45 * ch.n_words + 1.4))
+            dur = min(hold[1], max(hold[0], 0.45 * ch.n_words + 1.2))
             t_end = min(t + dur, win[1] - 0.15)
             if t_end - t < 0.8:
                 continue

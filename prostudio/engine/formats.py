@@ -22,14 +22,14 @@ FORMATS = {
     "F2_Kinetic": dict(
         desc="High-retention: bold bounce text, hard cuts, shake, grain",
         font=SANS, size=82, upper=True, spaced=False,
-        anim="bounce", border=3, shake=0.8, drift=0.6, grain=7,
+        anim="bounce", border=3, shake=0.0, drift=0.6, grain=7,
         vignette=True, letterbox=False, glitch=False, sepia=False,
         pushin=False, spotlight=False, pan=None,
         soft=("fade", 0.12), scene=("fade", 0.15)),
     "F3_Archival": dict(
         desc="Dossier: typewriter mono text, sepia, shutter-flash cuts",
         font=MONO, size=58, upper=True, spaced=False,
-        anim="type", border=1, shake=0.25, drift=0.45, grain=10,
+        anim="type", border=1, shake=0.0, drift=0.45, grain=10,
         vignette=True, letterbox=False, glitch=False, sepia=True,
         pushin=True, spotlight=False, pan=None,
         soft=("fadewhite", 0.22), scene=("fadeblack", 0.5)),
@@ -57,7 +57,7 @@ FORMATS = {
     "F7_Glitch": dict(
         desc="Tech/industrial: chromatic pulses, mono decode text, pixel cuts",
         font=MONO, size=64, upper=True, spaced=False,
-        anim="type", border=2, shake=0.35, drift=0.5, grain=6,
+        anim="type", border=2, shake=0.0, drift=0.5, grain=6,
         vignette=True, letterbox=False, glitch=True, sepia=False,
         pushin=False, spotlight=False, pan=None,
         soft=("pixelize", 0.25), scene=("fadeblack", 0.4)),

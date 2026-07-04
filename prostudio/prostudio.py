@@ -90,15 +90,41 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
     log(f"  shots: {len(shots)}  "
         f"(avg {sum(s.secs for s in shots)/max(1,len(shots)):.1f}s)")
 
-    # attach each event to the shot on screen at that moment (for its zone)
+    # ROTATE text position per event (editorial variety, not captions), but
+    # veto any zone that would cover a detected face on the shot underneath.
+    from engine.subjects import ZONES, _overlap
+    from engine.textlayout import ZONE_ROTATION, ZONE_XY
     ev_with_zone = []
+    cursor = 0
+    prev_zone = None
     for (t0, t1, si, ch) in events:
-        zone = "bottom"
+        faces = []
         for sh in shots:
             if sh.t0 <= t0 < sh.t1:
-                zone = sh.text_zone
+                faces = sh.faces
                 break
-        ev_with_zone.append((t0, t1, si, ch, zone))
+
+        def covers_face(zname):
+            cx, cy = ZONE_XY[zname]
+            box = (cx - 0.22, cy - 0.10, cx + 0.22, cy + 0.10)
+            return any(_overlap(box, f) > 0.010 for f in faces)
+
+        chosen = None
+        for step in range(len(ZONE_ROTATION)):
+            z = ZONE_ROTATION[(cursor + step) % len(ZONE_ROTATION)]
+            if z != prev_zone and not covers_face(z):
+                chosen = z
+                cursor = (cursor + step + 1) % len(ZONE_ROTATION)
+                break
+        if chosen is None:                      # every zone hits a face
+            chosen = min(ZONE_ROTATION,
+                         key=lambda z: sum(_overlap(
+                             (ZONE_XY[z][0]-0.22, ZONE_XY[z][1]-0.10,
+                              ZONE_XY[z][0]+0.22, ZONE_XY[z][1]+0.10), f)
+                             for f in faces))
+            cursor = (cursor + 1) % len(ZONE_ROTATION)
+        prev_zone = chosen
+        ev_with_zone.append((t0, t1, si, ch, chosen))
 
     # 5) render
     out, total = render_job(job, shots, ev_with_zone, log)

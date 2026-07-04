@@ -15,10 +15,34 @@ import glob
 import os
 import random
 import re
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 
-from .qc import IMAGE_EXT, VIDEO_EXT, qc_scene_media
-from .subjects import best_text_zone
+from .qc import IMAGE_EXT, VIDEO_EXT, MediaScore, qc_scene_media
+
+_FRAME_CACHE = os.path.join(tempfile.gettempdir(), "prostudio_frames")
+
+
+def _clip_fill_frames(clip_path, n):
+    """Extract N stills from DIFFERENT moments of a clip → distinct Ken Burns
+    shots (used when a scene is starved of images, instead of repeating a clip)."""
+    from .audio_sync import duration
+    os.makedirs(_FRAME_CACHE, exist_ok=True)
+    d = max(1.0, duration(clip_path))
+    base = os.path.splitext(os.path.basename(clip_path))[0]
+    tag = str(abs(hash(clip_path)) % 100000)
+    outs = []
+    for i in range(n):
+        ts = d * (i + 0.5) / n
+        out = os.path.join(_FRAME_CACHE, f"{base}_{tag}_{i}.jpg")
+        if not os.path.isfile(out):
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{ts:.2f}",
+                            "-i", clip_path, "-frames:v", "1", "-q:v", "2", out],
+                           capture_output=True)
+        if os.path.isfile(out):
+            outs.append(MediaScore(path=out, kind="image", ok=True))
+    return outs
 
 
 @dataclass
@@ -43,7 +67,7 @@ class Shot:
     zoom_in: bool = True
     punch_in: bool = False   # organic mid-shot push
     drift_seed: int = 0
-    text_zone: str = "bottom"
+    faces: list = field(default_factory=list)   # face boxes for text-zone veto
     transition: str | None = None   # into the NEXT shot
 
     @property
@@ -104,33 +128,46 @@ def plan_shots(scenes, windows, rng: random.Random, log=print,
             d = min(clip_max, max(clip_min, span * 0.45), v1 - t)
             scene_shots.append(Shot(v.path, "video", t, t + d, si, scene.mood))
             t += d
-        # images fill the rest
+        # images fill the rest — each UNIQUE image is used once; we prefer
+        # longer holds (strong Ken Burns covers it) over repeating a visual,
+        # and only repeat when a scene genuinely lacks media (evenly, minimal).
+        import math
         remaining = v1 - t
+        imgs = list(pool_i)                       # unique real images, best-first
         if remaining >= img_min:
-            source = pool_i or pool_v or pool_i
-            if not source:
-                log(f"  WARN scene {si}: no usable media, narration rides prev shot")
+            max_hold, target = 8.5, 5.5
+            need_min = max(1, math.ceil(remaining / max_hold))
+            n_pref = max(1, round(remaining / target))
+            # top up a media-starved scene with distinct frames from its clip
+            # (never repeat the same visual)
+            if len(imgs) < max(need_min, n_pref) and scene.videos:
+                short = max(need_min, n_pref) - len(imgs)
+                imgs += _clip_fill_frames(scene.videos[0].path, min(short, 4))
+            if not imgs:
+                imgs = list(pool_v)               # last resort
+            n = min(len(imgs), max(need_min, n_pref)) if imgs else 0
+            seq = imgs[:n]                         # unique only, NO repeats
+            if not seq:
+                if scene_shots:
+                    scene_shots[-1].t1 = v1       # nothing to fill with: hold
+                shots_span = None
             else:
-                n = max(1, min(int(remaining // img_min),
-                               max(1, round(remaining / img_max + 0.45)) * 2))
-                n = max(1, min(n, 2 * len(source),
-                               int(remaining // img_min) or 1))
-                share = remaining / n
-                for k in range(n):
-                    m = source[k % len(source)]
-                    d = share if k < n - 1 else (v1 - t)
-                    kind = m.kind
-                    scene_shots.append(Shot(m.path, kind, t, t + d, si,
+                share = remaining / len(seq)
+                for k, m in enumerate(seq):
+                    d = share if k < len(seq) - 1 else (v1 - t)
+                    scene_shots.append(Shot(m.path, m.kind, t, t + d, si,
                                             scene.mood))
                     t += d
         elif remaining > 0 and scene_shots:
             scene_shots[-1].t1 = v1
-        # per-shot flavour: alternating zoom, occasional punch-in, drift seed
+        # per-shot flavour: alternating zoom, occasional punch-in, drift seed,
+        # detected faces (so text can be placed in negative space later)
+        from .subjects import detect_faces
         for j, sh in enumerate(scene_shots):
             sh.zoom_in = (j + si) % 2 == 0
             sh.punch_in = rng.random() < 0.22 and sh.secs > 3.0
             sh.drift_seed = rng.randrange(1000)
-            sh.text_zone = best_text_zone(sh.path, sh.kind)
+            sh.faces = detect_faces(sh.path, sh.kind)
         shots.extend(scene_shots)
 
     # transitions: within-scene soft, scene-boundary strong (format decides look)
