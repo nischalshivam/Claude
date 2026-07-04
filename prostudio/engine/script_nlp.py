@@ -119,11 +119,13 @@ def select_text_events(scene_chunks, windows, first_dense_secs=60.0,
       - after: crucial moments only, >= min_gap apart
       - forced refresher if > max_quiet with nothing on screen
     """
-    from .audio_sync import word_time
     events, last_end = [], -min_gap
-    for si, (chunks, win, ntext) in enumerate(scene_chunks):
+    for si, (chunks, win, ntext, wtimes) in enumerate(scene_chunks):
         for ch in chunks:
-            t = word_time(None, win, ntext, ch.word_index)
+            # exact spoken time of this chunk's first word (whisper) or interp
+            idx = min(ch.word_index, len(wtimes) - 1) if wtimes else 0
+            t = wtimes[idx] if wtimes else (win[0] + (win[1] - win[0])
+                                            * ch.word_index / max(1, len(ntext.split())))
             dense = t < first_dense_secs
             due = (t - last_end) >= max_quiet
             if not (dense or ch.crucial or due):

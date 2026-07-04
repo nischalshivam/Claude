@@ -86,9 +86,70 @@ def scene_windows(scenes, audio: str, model_size="base", language=None,
     return windows, words
 
 
+def _norm(w: str) -> str:
+    return re.sub(r"[^\w']", "", w, flags=re.UNICODE).lower()
+
+
+def align_narration_times(narration: str, window, words):
+    """Absolute spoken-start time for EVERY word of a scene's narration.
+
+    With whisper `words` [(text,start,end)] it matches the narration words to
+    the transcript (sequential fuzzy match) so text lands exactly on the spoken
+    word. Without whisper it linearly interpolates across the scene window.
+    Returns a list of floats, len == number of narration words.
+    """
+    w0, w1 = window
+    narr = narration.split()
+    n = max(1, len(narr))
+    interp = [w0 + (w1 - w0) * i / n for i in range(n)]
+    if not words:
+        return interp
+
+    cand = [(_norm(t), s) for (t, s, e) in words
+            if w0 - 0.5 <= s <= w1 + 0.8 and _norm(t)]
+    if not cand:
+        return interp
+
+    times = [None] * n
+    j = 0
+    for i, raw in enumerate(narr):
+        tgt = _norm(raw)
+        if not tgt:
+            continue
+        for k in range(j, min(len(cand), j + 7)):
+            c = cand[k][0]
+            if c == tgt or (len(tgt) >= 4 and len(c) >= 4
+                            and (c.startswith(tgt[:4]) or tgt.startswith(c[:4]))):
+                times[i] = cand[k][1]
+                j = k + 1
+                break
+
+    # fill unmatched words by interpolating between known anchors
+    known = [(i, t) for i, t in enumerate(times) if t is not None]
+    if not known:
+        return interp
+    if known[0][0] != 0:
+        times[0] = w0
+        known = [(0, w0)] + known
+    if known[-1][0] != n - 1:
+        times[n - 1] = w1
+        known = known + [(n - 1, w1)]
+    for (ia, ta), (ib, tb) in zip(known, known[1:]):
+        for i in range(ia + 1, ib):
+            if times[i] is None:
+                frac = (i - ia) / max(1, (ib - ia))
+                times[i] = ta + (tb - ta) * frac
+    for i in range(n):
+        if times[i] is None:
+            times[i] = interp[i]
+    # keep monotonic
+    for i in range(1, n):
+        times[i] = max(times[i], times[i - 1])
+    return times
+
+
 def word_time(words, scene_window, scene_text, word_index):
-    """Absolute time when the scene's Nth word is spoken (interpolated when
-    whisper words are unavailable)."""
+    """Back-compat single-word helper (interpolation)."""
     w0, w1 = scene_window
     n = max(1, len(scene_text.split()))
     return w0 + (w1 - w0) * (word_index / n)

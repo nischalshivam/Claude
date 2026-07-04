@@ -33,6 +33,32 @@ def _font(path: str, size: int):
     return _FONTS[key]
 
 
+_NONLATIN_BLOCKS = [
+    (0x0900, 0x097F, "Devanagari (Hindi/Marathi)"),
+    (0x0980, 0x09FF, "Bengali"),
+    (0x0A00, 0x0A7F, "Gurmukhi (Punjabi)"),
+    (0x0B80, 0x0BFF, "Tamil"),
+    (0x0600, 0x06FF, "Arabic (also right-to-left)"),
+    (0x0590, 0x05FF, "Hebrew (also right-to-left)"),
+    (0x4E00, 0x9FFF, "Chinese/Japanese (CJK)"),
+    (0x3040, 0x30FF, "Japanese kana"),
+    (0xAC00, 0xD7AF, "Korean"),
+    (0x0E00, 0x0E7F, "Thai"),
+]
+
+
+def script_needs_font(text: str):
+    """Return the script name if `text` uses a writing system the bundled
+    Latin fonts don't cover (so the tool can warn and ask for a font). Latin-
+    script European languages (incl. accents/diacritics) return None = fine."""
+    for ch in text:
+        o = ord(ch)
+        for lo, hi, name in _NONLATIN_BLOCKS:
+            if lo <= o <= hi:
+                return name
+    return None
+
+
 def esc(t: str) -> str:
     # remove EVERY apostrophe form (straight/curly) — any apostrophe left in a
     # drawtext text closes the filter's quote and corrupts the whole graph

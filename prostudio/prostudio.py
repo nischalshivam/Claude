@@ -39,6 +39,7 @@ class Job:
     language: str = "en"
     niche: str = "Movie Essay"
     keyword_colors: bool = True
+    text: bool = True           # on-screen text; False = clean footage only
     resolution: str = "4K"
     whisper_model: str = "base"
     seed: int = 0
@@ -61,6 +62,18 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
 
     # 1) scenes + media QC
     scenes = read_scenes(job.scenes_dir, log)
+
+    # language sanity: warn if the script uses a non-Latin script the bundled
+    # fonts can't draw (text ON only) — the video still renders, text may show
+    # boxes until a matching font is set via PS_FONT_SANS/SERIF/MONO.
+    if job.text:
+        from engine.textlayout import script_needs_font
+        sample = " ".join(s.narration for s in scenes[:4])
+        script = script_needs_font(sample)
+        if script:
+            log(f"  NOTE: script looks like {script}. The bundled fonts are "
+                "Latin-only — set PS_FONT_SANS/SERIF/MONO to a font for this "
+                "language, or turn on-screen text OFF. (Video still renders.)")
     # narration fallback from clean script (split by sentences across scenes)
     empty = [s for s in scenes if not s.narration]
     if empty and job.script and os.path.isfile(job.script):
@@ -72,18 +85,26 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
             if not s.narration:
                 s.narration = " ".join(sents[i * per:(i + 1) * per])
 
-    # 2) audio-synced scene windows
-    windows, _words = scene_windows(scenes, job.audio,
-                                    model_size=job.whisper_model, log=log)
+    # 2) audio-synced scene windows (+ whisper word times when available)
+    windows, words = scene_windows(scenes, job.audio,
+                                   model_size=job.whisper_model,
+                                   language=job.language, log=log)
 
     # 3) text plan (NLP chunks + crucial moments + cadence policy)
-    scene_chunks = []
-    for s, w in zip(scenes, windows):
-        chunks = chunk_scene(s.narration, colorize=job.keyword_colors)
-        scene_chunks.append((chunks, w, s.narration))
-    events = select_text_events(scene_chunks, windows)
-    log(f"  text events: {len(events)} "
-        f"(dense first minute + crucial moments after)")
+    if job.text:
+        from engine.audio_sync import align_narration_times
+        scene_chunks = []
+        for s, w in zip(scenes, windows):
+            chunks = chunk_scene(s.narration, colorize=job.keyword_colors)
+            wtimes = align_narration_times(s.narration, w, words)
+            scene_chunks.append((chunks, w, s.narration, wtimes))
+        events = select_text_events(scene_chunks, windows)
+        log(f"  text events: {len(events)}"
+            + ("  (word-synced via whisper)" if words else
+               "  (silence-sync fallback; whisper gives word-perfect timing)"))
+    else:
+        events = []
+        log("  on-screen text: OFF (clean footage for manual editing)")
 
     # 4) shot plan (clips first, J/L cuts, drift seeds, subject-safe zones)
     shots = plan_shots(scenes, windows, rng, log)
@@ -155,6 +176,8 @@ def main(argv=None):
     p.add_argument("--niche", default="Movie Essay",
                    choices=list(NICHE_BASE))
     p.add_argument("--no-keyword-colors", action="store_true")
+    p.add_argument("--no-text", action="store_true",
+                   help="no on-screen text at all (clean footage for an editor)")
     p.add_argument("--resolution", default="4K", choices=list(RESOLUTIONS))
     p.add_argument("--whisper-model", default="base")
     p.add_argument("--seed", type=int, default=0)
@@ -171,6 +194,7 @@ def main(argv=None):
                 language=j.get("language", "en"),
                 niche=j.get("niche", "Movie Essay"),
                 keyword_colors=j.get("keyword_colors", True),
+                text=j.get("text", True),
                 resolution=j.get("resolution", data.get("resolution", "4K")),
                 whisper_model=j.get("whisper_model", "base"),
                 seed=j.get("seed", 0)))
@@ -181,6 +205,7 @@ def main(argv=None):
                         script=a.script, format_choice=a.format,
                         language=a.language, niche=a.niche,
                         keyword_colors=not a.no_keyword_colors,
+                        text=not a.no_text,
                         resolution=a.resolution,
                         whisper_model=a.whisper_model, seed=a.seed))
 
