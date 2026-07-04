@@ -35,6 +35,7 @@ class Job:
     audio: str
     out_path: str
     script: str = ""            # optional clean script (fallback narration)
+    instructor: str = ""        # optional visual-editor file (per-scene guide)
     format_choice: str = "auto"
     language: str = "en"
     niche: str = "Movie Essay"
@@ -61,7 +62,30 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
     log("=" * 62)
 
     # 1) scenes + media QC
+    log("[  2%] checking footage (removing black/blurry/duplicate media) ...")
     scenes = read_scenes(job.scenes_dir, log)
+
+    # visual-editor / instructor file (optional): the editor's per-scene plan
+    # overrides the scene.txt narration and can pin the exact on-screen text.
+    forced_text = {}            # scene_i -> explicit on-screen text
+    if job.instructor and os.path.isfile(job.instructor):
+        from engine.planner import parse_instructor
+        blocks = parse_instructor(job.instructor)
+        if blocks:
+            for i, s in enumerate(scenes):
+                if i < len(blocks):
+                    b = blocks[i]
+                    if b.get("narration"):
+                        s.narration = b["narration"]
+                        from engine.script_nlp import scene_mood
+                        s.mood = scene_mood(s.narration)
+                    if job.text and b.get("on_screen"):
+                        forced_text[i] = b["on_screen"]
+            log(f"  visual-editor file: {len(blocks)} scene blocks applied"
+                + (f", {len(forced_text)} with pinned on-screen text"
+                   if forced_text else ""))
+        else:
+            log("  visual-editor file: no scene blocks recognized (ignored)")
 
     # language sanity: warn if the script uses a non-Latin script the bundled
     # fonts can't draw (text ON only) — the video still renders, text may show
@@ -86,6 +110,8 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
                 s.narration = " ".join(sents[i * per:(i + 1) * per])
 
     # 2) audio-synced scene windows (+ whisper word times when available)
+    log("[ 12%] syncing to narration audio "
+        "(first run may download the Whisper model — a few minutes, one time) ...")
     windows, words = scene_windows(scenes, job.audio,
                                    model_size=job.whisper_model,
                                    language=job.language, log=log)
@@ -99,6 +125,22 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
             wtimes = align_narration_times(s.narration, w, words)
             scene_chunks.append((chunks, w, s.narration, wtimes))
         events = select_text_events(scene_chunks, windows)
+        # editor-pinned on-screen text always wins for its scene: drop the
+        # auto text there and place the pinned lines across the scene window.
+        if forced_text:
+            from engine.script_nlp import forced_scene_events
+            events = [e for e in events if e[2] not in forced_text]
+            for si, ftext in forced_text.items():
+                events += forced_scene_events(ftext, windows[si], si,
+                                              colorize=job.keyword_colors)
+            events.sort(key=lambda e: e[0])
+            events = [tuple(e) for e in events]
+            # de-overlap after merge (previous text rolls off as next lands)
+            events = [list(e) for e in events]
+            for a, b in zip(events, events[1:]):
+                if a[1] > b[0] - 0.08:
+                    a[1] = max(a[0] + 0.7, b[0] - 0.08)
+            events = [tuple(e) for e in events if e[1] - e[0] >= 0.55]
         log(f"  text events: {len(events)}"
             + ("  (word-synced via whisper)" if words else
                "  (silence-sync fallback; whisper gives word-perfect timing)"))
@@ -107,6 +149,7 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
         log("  on-screen text: OFF (clean footage for manual editing)")
 
     # 4) shot plan (clips first, J/L cuts, drift seeds, subject-safe zones)
+    log("[ 20%] planning shots (arranging clips + images, avoiding faces) ...")
     shots = plan_shots(scenes, windows, rng, log)
     log(f"  shots: {len(shots)}  "
         f"(avg {sum(s.secs for s in shots)/max(1,len(shots)):.1f}s)")
@@ -170,6 +213,8 @@ def main(argv=None):
     p.add_argument("--audio")
     p.add_argument("--out", default="ProStudio.mp4")
     p.add_argument("--script", default="")
+    p.add_argument("--instructor", default="",
+                   help="visual-editor file (per-scene narration + on-screen text)")
     p.add_argument("--format", default="auto",
                    help="F1..F10 name, 'auto' (rotate) or 'random'")
     p.add_argument("--language", default="en")
@@ -190,6 +235,7 @@ def main(argv=None):
             jobs.append(Job(
                 scenes_dir=j["scenes"], audio=j["audio"],
                 out_path=j["out"], script=j.get("script", ""),
+                instructor=j.get("instructor", ""),
                 format_choice=j.get("format", "auto"),
                 language=j.get("language", "en"),
                 niche=j.get("niche", "Movie Essay"),
@@ -202,7 +248,8 @@ def main(argv=None):
         if not (a.scenes and a.audio):
             p.error("--scenes and --audio required (or --queue)")
         jobs.append(Job(scenes_dir=a.scenes, audio=a.audio, out_path=a.out,
-                        script=a.script, format_choice=a.format,
+                        script=a.script, instructor=a.instructor,
+                        format_choice=a.format,
                         language=a.language, niche=a.niche,
                         keyword_colors=not a.no_keyword_colors,
                         text=not a.no_text,

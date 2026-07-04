@@ -160,8 +160,9 @@ def render_job(job, shots, text_events, log=print):
             pad = joins[i][1] if i < n - 1 else 0.0
             render_shot(sh, seg, style, job.niche, W, H, pad, glow, log)
             segs.append(seg)
-            if (i + 1) % 8 == 0 or i == n - 1:
-                log(f"    {i + 1}/{n}")
+            # shots span 25%..85% of the whole job
+            pct = 25 + int(60 * (i + 1) / n)
+            log(f"[{pct:3d}%] rendered shot {i + 1}/{n}")
 
         durs = [duration(s) for s in segs]
         inputs = []
@@ -197,6 +198,7 @@ def render_job(job, shots, text_events, log=print):
         graph_file = os.path.join(work, "graph.txt")
         with open(graph_file, "w", encoding="utf-8") as f:
             f.write(";\n".join(filt))
+        log("[ 88%] compositing final video (this is the longest step) ...")
         _run(["ffmpeg", "-y", "-v", "error", *inputs,
               "-filter_complex_script", graph_file,
               "-map", f"[{prev}]", "-map", "[a]",
@@ -204,7 +206,7 @@ def render_job(job, shots, text_events, log=print):
               "-pix_fmt", "yuv420p", "-r", str(FPS),
               "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
               "-t", f"{total:.3f}", out], log)
-        log(f"  done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")
+        log(f"[100%] done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")
         return out, total
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -108,6 +108,27 @@ def scene_mood(narration: str) -> str:
     return "neutral"
 
 
+def forced_scene_events(text, window, si, colorize=True, hold=(1.8, 4.2)):
+    """Turn an editor's PINNED on-screen text for a scene into placed events,
+    spread evenly across the scene window. These are guaranteed to appear."""
+    chunks = chunk_scene(text, colorize=colorize)
+    for ch in chunks:
+        ch.crucial = True
+    if not chunks:
+        return []
+    w0, w1 = window
+    span = max(0.1, (w1 - w0) - 0.6)
+    step = span / len(chunks)
+    out = []
+    for k, ch in enumerate(chunks):
+        t = w0 + 0.3 + k * step
+        dur = min(hold[1], max(hold[0], 0.45 * ch.n_words + 1.2))
+        t_end = min(t + dur, w1 - 0.15)
+        if t_end - t >= 0.55:
+            out.append([t, t_end, si, ch])
+    return out
+
+
 def select_text_events(scene_chunks, windows, first_dense_secs=60.0,
                        max_quiet=38.0, min_gap=6.0, dense_gap=3.4,
                        hold=(1.8, 4.2)):

@@ -79,6 +79,48 @@ def _natkey(p):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", p)]
 
 
+_SCENE_HDR = re.compile(r"^\s*(#+\s*)?scene\s*\d+|^[A-Z0-9 ,'&\-]{6,}$", re.I)
+_NARR_LBL = re.compile(r"(narration\s*/?\s*text|script\s*cue|narration)\s*:\s*(.*)", re.I)
+_ONSCR_LBL = re.compile(r"on[-\s]?screen\s*text\s*:\s*(.*)", re.I)
+
+
+def parse_instructor(path: str):
+    """Parse the visual-editor / instructor file → per-scene
+    {'narration':…, 'on_screen':…} blocks in order. Flexible about labels."""
+    blocks, cur, field = [], None, None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            hdr = re.match(r"^\s*(#+\s*)?scene\s*\d+", line, re.I)
+            if hdr:
+                cur = {"narration": "", "on_screen": ""}
+                blocks.append(cur)
+                field = None
+                continue
+            if cur is None:
+                continue
+            m = _NARR_LBL.search(line)
+            if m:
+                cur["narration"] = m.group(2).strip().strip('“”"')
+                field = "narration"
+                continue
+            m = _ONSCR_LBL.search(line)
+            if m:
+                cur["on_screen"] = m.group(1).strip().strip('“”"')
+                field = "on_screen"
+                continue
+            if re.match(r"^\s*(SUMMARY|IMAGE|CLIP|VISUAL|EDITOR|SPOKEN|NOTES)\b", line, re.I):
+                field = None
+                continue
+            if field and line.strip():
+                cur[field] = (cur[field] + " " + line.strip()).strip()
+    for b in blocks:
+        b["narration"] = " ".join(b["narration"].split())
+        if b["on_screen"].strip().lower() in ("none", "-", "n/a", "na"):
+            b["on_screen"] = ""
+    return blocks
+
+
 def read_scenes(scenes_dir: str, log=print) -> list:
     dirs = sorted((d for d in glob.glob(os.path.join(scenes_dir, "scene_*"))
                    if os.path.isdir(d)), key=_natkey)

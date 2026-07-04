@@ -33,7 +33,8 @@ class JobCard(ttk.LabelFrame):
         self.on_remove = on_remove
         self.vars = {
             "scenes": tk.StringVar(), "audio": tk.StringVar(),
-            "script": tk.StringVar(), "name": tk.StringVar(value=f"video_{idx+1:02d}"),
+            "script": tk.StringVar(), "instructor": tk.StringVar(),
+            "name": tk.StringVar(value=f"video_{idx+1:02d}"),
             "format": tk.StringVar(value="Auto-Rotate"),
             "language": tk.StringVar(value="en"),
             "niche": tk.StringVar(value="Movie Essay"),
@@ -59,6 +60,8 @@ class JobCard(ttk.LabelFrame):
         row("Narration audio", "audio",
             types=[("Audio", "*.mp3 *.wav *.m4a *.aac"), ("All", "*.*")])
         row("Clean script (opt)", "script", types=[("Text", "*.txt"), ("All", "*.*")])
+        row("Visual editor (opt)", "instructor",
+            types=[("Text", "*.txt *.md"), ("All", "*.*")])
 
         ttk.Label(self, text="Output name", width=16).grid(row=r, column=0, sticky="w")
         ttk.Entry(self, textvariable=self.vars["name"], width=28).grid(
@@ -92,6 +95,7 @@ class JobCard(ttk.LabelFrame):
                "random" if fmt == "Random" else fmt)
         return {
             "scenes": v["scenes"], "audio": v["audio"], "script": v["script"],
+            "instructor": v["instructor"],
             "out": os.path.join(out_dir, v["name"] + ".mp4"),
             "format": fmt, "language": v["language"], "niche": v["niche"],
             "keyword_colors": bool(v["kw"]), "text": bool(v["text"]),
@@ -139,7 +143,16 @@ class App:
         self.start_btn = ttk.Button(btns, text="▶  Start Queue", command=self.start)
         self.start_btn.pack(side="left", padx=8)
 
-        self.log = tk.Text(root, height=14, state="disabled",
+        prog = ttk.Frame(root, padding=(8, 0))
+        prog.pack(fill="x")
+        self.status = tk.StringVar(value="idle")
+        ttk.Label(prog, textvariable=self.status, width=48).pack(side="left")
+        self.pbar = ttk.Progressbar(prog, mode="determinate", maximum=100)
+        self.pbar.pack(side="left", fill="x", expand=True, padx=6)
+        self.pct = tk.StringVar(value="0%")
+        ttk.Label(prog, textvariable=self.pct, width=5).pack(side="left")
+
+        self.log = tk.Text(root, height=12, state="disabled",
                            bg="#101418", fg="#d7e3ee", font=("Consolas", 9))
         self.log.pack(fill="both", expand=False, padx=8, pady=(0, 8))
 
@@ -169,10 +182,37 @@ class App:
             c.configure(text=f"Video {i + 1}")
 
     def _append(self, text):
-        self.log.configure(state="normal")
-        self.log.insert("end", text)
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        import re
+        for line in text.splitlines(keepends=True):
+            m = re.match(r"\[\s*(\d+)%\]", line)
+            if m:
+                base, span = self._job_progress_window()
+                jobpct = int(m.group(1))
+                overall = base + span * jobpct / 100.0
+                self.pbar["value"] = overall
+                self.pct.set(f"{int(overall)}%")
+                self.status.set(line.strip()[:60])
+            elif re.match(r"\[\d+/\d+\]\s+(OK|FAILED)", line):
+                self._jobs_done = getattr(self, "_jobs_done", 0) + 1
+                self.pbar["value"] = self._jobs_done * (100.0 / max(1, getattr(self, "_njobs", 1)))
+                self.pct.set(f"{int(self.pbar['value'])}%")
+            elif line.startswith("QUEUE DONE"):
+                self.pbar["value"] = 100
+                self.pct.set("100%")
+                self.status.set("finished ✓")
+            elif line.startswith("JOB:"):
+                self.status.set(line.strip()[:60])
+            self.log.configure(state="normal")
+            self.log.insert("end", line)
+            self.log.see("end")
+            self.log.configure(state="disabled")
+
+    def _job_progress_window(self):
+        """Each job owns an equal slice of the overall bar (multi-video queue)."""
+        n = max(1, getattr(self, "_njobs", 1))
+        done = getattr(self, "_jobs_done", 0)
+        span = 100.0 / n
+        return done * span, span
 
     def start(self):
         if self.proc and self.proc.poll() is None:
@@ -190,6 +230,11 @@ class App:
         qfile = os.path.join(self.out_dir.get(), "jobs.json")
         with open(qfile, "w", encoding="utf-8") as f:
             json.dump({"resolution": self.resolution.get(), "jobs": jobs}, f, indent=2)
+        self._njobs = len(jobs)
+        self._jobs_done = 0
+        self.pbar["value"] = 0
+        self.pct.set("0%")
+        self.status.set(f"starting {len(jobs)} video(s) ...")
         self._append(f"\n=== starting queue: {len(jobs)} video(s), "
                      f"{self.resolution.get()} ===\n")
 

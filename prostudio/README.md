@@ -9,10 +9,31 @@ ready-to-upload **16:9 4K MP4**, edited like a pro human editor.
    - Scenes folder (scene_001, scene_002, …)
    - Narration audio (one mp3 for the whole video)
    - Optional clean script (.txt)
+   - **Optional visual-editor file** (.txt/.md) — your per-scene plan;
+     overrides scene narration and pins exact on-screen text (see below)
    - Format (Auto-Rotate / Random / F1..F10), Language, Niche,
      Keyword-colors toggle
    - **+ Add Video** → queue up to 15 videos (overnight bulk)
-3. **Start Queue** → videos land in the output folder with a report each.
+3. **Start Queue** → a live **% progress bar** shows each stage
+   (footage check → audio sync → shot plan → render → compositing);
+   videos land in the output folder with a report each.
+
+## Visual-editor file (optional per-scene guide)
+Give the tool your own editing sheet and it follows it. Plain text, one
+block per scene — labels are flexible:
+```
+Scene 1
+NARRATION / TEXT: Tony arrived in Miami in 1980 with nothing.
+ON-SCREEN TEXT: 1980 — MIAMI
+
+Scene 2
+Script Cue: He built an empire on fear.
+On-Screen Text: THE EMPIRE
+```
+- `NARRATION` / `Script Cue` / `Narration` → overrides that scene's narration.
+- `ON-SCREEN TEXT` → the exact words to show on screen for that scene
+  (guaranteed to appear; `none` = let the tool auto-pick). Ignored if
+  on-screen text is turned OFF.
 
 ## On-screen text (per-video toggle)
 - **On-screen text: ON** — text synced to the narration. With `faster-whisper`
