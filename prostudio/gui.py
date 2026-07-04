@@ -241,7 +241,7 @@ class App:
         def worker():
             try:
                 self.proc = subprocess.Popen(
-                    [sys.executable, os.path.join(HERE, "prostudio.py"),
+                    [sys.executable, "-u", os.path.join(HERE, "prostudio.py"),
                      "--queue", qfile],
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", cwd=HERE)

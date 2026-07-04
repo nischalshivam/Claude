@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
 
 
 def duration(path: str) -> float:
@@ -30,12 +31,47 @@ def silence_gaps(path: str, noise_db=-27, min_d=0.15, max_t=None):
     return list(zip(starts, ends[:len(starts)]))
 
 
-def try_whisper_words(audio: str, model_size: str, language, log=print):
-    """[(word, start, end)] or None if whisper unavailable."""
+def try_whisper_words(audio: str, model_size: str, language, log=print,
+                      load_timeout=300):
+    """[(word, start, end)] or None if whisper unavailable.
+
+    The FIRST run downloads the model from Hugging Face; on a slow/blocked
+    connection that download can hang indefinitely with no error, which
+    used to freeze the whole job forever. It now runs on a daemon thread
+    with a hard timeout, so a stuck download degrades to silence-sync
+    instead of hanging the job (and can't block process exit either)."""
     try:
         from faster_whisper import WhisperModel
-        log(f"  whisper ({model_size}) transcribing narration ...")
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    except Exception as exc:
+        log(f"  whisper unavailable ({type(exc).__name__}) -> silence-snap sync")
+        return None
+
+    log(f"  whisper ({model_size}) loading model "
+        f"(first run downloads it — up to {load_timeout // 60} min) ...")
+    result = {}
+
+    def _load():
+        try:
+            result["model"] = WhisperModel(model_size, device="cpu",
+                                           compute_type="int8")
+        except Exception as exc:
+            result["error"] = exc
+
+    t = threading.Thread(target=_load, daemon=True)
+    t.start()
+    t.join(timeout=load_timeout)
+    if t.is_alive():
+        log(f"  whisper model download timed out after {load_timeout}s "
+            "(network blocked?) -> silence-snap sync")
+        return None
+    if "error" in result:
+        log(f"  whisper unavailable ({type(result['error']).__name__}) "
+            "-> silence-snap sync")
+        return None
+
+    try:
+        log("  whisper transcribing narration ...")
+        model = result["model"]
         segs, info = model.transcribe(audio, word_timestamps=True,
                                       language=language)
         words = []
@@ -45,7 +81,8 @@ def try_whisper_words(audio: str, model_size: str, language, log=print):
         log(f"  whisper: {len(words)} words ({info.language})")
         return words or None
     except Exception as exc:
-        log(f"  whisper unavailable ({type(exc).__name__}) -> silence-snap sync")
+        log(f"  whisper transcription failed ({type(exc).__name__}) "
+            "-> silence-snap sync")
         return None
 
 
