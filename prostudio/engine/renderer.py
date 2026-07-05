@@ -95,8 +95,20 @@ def _video_vf(shot, W, H, style):
     return fit
 
 
-def render_shot(shot, out, style, niche, W, H, pad, glow, log):
-    secs = shot.secs + pad
+def _ensure_duration(out, secs, log):
+    """Pad a short segment up to `secs` so the composite offsets stay exact."""
+    got = duration(out)
+    if got + 0.05 < secs:
+        tmp = out + ".p.mp4"
+        _run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", out, "-vf",
+              f"tpad=stop_mode=clone:stop_duration={secs - got:.3f}",
+              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+              tmp], log, timeout=120)
+        os.replace(tmp, out)
+
+
+def _render_full(shot, out, style, niche, W, H, secs, glow, log, timeout):
+    """The full styled render (Ken Burns / drift / grade / grain / glitch)."""
     if shot.kind == "image":
         vf = _zoompan_image(shot, W, H, secs, style)
         ins = ["-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", shot.path]
@@ -129,15 +141,93 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log):
         cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *ins, "-vf", vf]
     cmd += ["-t", f"{secs:.3f}", "-an", "-r", str(FPS), "-c:v", "libx264",
             "-pix_fmt", "yuv420p", "-preset", "veryfast", out]
-    _run(cmd, log, timeout=600)
-    got = duration(out)
-    if got + 0.05 < secs:
-        tmp = out + ".p.mp4"
-        _run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", out, "-vf",
-              f"tpad=stop_mode=clone:stop_duration={secs - got:.3f}",
-              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-              tmp], log, timeout=600)
-        os.replace(tmp, out)
+    _run(cmd, log, timeout=timeout)
+    _ensure_duration(out, secs, log)
+
+
+def _safe_still(path, kind, W, H, work, log, timeout=60):
+    """Decode ONE frame (single pass, bounded) and normalize it to WxH.
+
+    This is the escape hatch for a pathological input (huge / corrupt /
+    exotic-codec video): one decode instead of per-frame heavy filtering.
+    Returns the still path or None."""
+    still = os.path.join(work, "safe_" + str(abs(hash(path)) % 10**8) + ".png")
+    seek = []
+    if kind == "video":
+        d = duration(path)
+        if d > 0.2:
+            seek = ["-ss", f"{min(max(d * 0.5, 0.0), max(0.0, d - 0.1)):.2f}"]
+    cmd = (["ffmpeg", "-nostdin", "-y", "-v", "error", *seek, "-i", path,
+            "-frames:v", "1", "-vf",
+            f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=bilinear,"
+            f"crop={W}:{H}", still])
+    try:
+        _run(cmd, log, timeout=timeout)
+    except Exception:
+        return None
+    return still if os.path.isfile(still) else None
+
+
+def _render_still_simple(still, out, shot, W, H, secs, style, niche, log,
+                         timeout=90):
+    """A gentle, robust render from a NORMALIZED still (input already WxH,
+    so this is always fast). Slow zoom + grade only — no grain/glitch."""
+    z = 1.10
+    x = "iw/2-(iw/zoom/2)"
+    y = "ih/2-(ih/zoom/2)"
+    frames = max(1, int(secs * FPS))
+    if shot.zoom_in:
+        zexpr = f"min(1.0+0.0009*on,{z})"
+    else:
+        zexpr = f"max({z}-0.0009*on,1.0)"
+    vf = (f"scale={int(W*1.2)}:{int(H*1.2)}:flags=bilinear,"
+          f"zoompan=z='{zexpr}':d={frames}:x='{x}':y='{y}':s={W}x{H}:fps={FPS},"
+          f"setsar=1," + grade_for(niche, shot.mood, style["sepia"]))
+    if style["letterbox"]:
+        vh = int(W * 9 / 21)
+        vf += f",crop={W}:{vh},pad={W}:{H}:0:(oh-ih)/2:black"
+    cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", "-loop", "1",
+           "-t", f"{secs + 0.4:.3f}", "-i", still, "-vf", vf,
+           "-t", f"{secs:.3f}", "-an", "-r", str(FPS), "-c:v", "libx264",
+           "-pix_fmt", "yuv420p", "-preset", "veryfast", out]
+    _run(cmd, log, timeout=timeout)
+    _ensure_duration(out, secs, log)
+
+
+def _render_filler(out, W, H, secs, log):
+    """Last resort: a neutral dark clip of the exact duration, so the
+    timeline never breaks even if a file is completely unusable."""
+    _run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "lavfi",
+          "-i", f"color=c=0x0b0d10:s={W}x{H}:r={FPS}:d={secs:.3f}",
+          "-t", f"{secs:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-preset", "veryfast", out], log, timeout=60)
+
+
+def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
+    """Render one shot, GUARANTEED to produce a valid segment.
+
+    Tier 1: full styled render (bounded timeout).
+    Tier 2: on timeout/failure, a single-decode safe still (gentle motion).
+    Tier 3: on any further failure, neutral filler of the right length.
+    A single bad/huge/corrupt file can never stall or fail the whole job."""
+    secs = shot.secs + pad
+    work = work or os.path.dirname(out)
+    try:
+        _render_full(shot, out, style, niche, W, H, secs, glow, log,
+                     timeout=180)
+        return "full"
+    except Exception as exc:
+        log(f"  shot slow/failed ({exc}); retrying in safe mode "
+            f"[{os.path.basename(shot.path)}] ...")
+    try:
+        still = _safe_still(shot.path, shot.kind, W, H, work, log)
+        if still:
+            _render_still_simple(still, out, shot, W, H, secs, style, niche, log)
+            return "safe"
+    except Exception as exc:
+        log(f"  safe mode failed ({exc}); using neutral filler ...")
+    _render_filler(out, W, H, secs, log)
+    return "filler"
 
 
 def render_job(job, shots, text_events, log=print):
@@ -159,15 +249,22 @@ def render_job(job, shots, text_events, log=print):
             joins.append((ttype, max(0.05, tdur)))
 
         log(f"  rendering {n} shots at {W}x{H} ...")
-        segs = []
+        segs, degraded = [], 0
         for i, sh in enumerate(shots):
             seg = os.path.join(work, f"s{i:03d}.mp4")
             pad = joins[i][1] if i < n - 1 else 0.0
-            render_shot(sh, seg, style, job.niche, W, H, pad, glow, log)
+            tier = render_shot(sh, seg, style, job.niche, W, H, pad, glow, log,
+                               work=work)
+            if tier != "full":
+                degraded += 1
             segs.append(seg)
             # shots span 25%..85% of the whole job
             pct = 25 + int(60 * (i + 1) / n)
             log(f"[{pct:3d}%] rendered shot {i + 1}/{n}")
+        if degraded:
+            log(f"  note: {degraded}/{n} shot(s) used a simplified render "
+                "(a source file was too large/slow/corrupt) — the video is "
+                "complete; you can swap those clips in your editor if needed.")
 
         durs = [duration(s) for s in segs]
         inputs = []
