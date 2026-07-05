@@ -13,19 +13,26 @@ import threading
 
 
 def duration(path: str) -> float:
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                          "format=duration", "-of", "csv=p=0", path],
-                         capture_output=True, text=True).stdout.strip()
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                              "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return 0.0
     return float(out or 0)
 
 
 def silence_gaps(path: str, noise_db=-27, min_d=0.15, max_t=None):
     """[(start, end), ...] silent stretches of the narration."""
-    cmd = ["ffmpeg", "-hide_banner", "-i", path]
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-i", path]
     if max_t:
         cmd += ["-t", str(max_t)]
     cmd += ["-af", f"silencedetect=noise={noise_db}dB:d={min_d}", "-f", "null", "-"]
-    out = subprocess.run(cmd, capture_output=True, text=True).stderr
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True,
+                             timeout=180).stderr
+    except subprocess.TimeoutExpired:
+        return []
     starts = [float(m) for m in re.findall(r"silence_start: ([0-9.]+)", out)]
     ends = [float(m) for m in re.findall(r"silence_end: ([0-9.]+)", out)]
     return list(zip(starts, ends[:len(starts)]))

@@ -37,9 +37,13 @@ def _clip_fill_frames(clip_path, n):
         ts = d * (i + 0.5) / n
         out = os.path.join(_FRAME_CACHE, f"{base}_{tag}_{i}.jpg")
         if not os.path.isfile(out):
-            subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{ts:.2f}",
-                            "-i", clip_path, "-frames:v", "1", "-q:v", "2", out],
-                           capture_output=True)
+            try:
+                subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-ss",
+                                f"{ts:.2f}", "-i", clip_path, "-frames:v", "1",
+                                "-q:v", "2", out],
+                               capture_output=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                pass
         if os.path.isfile(out):
             outs.append(MediaScore(path=out, kind="image", ok=True))
     return outs

@@ -22,8 +22,13 @@ from .formats import FORMATS, grade_for
 from .textlayout import chunk_filters
 
 
-def _run(cmd, log):
-    p = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, log, timeout=None):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log(f"ffmpeg timed out after {timeout}s (stuck process, likely waiting "
+            "on stdin) -> aborting this shot")
+        raise RuntimeError("ffmpeg timed out")
     if p.returncode:
         log("ffmpeg error:\n" + p.stderr[-1500:])
         raise RuntimeError("ffmpeg failed")
@@ -117,21 +122,21 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log):
         gs = int(min(W, H) * 1.15)
         fc = (f"[0:v]{vf}[b];[1:v]scale={gs}:{gs}[g];"
               f"[b][g]overlay=x=(W-w)/2:y=(H-h)/2-{int(0.06*H)}:format=auto[v]")
-        cmd = ["ffmpeg", "-y", "-v", "error", *ins,
+        cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *ins,
                "-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", glow,
                "-filter_complex", fc, "-map", "[v]"]
     else:
-        cmd = ["ffmpeg", "-y", "-v", "error", *ins, "-vf", vf]
+        cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *ins, "-vf", vf]
     cmd += ["-t", f"{secs:.3f}", "-an", "-r", str(FPS), "-c:v", "libx264",
             "-pix_fmt", "yuv420p", "-preset", "veryfast", out]
-    _run(cmd, log)
+    _run(cmd, log, timeout=600)
     got = duration(out)
     if got + 0.05 < secs:
         tmp = out + ".p.mp4"
-        _run(["ffmpeg", "-y", "-v", "error", "-i", out, "-vf",
+        _run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", out, "-vf",
               f"tpad=stop_mode=clone:stop_duration={secs - got:.3f}",
               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-              tmp], log)
+              tmp], log, timeout=600)
         os.replace(tmp, out)
 
 
@@ -199,7 +204,7 @@ def render_job(job, shots, text_events, log=print):
         with open(graph_file, "w", encoding="utf-8") as f:
             f.write(";\n".join(filt))
         log("[ 88%] compositing final video (this is the longest step) ...")
-        _run(["ffmpeg", "-y", "-v", "error", *inputs,
+        _run(["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
               "-filter_complex_script", graph_file,
               "-map", f"[{prev}]", "-map", "[a]",
               "-c:v", "libx264", "-crf", str(job.crf), "-preset", job.preset,
