@@ -154,10 +154,44 @@ def read_scenes(scenes_dir: str, log=print) -> list:
     return scenes
 
 
+def _borrow_images(scenes, si):
+    """Images from the NEAREST scene that has any (closest index first).
+
+    Used only to fill a scene that has zero usable media of its own, so its
+    narration window is still covered and the whole video stays in audio sync.
+    We borrow IMAGES (never another scene's clip) so the story order is not
+    disturbed."""
+    order = sorted((k for k in range(len(scenes)) if k != si),
+                   key=lambda k: (abs(k - si), k))
+    for k in order:
+        if scenes[k].images:
+            return list(scenes[k].images)
+    for k in order:                               # no images anywhere -> frames
+        if scenes[k].videos:
+            return _clip_fill_frames(scenes[k].videos[0].path, 4)
+    return []
+
+
+def _placeholder_still():
+    """A neutral dark frame — absolute last resort when the ENTIRE project
+    has no usable media at all (so the timeline never breaks)."""
+    os.makedirs(_FRAME_CACHE, exist_ok=True)
+    p = os.path.join(_FRAME_CACHE, "placeholder.png")
+    if not os.path.isfile(p):
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f",
+                        "lavfi", "-i", "color=c=0x0b0d10:s=1280x720",
+                        "-frames:v", "1", p], capture_output=True, timeout=30)
+    return p
+
+
 def plan_shots(scenes, windows, rng: random.Random, log=print,
                clip_min=2.0, clip_max=5.0, img_min=2.6, img_max=7.0,
                jl_offset=0.4):
+    import math
+    from .audio_sync import duration
+    from .subjects import detect_faces
     shots = []
+    starved = 0
     for si, (scene, (w0, w1)) in enumerate(zip(scenes, windows)):
         # J/L cut: shift the visual boundary off the audio boundary
         v0 = max(0.0, w0 - jl_offset) if (si % 2 == 1 and si > 0) else w0
@@ -165,50 +199,71 @@ def plan_shots(scenes, windows, rng: random.Random, log=print,
         span = v1 - v0
         pool_v = list(scene.videos)
         pool_i = list(scene.images)
-        # budget clips first (they carry the story)
+        # budget clips first (they carry the story) — capped to each clip's
+        # REAL length so a short clip is never frozen-stretched
         t = v0
         scene_shots = []
         for v in pool_v:
             if v1 - t < clip_min:
                 break
             d = min(clip_max, max(clip_min, span * 0.45), v1 - t)
+            real = duration(v.path)
+            if real > 0:
+                d = min(d, max(1.2, real))
             scene_shots.append(Shot(v.path, "video", t, t + d, si, scene.mood))
             t += d
-        # images fill the rest — each UNIQUE image is used once; we prefer
-        # longer holds (strong Ken Burns covers it) over repeating a visual,
-        # and only repeat when a scene genuinely lacks media (evenly, minimal).
-        import math
+        # images fill the rest — each UNIQUE image used once; longer holds
+        # over repeats; top up a media-starved scene with distinct clip frames.
         remaining = v1 - t
-        imgs = list(pool_i)                       # unique real images, best-first
+        imgs = list(pool_i)
         if remaining >= img_min:
             max_hold, target = 8.5, 5.5
             need_min = max(1, math.ceil(remaining / max_hold))
             n_pref = max(1, round(remaining / target))
-            # top up a media-starved scene with distinct frames from its clip
-            # (never repeat the same visual)
             if len(imgs) < max(need_min, n_pref) and scene.videos:
                 short = max(need_min, n_pref) - len(imgs)
                 imgs += _clip_fill_frames(scene.videos[0].path, min(short, 4))
-            if not imgs:
-                imgs = list(pool_v)               # last resort
             n = min(len(imgs), max(need_min, n_pref)) if imgs else 0
-            seq = imgs[:n]                         # unique only, NO repeats
-            if not seq:
-                if scene_shots:
-                    scene_shots[-1].t1 = v1       # nothing to fill with: hold
-                shots_span = None
-            else:
+            seq = imgs[:n]
+            if seq:
                 share = remaining / len(seq)
                 for k, m in enumerate(seq):
                     d = share if k < len(seq) - 1 else (v1 - t)
                     scene_shots.append(Shot(m.path, m.kind, t, t + d, si,
                                             scene.mood))
                     t += d
-        elif remaining > 0 and scene_shots:
-            scene_shots[-1].t1 = v1
+
+        # ---- GUARANTEE the whole window is covered (keeps audio in sync) ----
+        # If this scene ran short (few/no clips, all images used, or the folder
+        # was empty / entirely QC-rejected), fill the gap: this scene's OWN clip
+        # frames first, then BORROW the nearest scene's images, then a neutral
+        # still. A scene never contributes less video than its narration, so no
+        # later scene can drift out of sync, and clips never bleed between scenes.
+        covered = scene_shots[-1].t1 if scene_shots else v0
+        if covered < v1 - 0.05:
+            src = []
+            if scene.videos:
+                src = _clip_fill_frames(scene.videos[0].path, 4)
+            if not src:
+                src = _borrow_images(scenes, si)
+                if src:
+                    starved += 1
+            if not src:
+                src = [MediaScore(path=_placeholder_still(), kind="image",
+                                  ok=True)]
+                starved += 1
+            gap = v1 - covered
+            k = max(1, min(len(src) * 4, round(gap / 5.5)))
+            tt = covered
+            for idx in range(k):
+                m = src[idx % len(src)]
+                d = (v1 - tt) if idx == k - 1 else gap / k
+                scene_shots.append(Shot(m.path, m.kind, tt, tt + d, si,
+                                        scene.mood))
+                tt += d
+
         # per-shot flavour: alternating zoom, occasional punch-in, drift seed,
         # detected faces (so text can be placed in negative space later)
-        from .subjects import detect_faces
         for j, sh in enumerate(scene_shots):
             sh.zoom_in = (j + si) % 2 == 0
             sh.punch_in = rng.random() < 0.22 and sh.secs > 3.0
@@ -216,6 +271,10 @@ def plan_shots(scenes, windows, rng: random.Random, log=print,
             sh.faces = detect_faces(sh.path, sh.kind)
         shots.extend(scene_shots)
 
+    if starved:
+        log(f"  note: {starved} scene(s) had too little footage — filled with "
+            "borrowed/neutral visuals to keep audio in sync (add more clips to "
+            "those scene folders for a richer edit)")
     # transitions: within-scene soft, scene-boundary strong (format decides look)
     for a, b in zip(shots, shots[1:]):
         a.transition = "scene" if b.scene_i != a.scene_i else "soft"

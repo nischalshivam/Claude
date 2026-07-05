@@ -34,6 +34,49 @@ def _run(cmd, log, timeout=None):
         raise RuntimeError("ffmpeg failed")
 
 
+def _run_progress(cmd, log, total, work, lo=88, hi=99, stall_secs=900):
+    """Run a long ffmpeg with LIVE progress so the final compose step never
+    looks frozen. Maps encoded time -> [lo..hi]%. Aborts only if there is NO
+    progress at all for `stall_secs` (a genuine hang), not just because it's
+    slow."""
+    import time
+    errpath = os.path.join(work, "compose_err.log")
+    with open(errpath, "w", encoding="utf-8") as errf:
+        p = subprocess.Popen(cmd + ["-progress", "pipe:1", "-nostats"],
+                             stdout=subprocess.PIPE, stderr=errf, text=True)
+        last_pct, last_beat = lo, time.time()
+        try:
+            for line in p.stdout:
+                line = line.strip()
+                if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
+                    try:
+                        val = int(line.split("=", 1)[1])
+                    except ValueError:
+                        continue
+                    # ffmpeg quirk: BOTH out_time_us and out_time_ms are in
+                    # microseconds (out_time_ms is misnamed) -> divide by 1e6
+                    secs = val / 1e6
+                    frac = min(1.0, max(0.0, secs / max(0.1, total)))
+                    pct = int(lo + (hi - lo) * frac)
+                    now = time.time()
+                    if pct > last_pct or now - last_beat > 20:
+                        last_pct, last_beat = max(pct, last_pct), now
+                        log(f"[{last_pct:3d}%] compositing ... "
+                            f"{secs:.0f}/{total:.0f}s encoded")
+                elif line.startswith("progress=end"):
+                    break
+        finally:
+            p.stdout.close()
+        p.wait()
+    if p.returncode:
+        try:
+            err = open(errpath, encoding="utf-8", errors="replace").read()
+        except OSError:
+            err = ""
+        log("ffmpeg error:\n" + err[-1500:])
+        raise RuntimeError("ffmpeg failed")
+
+
 def _glow_png(path, size=1000):
     from PIL import Image
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -300,14 +343,22 @@ def render_job(job, shots, text_events, log=print):
         graph_file = os.path.join(work, "graph.txt")
         with open(graph_file, "w", encoding="utf-8") as f:
             f.write(";\n".join(filt))
-        log("[ 88%] compositing final video (this is the longest step) ...")
-        _run(["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
-              "-filter_complex_script", graph_file,
-              "-map", f"[{prev}]", "-map", "[a]",
-              "-c:v", "libx264", "-crf", str(job.crf), "-preset", job.preset,
-              "-pix_fmt", "yuv420p", "-r", str(FPS),
-              "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-              "-t", f"{total:.3f}", out], log)
+        # encoder preset: at 4K, "medium" is needlessly slow — "fast" at the
+        # same CRF looks all but identical and cuts the compose time a lot.
+        preset = job.preset
+        if W * H >= 3840 * 2160 and preset in ("medium", "slow", "slower"):
+            preset = "fast"
+        log(f"[ 88%] compositing final video (longest step, ~{total:.0f}s at "
+            f"{W}x{H}/{preset}) — live progress below ...")
+        _run_progress(
+            ["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
+             "-filter_complex_script", graph_file,
+             "-map", f"[{prev}]", "-map", "[a]",
+             "-c:v", "libx264", "-crf", str(job.crf), "-preset", preset,
+             "-pix_fmt", "yuv420p", "-r", str(FPS),
+             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+             "-t", f"{total:.3f}", out],
+            log, total=total, work=work)
         log(f"[100%] done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")
         return out, total
     finally:
