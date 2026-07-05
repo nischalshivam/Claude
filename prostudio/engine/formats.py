@@ -5,10 +5,40 @@ from __future__ import annotations
 
 import os
 
-_FONTS = "/usr/share/fonts/truetype"
-SANS = os.environ.get("PS_FONT_SANS", f"{_FONTS}/dejavu/DejaVuSans-Bold.ttf")
-SERIF = os.environ.get("PS_FONT_SERIF", f"{_FONTS}/dejavu/DejaVuSerif-Bold.ttf")
-MONO = os.environ.get("PS_FONT_MONO", f"{_FONTS}/dejavu/DejaVuSansMono-Bold.ttf")
+# Fonts are BUNDLED in the repo so on-screen text works on ANY OS (the tool is
+# often run on Windows where Linux font paths don't exist -> "cannot open
+# resource"). Resolution order per role: env override -> bundled font ->
+# common system fonts (win/mac/linux) -> any bundled font that exists.
+_BUNDLED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "assets", "fonts")
+
+
+def _resolve_font(env_var, bundled_name, system_candidates):
+    for cand in ([os.environ.get(env_var)] if os.environ.get(env_var) else []) \
+            + [os.path.join(_BUNDLED, bundled_name)] + system_candidates:
+        if cand and os.path.isfile(cand):
+            return cand
+    # last resort: whatever bundled font we can find (text must never crash)
+    for f in ("DejaVuSans-Bold.ttf", "DejaVuSerif-Bold.ttf",
+              "DejaVuSansMono-Bold.ttf"):
+        p = os.path.join(_BUNDLED, f)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(_BUNDLED, bundled_name)   # may not exist; caller warns
+
+
+SANS = _resolve_font("PS_FONT_SANS", "DejaVuSans-Bold.ttf", [
+    "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/segoeuib.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"])
+SERIF = _resolve_font("PS_FONT_SERIF", "DejaVuSerif-Bold.ttf", [
+    "C:/Windows/Fonts/timesbd.ttf", "C:/Windows/Fonts/georgiab.ttf",
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"])
+MONO = _resolve_font("PS_FONT_MONO", "DejaVuSansMono-Bold.ttf", [
+    "C:/Windows/Fonts/consolab.ttf", "C:/Windows/Fonts/couri.ttf",
+    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"])
 
 # soft = within a scene, scene = at scene boundaries
 FORMATS = {

@@ -45,7 +45,9 @@ On-Screen Text: THE EMPIRE
 - **Any language's audio + footage works** for the video itself.
 - **Text ON** works out of the box for **Latin-script languages** (English,
   French, German, Spanish, Italian, Portuguese, Polish, Czech, Hungarian,
-  Dutch — accents included). Whisper syncs 90+ languages.
+  Dutch — accents included). Whisper syncs 90+ languages. Fonts are **bundled**
+  in `assets/fonts/`, so on-screen text works on any OS without installing
+  anything.
 - **Non-Latin scripts** (Hindi/Devanagari, Arabic, Chinese, …) need a matching
   font: set `PS_FONT_SANS` / `PS_FONT_SERIF` / `PS_FONT_MONO` to a Unicode TTF
   (the tool warns you). Or just turn text OFF for those.

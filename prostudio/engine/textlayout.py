@@ -33,6 +33,13 @@ def _font(path: str, size: int):
     return _FONTS[key]
 
 
+def _ff_font(path: str) -> str:
+    """Font path for ffmpeg drawtext. Single quotes already protect the drive
+    colon and spaces (verified), but Windows backslashes are escape chars in a
+    filtergraph — convert them to forward slashes."""
+    return path.replace("\\", "/")
+
+
 _NONLATIN_BLOCKS = [
     (0x0900, 0x097F, "Devanagari (Hindi/Marathi)"),
     (0x0980, 0x09FF, "Bengali"),
@@ -149,7 +156,7 @@ def chunk_filters(chunk, t0, t1, style, zone, W, H, lang="en", letterbox=False):
             alpha = (f"if(lt(t\\,{s})\\,0\\,if(lt(t\\,{s}+0.5)\\,(t-{s})/0.5\\,"
                      f"if(lt(t\\,{t1-0.4})\\,1\\,max(0\\,({t1}-t)/0.4))))")
         filters.append(
-            f"drawtext=fontfile='{fontpath}':text='{esc(dw)}':fontsize={fs}"
+            f"drawtext=fontfile='{_ff_font(fontpath)}':text='{esc(dw)}':fontsize={fs}"
             f":fontcolor={color}:borderw={style['border']}:bordercolor=black@0.92"
             f":shadowcolor=black@0.8:shadowx={sx}:shadowy={sy}"
             f":x={int(round(x))}:y='{yexpr}':alpha='{alpha}'"

@@ -91,6 +91,22 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
     # fonts can't draw (text ON only) — the video still renders, text may show
     # boxes until a matching font is set via PS_FONT_SANS/SERIF/MONO.
     if job.text:
+        # fail-fast font check: if the on-screen-text font can't be opened,
+        # don't render every shot and THEN crash at compositing — warn now and
+        # continue with clean footage so the video still completes.
+        from engine.formats import FORMATS
+        from PIL import ImageFont
+        for role_font in {FORMATS[job.format_key]["font"]}:
+            try:
+                ImageFont.truetype(role_font, 40)
+            except Exception:
+                log(f"  WARNING: on-screen-text font could not be opened "
+                    f"({role_font}). Rendering CLEAN footage (no text) so the "
+                    "video still completes. Reinstall/redownload the tool so "
+                    "assets/fonts/ is present, or set PS_FONT_SANS to a .ttf.")
+                job.text = False
+                break
+    if job.text:
         from engine.textlayout import script_needs_font
         sample = " ".join(s.narration for s in scenes[:4])
         script = script_needs_font(sample)
