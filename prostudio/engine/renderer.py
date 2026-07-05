@@ -73,8 +73,25 @@ def _run_progress(cmd, log, total, work, lo=88, hi=99, stall_secs=900):
             err = open(errpath, encoding="utf-8", errors="replace").read()
         except OSError:
             err = ""
-        log("ffmpeg error:\n" + err[-1500:])
+        # keep the FULL ffmpeg error next to the output for diagnosis, and show
+        # the actual error lines (not just a blind tail that may hide the cause)
+        keep = os.path.splitext(job_out(cmd))[0] + "_ffmpeg_error.log"
+        try:
+            with open(keep, "w", encoding="utf-8") as f:
+                f.write(err)
+        except OSError:
+            keep = errpath
+        hot = [ln for ln in err.splitlines()
+               if any(k in ln for k in ("Error", "error", "Invalid",
+                                        "No such", "Cannot", "failed"))]
+        msg = "\n".join(hot[-8:]) if hot else err[-800:]
+        log("ffmpeg error (full log: " + keep + "):\n" + msg)
         raise RuntimeError("ffmpeg failed")
+
+
+def job_out(cmd):
+    """The output path is the last token of an ffmpeg command."""
+    return cmd[-1]
 
 
 def _glow_png(path, size=1000):
@@ -322,14 +339,25 @@ def render_job(job, shots, text_events, log=print):
             prev = f"x{i}"
         total = acc + durs[-1]
 
-        # text overlay on the composite, absolute times (== audio times)
+        # text overlay on the composite, absolute times (== audio times).
+        # IMPORTANT: split the drawtext filters into MANY short filterchains
+        # (one per line) instead of one gigantic line. Some ffmpeg builds
+        # (notably Windows) truncate an over-long line when reading
+        # -filter_complex_script, which corrupts the graph mid-filter and
+        # fails with "Invalid argument". Small per-line batches avoid that.
         tfilters = []
         for (t0, t1, si, chunk, zone) in text_events:
             tfilters += chunk_filters(chunk, t0, t1, style, zone, W, H,
                                       lang=job.language,
                                       letterbox=style["letterbox"])
         if tfilters:
-            filt.append(f"[{prev}]" + ",".join(tfilters) + "[vt]")
+            batch = 8                              # ~8 drawtext/line, well under
+            label = prev                           # any line-length buffer
+            for i in range(0, len(tfilters), batch):
+                grp = tfilters[i:i + batch]
+                out_label = "vt" if i + batch >= len(tfilters) else f"vt{i}"
+                filt.append(f"[{label}]" + ",".join(grp) + f"[{out_label}]")
+                label = out_label
             prev = "vt"
 
         filt.append(f"[{n}:a]atrim=0:{total:.3f},afade=t=in:d=0.25,"
