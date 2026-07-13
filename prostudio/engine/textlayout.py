@@ -67,13 +67,15 @@ def script_needs_font(text: str):
 
 
 def esc(t: str) -> str:
-    # remove EVERY apostrophe form (straight/curly) — any apostrophe left in a
-    # drawtext text closes the filter's quote and corrupts the whole graph
+    # The text is emitted INSIDE single quotes in the drawtext filter, so the
+    # only real hazards are the apostrophe (closes the quote) and the backslash
+    # (escape-sequence ambiguity that some ffmpeg builds — notably Windows —
+    # mis-handle, breaking the whole graph). Everything else (: , % . -) is safe
+    # literally inside the quotes; we must NOT backslash-escape it, or Windows
+    # ffmpeg rejects the filterchain with "Invalid argument".
     for ch in ("'", "’", "‘", "`", "´", '"', "“", "”"):
         t = t.replace(ch, "")
-    return (t.replace("\\", "").replace(":", "\\:")
-             .replace(",", "\\,").replace("%", "\\%")
-             .replace("—", "-").replace("…", "..."))
+    return t.replace("\\", "").replace("—", "-").replace("…", "...")
 
 
 # anchor (cx fraction, cy fraction) inside the VISIBLE area — many varied spots
@@ -108,7 +110,12 @@ def chunk_filters(chunk, t0, t1, style, zone, W, H, lang="en", letterbox=False):
     margin = int(0.06 * W)
     safe_w = W - 2 * margin
 
-    words = chunk.text.split()
+    # clean each word up front (drop apostrophes/backslashes) so spacing and
+    # width-measurement match exactly what gets drawn — e.g. DOESN'T -> DOESNT
+    # -> "D O E S N T" (no stray double space)
+    words = [w for w in (esc(w) for w in chunk.text.split()) if w]
+    if not words:
+        return []
     upper = style["upper"] and cfg["allow_upper"]
     disp = [w.upper() if upper else w for w in words]
     if style.get("spaced"):
@@ -138,23 +145,25 @@ def chunk_filters(chunk, t0, t1, style, zone, W, H, lang="en", letterbox=False):
     filters, x = [], float(x0)
     for i, (dw, wd) in enumerate(zip(disp, widths)):
         color = chunk.colors[i] if i < len(chunk.colors) else "0xFFFFFF"
+        # expressions are single-quoted below, so commas are LITERAL (no
+        # backslash escaping — that breaks Windows ffmpeg).
         if style["anim"] == "type":
             s = t0 + 0.10 * i
-            yexpr, alpha = str(y), f"if(lt(t\\,{s})\\,0\\,1)"
+            yexpr, alpha = str(y), f"if(lt(t,{s}),0,1)"
         elif style["anim"] == "bounce":
             s = t0 + 0.09 * i
-            yexpr = (f"{y}+{int(24*scale)}*exp(-max(0\\,(t-{s}))*11)"
+            yexpr = (f"{y}+{int(24*scale)}*exp(-max(0,(t-{s}))*11)"
                      f"*cos((t-{s})*19)")
-            alpha = f"if(lt(t\\,{s})\\,0\\,min(1\\,(t-{s})*9))"
+            alpha = f"if(lt(t,{s}),0,min(1,(t-{s})*9))"
         elif style["anim"] == "pop":
             s = t0 + 0.07 * i
-            yexpr = f"{y}+{int(12*scale)}*exp(-max(0\\,(t-{s}))*13)"
-            alpha = f"if(lt(t\\,{s})\\,0\\,min(1\\,(t-{s})*8))"
+            yexpr = f"{y}+{int(12*scale)}*exp(-max(0,(t-{s}))*13)"
+            alpha = f"if(lt(t,{s}),0,min(1,(t-{s})*8))"
         else:  # fade
             s = t0 + 0.05 * i
             yexpr = str(y)
-            alpha = (f"if(lt(t\\,{s})\\,0\\,if(lt(t\\,{s}+0.5)\\,(t-{s})/0.5\\,"
-                     f"if(lt(t\\,{t1-0.4})\\,1\\,max(0\\,({t1}-t)/0.4))))")
+            alpha = (f"if(lt(t,{s}),0,if(lt(t,{s}+0.5),(t-{s})/0.5,"
+                     f"if(lt(t,{t1-0.4}),1,max(0,({t1}-t)/0.4))))")
         filters.append(
             f"drawtext=fontfile='{_ff_font(fontpath)}':text='{esc(dw)}':fontsize={fs}"
             f":fontcolor={color}:borderw={style['border']}:bordercolor=black@0.92"
