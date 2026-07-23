@@ -240,6 +240,10 @@ class App:
                    command=self.review).pack(side="left", padx=8)
         ttk.Button(bar, text="▶  Start Queue", style="Go.TButton",
                    command=self.start).pack(side="left", padx=4)
+        ttk.Button(bar, text="⏸  Stop", command=self.stop).pack(
+            side="left", padx=4)
+        ttk.Button(bar, text="⏵  Resume",
+                   command=lambda: self.start(resume=True)).pack(side="left")
 
         prog = ttk.Frame(root, padding=(16, 0))
         prog.pack(fill="x")
@@ -353,7 +357,32 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def start(self):
+    def stop(self):
+        """Stop the running queue. Finished videos and already-rendered shots
+        are kept on disk, so Resume continues from where it stopped."""
+        p = self.proc
+        stopped = False
+        if p and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+            stopped = True
+        rp = getattr(self, "_review_proc", None)
+        if rp and rp.poll() is None:
+            try:
+                rp.terminate()
+            except Exception:
+                pass
+            stopped = True
+        if stopped:
+            self.status.set("stopped — click Resume to continue")
+            self._append("\n[stopped by user — click ⏵ Resume to continue "
+                         "from where it stopped]\n")
+        else:
+            self.status.set("nothing is running")
+
+    def start(self, resume=False):
         if self.proc and self.proc.poll() is None:
             messagebox.showinfo("ProStudio", "Queue already running.")
             return
@@ -374,15 +403,19 @@ class App:
         self._jobs_done = 0
         self.pbar["value"] = 0
         self.pct.set("0%")
-        self.status.set(f"starting {len(jobs)} video(s) ...")
-        self._append(f"\n=== starting queue: {len(jobs)} video(s), "
+        verb = "resuming" if resume else "starting"
+        self.status.set(f"{verb} {len(jobs)} video(s) ...")
+        self._append(f"\n=== {verb} queue: {len(jobs)} video(s), "
                      f"{self.resolution.get()} ===\n")
+        cmd = [sys.executable, "-u", os.path.join(HERE, "prostudio.py"),
+               "--queue", qfile]
+        if resume:
+            cmd.append("--resume")
 
         def worker():
             try:
                 self.proc = subprocess.Popen(
-                    [sys.executable, "-u", os.path.join(HERE, "prostudio.py"),
-                     "--queue", qfile],
+                    cmd,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", cwd=HERE)
                 for line in self.proc.stdout:

@@ -426,7 +426,7 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
     return "filler"
 
 
-def render_job(job, shots, text_events, log=print, proxy=False):
+def render_job(job, shots, text_events, log=print, proxy=False, resume=False):
     style = dict(FORMATS[job.format_key])
     W, H = RESOLUTIONS[job.resolution]
     out_path = job.out_path
@@ -442,7 +442,17 @@ def render_job(job, shots, text_events, log=print, proxy=False):
         style["vignette"] = False
         style["spotlight"] = False
         out_path = os.path.splitext(job.out_path)[0] + "_proxy.mp4"
-    work = tempfile.mkdtemp(prefix="prostudio_")
+    # A persistent work dir per output lets a stopped render RESUME: already-
+    # rendered shot segments are kept and skipped next time. Proxies are quick
+    # and always start clean.
+    keep_work = not proxy
+    if proxy:
+        work = tempfile.mkdtemp(prefix="prostudio_")
+    else:
+        work = os.path.splitext(out_path)[0] + "_work"
+        if not resume:
+            shutil.rmtree(work, ignore_errors=True)   # fresh start
+        os.makedirs(work, exist_ok=True)
     try:
         glow = os.path.join(work, "glow.png")
         if style.get("spotlight"):
@@ -462,10 +472,22 @@ def render_job(job, shots, text_events, log=print, proxy=False):
             joins.append((ttype, max(0.05, tdur)))
 
         log(f"  rendering {n} shots at {W}x{H} ...")
-        segs, degraded = [], 0
+        segs, degraded, cached = [], 0, 0
         for i, sh in enumerate(shots):
             seg = os.path.join(work, f"s{i:03d}.mp4")
             pad = joins[i][1] if i < n - 1 else 0.0
+            want = sh.secs + pad
+            # RESUME: reuse a segment only if it is fully rendered AND matches
+            # the current resolution (a stale segment from a different-res run
+            # would break the xfade compose).
+            if (resume and os.path.isfile(seg)
+                    and abs(duration(seg) - want) < 0.2
+                    and _dims(seg) == (W, H)):
+                segs.append(seg)
+                cached += 1
+                pct = 25 + int(60 * (i + 1) / n)
+                log(f"[{pct:3d}%] shot {i + 1}/{n} (already done — skipped)")
+                continue
             tier = render_shot(sh, seg, style, job.niche, W, H, pad, glow, log,
                                work=work)
             if tier != "full":
@@ -474,6 +496,8 @@ def render_job(job, shots, text_events, log=print, proxy=False):
             # shots span 25%..85% of the whole job
             pct = 25 + int(60 * (i + 1) / n)
             log(f"[{pct:3d}%] rendered shot {i + 1}/{n}")
+        if cached:
+            log(f"  resumed: {cached}/{n} shot(s) reused from the last run")
         if degraded:
             log(f"  note: {degraded}/{n} shot(s) used a simplified render "
                 "(a source file was too large/slow/corrupt) — the video is "
@@ -542,6 +566,12 @@ def render_job(job, shots, text_events, log=print, proxy=False):
              "-t", f"{total:.3f}", out],
             log, total=total, work=work)
         log(f"[100%] done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")
-        return out, total
-    finally:
+        # success -> the checkpoint is no longer needed
         shutil.rmtree(work, ignore_errors=True)
+        return out, total
+    except BaseException:
+        # a stop / crash leaves the checkpoint in place so the next run resumes
+        # (proxies keep no checkpoint)
+        if not keep_work:
+            shutil.rmtree(work, ignore_errors=True)
+        raise

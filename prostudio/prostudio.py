@@ -217,12 +217,13 @@ def plan_job(job: Job, job_index: int = 0, log=print) -> dict:
 
 
 def render_from_plan(job: Job, shots, ev_with_zone, log=print,
-                     proxy=False) -> dict:
+                     proxy=False, resume=False) -> dict:
     """Render the (possibly user-edited) plan to a final MP4 (or a fast proxy
     for the browser review page)."""
     t_start = time.time()
     from engine.renderer import render_job as _render
-    out, total = _render(job, shots, ev_with_zone, log, proxy=proxy)
+    out, total = _render(job, shots, ev_with_zone, log, proxy=proxy,
+                         resume=resume)
     report = {
         "output": out, "seconds": round(total, 1),
         "format": job.format_key, "niche": job.niche,
@@ -238,10 +239,11 @@ def render_from_plan(job: Job, shots, ev_with_zone, log=print,
     return report
 
 
-def run_job(job: Job, job_index: int = 0, log=print) -> dict:
+def run_job(job: Job, job_index: int = 0, log=print, resume=False) -> dict:
     """Plan + render in one shot (the classic non-review path)."""
     plan = plan_job(job, job_index, log)
-    rep = render_from_plan(plan["job"], plan["shots"], plan["events"], log)
+    rep = render_from_plan(plan["job"], plan["shots"], plan["events"], log,
+                           resume=resume)
     rep["rejected_media"] = plan["rejected_media"]
     return rep
 
@@ -267,6 +269,9 @@ def main(argv=None):
     p.add_argument("--resolution", default="4K", choices=list(RESOLUTIONS))
     p.add_argument("--whisper-model", default="base")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--resume", action="store_true",
+                   help="skip finished videos and continue partly-rendered "
+                        "ones from where they stopped")
     a = p.parse_args(argv)
 
     jobs = []
@@ -297,17 +302,23 @@ def main(argv=None):
                         resolution=a.resolution,
                         whisper_model=a.whisper_model, seed=a.seed))
 
-    ok = fail = 0
+    ok = fail = skip = 0
     for i, job in enumerate(jobs):
+        # on --resume, a video that already finished (has its report) is skipped
+        report = os.path.splitext(job.out_path)[0] + "_report.json"
+        if a.resume and os.path.isfile(report) and os.path.isfile(job.out_path):
+            print(f"[{i+1}/{len(jobs)}] SKIP {job.out_path} (already done)")
+            skip += 1
+            continue
         try:
-            rep = run_job(job, i)
+            rep = run_job(job, i, resume=a.resume)
             print(f"[{i+1}/{len(jobs)}] OK {rep['output']} "
                   f"({rep['seconds']}s video, {rep['render_minutes']} min render)")
             ok += 1
         except Exception as exc:
             print(f"[{i+1}/{len(jobs)}] FAILED {job.out_path}: {exc}")
             fail += 1
-    print(f"QUEUE DONE: {ok} ok, {fail} failed")
+    print(f"QUEUE DONE: {ok} ok, {fail} failed, {skip} skipped")
     return 0 if fail == 0 else 1
 
 
