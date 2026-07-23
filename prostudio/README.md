@@ -35,6 +35,21 @@ On-Screen Text: THE EMPIRE
   (guaranteed to appear; `none` = let the tool auto-pick). Ignored if
   on-screen text is turned OFF.
 
+## Preview & Edit in your browser (before the slow final render)
+Click **🔍 Preview & Edit (Video 1)** instead of Start Queue. ProStudio plans
+the video, renders a **fast low-res draft**, and opens a page in your browser:
+- **Watch the draft** (plays in the browser) to see if clips match the narration.
+- Every shot is a card showing its **thumbnail, time range, and the exact
+  narration spoken under it**, so you can spot a mismatch instantly.
+- Fix it right there: **Replace** a clip with your own file from your device,
+  **Trim** (±), **Delete**, or reorder (↑ ↓). Timing stays locked to the audio
+  so nothing drifts out of sync.
+- **↻ Rebuild draft** to re-watch after changes.
+- **✔ Export final** renders the full-quality 4K MP4 from your edited plan.
+
+This is the ~5-minute check to make sure the footage fits the voiceover before
+committing to the long 4K export. (CLI: `python review_server.py --queue jobs.json`)
+
 ## On-screen text (per-video toggle)
 - **On-screen text: ON** — text synced to the narration. With `faster-whisper`
   installed you get **word-perfect** sync (text lands on the spoken word);

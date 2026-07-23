@@ -290,9 +290,22 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
     return "filler"
 
 
-def render_job(job, shots, text_events, log=print):
-    style = FORMATS[job.format_key]
+def render_job(job, shots, text_events, log=print, proxy=False):
+    style = dict(FORMATS[job.format_key])
     W, H = RESOLUTIONS[job.resolution]
+    out_path = job.out_path
+    crf, preset = job.crf, job.preset
+    if proxy:
+        # a fast, watchable draft: small + ultrafast + no heavy effects, so the
+        # review page appears in minutes. Placement/timing/text are identical
+        # to the final, which is all the review needs to verify.
+        W, H = 960, 540
+        crf, preset = 30, "ultrafast"
+        style["grain"] = 0
+        style["glitch"] = False
+        style["vignette"] = False
+        style["spotlight"] = False
+        out_path = os.path.splitext(job.out_path)[0] + "_proxy.mp4"
     work = tempfile.mkdtemp(prefix="prostudio_")
     try:
         glow = os.path.join(work, "glow.png")
@@ -364,7 +377,7 @@ def render_job(job, shots, text_events, log=print):
                     f"afade=t=out:st={max(0, total - 1.2):.3f}:d=1.2[a]")
         inputs += ["-i", job.audio]
 
-        out = job.out_path
+        out = out_path
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
         # long timelines (many shots + text events) produce a filtergraph far
         # bigger than the OS command-line limit -> pass it as a script file
@@ -373,18 +386,19 @@ def render_job(job, shots, text_events, log=print):
             f.write(";\n".join(filt))
         # encoder preset: at 4K, "medium" is needlessly slow — "fast" at the
         # same CRF looks all but identical and cuts the compose time a lot.
-        preset = job.preset
-        if W * H >= 3840 * 2160 and preset in ("medium", "slow", "slower"):
+        if not proxy and W * H >= 3840 * 2160 and preset in (
+                "medium", "slow", "slower"):
             preset = "fast"
-        log(f"[ 88%] compositing final video (longest step, ~{total:.0f}s at "
+        kind = "draft proxy" if proxy else "final video"
+        log(f"[ 88%] compositing {kind} (longest step, ~{total:.0f}s at "
             f"{W}x{H}/{preset}) — live progress below ...")
         _run_progress(
             ["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
              "-filter_complex_script", graph_file,
              "-map", f"[{prev}]", "-map", "[a]",
-             "-c:v", "libx264", "-crf", str(job.crf), "-preset", preset,
+             "-c:v", "libx264", "-crf", str(crf), "-preset", preset,
              "-pix_fmt", "yuv420p", "-r", str(FPS),
-             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+             "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
              "-t", f"{total:.3f}", out],
             log, total=total, work=work)
         log(f"[100%] done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")

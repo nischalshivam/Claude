@@ -50,8 +50,10 @@ class Job:
     preset: str = "medium"
 
 
-def run_job(job: Job, job_index: int = 0, log=print) -> dict:
-    t_start = time.time()
+def plan_job(job: Job, job_index: int = 0, log=print) -> dict:
+    """Everything EXCEPT the final render: QC, audio sync, text plan, shot
+    plan, text-zone assignment. Returns an editable plan so a review UI can
+    show/adjust it before the (slow) final export."""
     rng = random.Random(job.seed or (job_index + 1) * 7919)
     job.format_key = resolve_format(job.format_choice, job_index, rng)
     if job.resolution not in RESOLUTIONS:
@@ -206,20 +208,41 @@ def run_job(job: Job, job_index: int = 0, log=print) -> dict:
         prev_zone = chosen
         ev_with_zone.append((t0, t1, si, ch, chosen))
 
-    # 5) render
-    out, total = render_job(job, shots, ev_with_zone, log)
+    return {
+        "job": job, "shots": shots, "events": ev_with_zone,
+        "scenes": scenes, "windows": windows, "words": words,
+        "rejected_media": sum(len(s.rejected) for s in scenes),
+    }
+
+
+def render_from_plan(job: Job, shots, ev_with_zone, log=print,
+                     proxy=False) -> dict:
+    """Render the (possibly user-edited) plan to a final MP4 (or a fast proxy
+    for the browser review page)."""
+    t_start = time.time()
+    from engine.renderer import render_job as _render
+    out, total = _render(job, shots, ev_with_zone, log, proxy=proxy)
     report = {
         "output": out, "seconds": round(total, 1),
         "format": job.format_key, "niche": job.niche,
-        "language": job.language, "resolution": job.resolution,
-        "shots": len(shots), "text_events": len(events),
-        "rejected_media": sum(len(s.rejected) for s in scenes),
+        "language": job.language,
+        "resolution": ("proxy" if proxy else job.resolution),
+        "shots": len(shots), "text_events": len(ev_with_zone),
         "render_minutes": round((time.time() - t_start) / 60, 1),
     }
-    rp = os.path.splitext(out)[0] + "_report.json"
-    with open(rp, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    if not proxy:
+        rp = os.path.splitext(out)[0] + "_report.json"
+        with open(rp, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
     return report
+
+
+def run_job(job: Job, job_index: int = 0, log=print) -> dict:
+    """Plan + render in one shot (the classic non-review path)."""
+    plan = plan_job(job, job_index, log)
+    rep = render_from_plan(plan["job"], plan["shots"], plan["events"], log)
+    rep["rejected_media"] = plan["rejected_media"]
+    return rep
 
 
 def main(argv=None):

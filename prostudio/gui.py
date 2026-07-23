@@ -140,6 +140,9 @@ class App:
         btns.pack(fill="x")
         self.add_btn = ttk.Button(btns, text="+  Add Video", command=self.add_card)
         self.add_btn.pack(side="left")
+        self.review_btn = ttk.Button(btns, text="🔍  Preview & Edit (Video 1)",
+                                     command=self.review)
+        self.review_btn.pack(side="left", padx=8)
         self.start_btn = ttk.Button(btns, text="▶  Start Queue", command=self.start)
         self.start_btn.pack(side="left", padx=8)
 
@@ -213,6 +216,38 @@ class App:
         done = getattr(self, "_jobs_done", 0)
         span = 100.0 / n
         return done * span, span
+
+    def review(self):
+        """Open Video 1 in the browser review/edit page, then export from there."""
+        card = self.cards[0]
+        j = card.job_dict(self.out_dir.get(), self.resolution.get())
+        if not (j["scenes"] and j["audio"]):
+            messagebox.showerror("ProStudio",
+                                 "Video 1: scenes folder and audio required.")
+            return
+        os.makedirs(self.out_dir.get(), exist_ok=True)
+        qfile = os.path.join(self.out_dir.get(), "review_job.json")
+        with open(qfile, "w", encoding="utf-8") as f:
+            json.dump({"resolution": self.resolution.get(), "jobs": [j]}, f,
+                      indent=2)
+        self.status.set("preparing review page (draft render) — browser opens shortly ...")
+        self._append("\n=== opening browser review for Video 1 ===\n"
+                     "   (a fast draft is rendered first; the page opens automatically)\n")
+
+        def worker():
+            try:
+                proc = subprocess.Popen(
+                    [sys.executable, "-u", os.path.join(HERE, "review_server.py"),
+                     "--queue", qfile],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace", cwd=HERE)
+                self._review_proc = proc
+                for line in proc.stdout:
+                    self.q.put(line)
+            except Exception as exc:
+                self.q.put(f"REVIEW ERROR: {exc}\n")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def start(self):
         if self.proc and self.proc.poll() is None:
