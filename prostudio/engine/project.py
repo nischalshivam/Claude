@@ -19,7 +19,8 @@ def shot_to_dict(sh: Shot) -> dict:
             "scene_i": sh.scene_i, "mood": sh.mood, "zoom_in": sh.zoom_in,
             "punch_in": sh.punch_in, "drift_seed": sh.drift_seed,
             "src_in": getattr(sh, "src_in", 0.0),
-            "framing": getattr(sh, "framing", ""), "transition": sh.transition}
+            "framing": getattr(sh, "framing", ""),
+            "move": getattr(sh, "move", ""), "transition": sh.transition}
 
 
 def shot_from_dict(d: dict) -> Shot:
@@ -27,7 +28,8 @@ def shot_from_dict(d: dict) -> Shot:
                scene_i=d["scene_i"], mood=d.get("mood", "neutral"),
                zoom_in=d.get("zoom_in", True), punch_in=d.get("punch_in", False),
                drift_seed=d.get("drift_seed", 0), src_in=d.get("src_in", 0.0),
-               framing=d.get("framing", ""), transition=d.get("transition"))
+               framing=d.get("framing", ""), move=d.get("move", ""),
+               transition=d.get("transition"))
 
 
 def event_to_dict(ev) -> dict:

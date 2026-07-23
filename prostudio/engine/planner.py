@@ -74,6 +74,7 @@ class Shot:
     src_in: float = 0.0      # seconds INTO a source video to start (in-point);
                              #   lets the user pick the best N sec of a long clip
     framing: str = ""        # "" = auto, "blurfill"/"full" force a framing look
+    move: str = ""           # camera move: in/out/panl/panr/panu/pand/hold
     faces: list = field(default_factory=list)   # face boxes for text-zone veto
     transition: str | None = None   # into the NEXT shot
 
@@ -278,6 +279,10 @@ def plan_shots(scenes, windows, rng: random.Random, log=print,
         log(f"  note: {starved} scene(s) had too little footage — filled with "
             "borrowed/neutral visuals to keep audio in sync (add more clips to "
             "those scene folders for a richer edit)")
+    # camera moves: varied + anti-repeat across the whole video (premium feel)
+    from .variety import pick_moves
+    for sh, mv in zip(shots, pick_moves(len(shots), rng)):
+        sh.move = mv
     # transitions: within-scene soft, scene-boundary strong (format decides look)
     for a, b in zip(shots, shots[1:]):
         a.transition = "scene" if b.scene_i != a.scene_i else "soft"

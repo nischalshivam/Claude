@@ -179,16 +179,33 @@ def _zoompan_image(shot, W, H, secs, style):
     if shot.punch_in:
         n = int(frames * 0.55)
         punch = f"+if(gte(on\\,{n})\\,min(0.05\\,(on-{n})*0.012)\\,0)"
-    if style.get("pan") == "lr":
-        z = "1.12"
-        x = f"(iw-iw/zoom)*on/{frames}"
-    elif shot.zoom_in:
-        z = f"min(1.0+{rate}*on{punch},{zmax})"
-        x = f"iw/2-(iw/zoom/2)+{a:.1f}*sin(on/37+{ph})"
-    else:
+    move = getattr(shot, "move", "") or ("in" if shot.zoom_in else "out")
+    if style.get("pan") == "lr":                 # F8 keeps its horizontal pan
+        move = "panr" if shot.drift_seed % 2 == 0 else "panl"
+    cx = f"iw/2-(iw/zoom/2)+{a:.1f}*sin(on/37+{ph})"
+    cy = f"ih/2-(ih/zoom/2)+{a * 0.7:.1f}*cos(on/43+{ph})"
+    x, y = cx, cy
+    if move == "out":
         z = f"max({zmax}-{rate}*on{punch},1.0)"
-        x = f"iw/2-(iw/zoom/2)+{a:.1f}*sin(on/41+{ph})"
-    y = f"ih/2-(ih/zoom/2)+{a * 0.7:.1f}*cos(on/43+{ph})"
+    elif move == "hold":
+        z = "1.04"
+    elif move in ("panl", "panr", "panu", "pand"):
+        z = "1.12"
+        d2 = a * 0.5
+        if move == "panr":
+            x = f"(iw-iw/zoom)*on/{frames}"
+            y = f"ih/2-(ih/zoom/2)+{d2:.1f}*cos(on/50+{ph})"
+        elif move == "panl":
+            x = f"(iw-iw/zoom)*(1-on/{frames})"
+            y = f"ih/2-(ih/zoom/2)+{d2:.1f}*cos(on/50+{ph})"
+        elif move == "pand":
+            y = f"(ih-ih/zoom)*on/{frames}"
+            x = f"iw/2-(iw/zoom/2)+{d2:.1f}*sin(on/50+{ph})"
+        else:                                     # panu
+            y = f"(ih-ih/zoom)*(1-on/{frames})"
+            x = f"iw/2-(iw/zoom/2)+{d2:.1f}*sin(on/50+{ph})"
+    else:                                         # "in"
+        z = f"min(1.0+{rate}*on{punch},{zmax})"
     return (f"scale={bw}:{bh}:force_original_aspect_ratio=increase:"
             f"flags=lanczos,crop={bw}:{bh},"
             f"zoompan=z='{z}':d={frames}:x='{x}':y='{y}':s={W}x{H}:fps={FPS},"

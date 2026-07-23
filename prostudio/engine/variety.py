@@ -22,6 +22,23 @@ def _pick(pool, avoid, rng):
     return rng.choice(opts)
 
 
+# camera moves for stills (Ken Burns) — mostly gentle zooms, pans occasional,
+# a rare near-static hold for rhythm. Never the same move twice in a row.
+MOVE_W = {"in": 30, "out": 22, "panl": 12, "panr": 12,
+          "panu": 7, "pand": 7, "hold": 10}
+
+
+def pick_moves(n, rng):
+    moves, prev = [], None
+    keys = list(MOVE_W)
+    for _ in range(n):
+        pool = [m for m in keys if m != prev]
+        m = rng.choices(pool, weights=[MOVE_W[k] for k in pool], k=1)[0]
+        moves.append(m)
+        prev = m
+    return moves
+
+
 def plan_transitions(shots, style, rng):
     """Return [(xfade_type, duration)] for each shot boundary (len == n-1).
 
