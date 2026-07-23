@@ -190,7 +190,7 @@ def _placeholder_still():
 
 def plan_shots(scenes, windows, rng: random.Random, log=print,
                clip_min=2.0, clip_max=5.0, img_min=2.6, img_max=7.0,
-               jl_offset=0.4):
+               jl_offset=0.4, niche="Movie Essay"):
     import math
     from .audio_sync import duration
     from .subjects import detect_faces
@@ -280,9 +280,15 @@ def plan_shots(scenes, windows, rng: random.Random, log=print,
             "borrowed/neutral visuals to keep audio in sync (add more clips to "
             "those scene folders for a richer edit)")
     # camera moves: varied + anti-repeat across the whole video (premium feel)
-    from .variety import pick_moves
+    from .variety import pick_framings, pick_moves
     for sh, mv in zip(shots, pick_moves(len(shots), rng)):
         sh.move = mv
+    # framing per SCENE from the niche's pool ('full' -> auto so non-16:9 still
+    # blur-fills instead of cropping)
+    fr = pick_framings(len(scenes), niche, rng)
+    for sh in shots:
+        picked = fr[sh.scene_i] if sh.scene_i < len(fr) else "full"
+        sh.framing = "" if picked == "full" else picked
     # transitions: within-scene soft, scene-boundary strong (format decides look)
     for a, b in zip(shots, shots[1:]):
         a.transition = "scene" if b.scene_i != a.scene_i else "soft"

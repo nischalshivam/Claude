@@ -39,6 +39,19 @@ def pick_moves(n, rng):
     return moves
 
 
+def pick_framings(n_scenes, niche, rng):
+    """One framing per SCENE (so a look feels intentional, not flickery),
+    drawn from the niche's weighted pool. A dominant framing repeating across
+    scenes is fine (that IS the niche's identity); we only avoid a lone accent
+    framing appearing just once then never again feeling random — the weights
+    handle the balance."""
+    from .formats import NICHE_FRAMING, DEFAULT_FRAMING
+    pool = NICHE_FRAMING.get(niche, DEFAULT_FRAMING)
+    keys = list(pool)
+    weights = [pool[k] for k in keys]
+    return [rng.choices(keys, weights=weights, k=1)[0] for _ in range(n_scenes)]
+
+
 def plan_transitions(shots, style, rng):
     """Return [(xfade_type, duration)] for each shot boundary (len == n-1).
 

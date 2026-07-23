@@ -18,7 +18,7 @@ import tempfile
 
 from . import FPS, RESOLUTIONS
 from .audio_sync import duration
-from .formats import FORMATS, grade_for
+from .formats import FORMATS, grade_for, theme_color as _theme_color
 from .textlayout import chunk_filters
 
 
@@ -118,12 +118,17 @@ def _wants_blurfill(shot, W, H):
     return src < 1.55 or src > 2.15          # narrower than 14:9 or ultrawide
 
 
-def _render_blurfill(shot, out, style, niche, W, H, secs, log, timeout=180):
-    """Sharp, gently-floating foreground centered over a blurred, darkened
-    fill of the same frame — no crop, no black bars. The premium way to put
-    4:3 / portrait footage in a 16:9 frame."""
+def _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.90,
+                  border_px=0, border_color="0x000000", timeout=180):
+    """Sharp, gently-floating foreground over a blurred, darkened fill of the
+    same frame. One primitive, three looks:
+      - blurfill : inset ~0.90, no border  (non-16:9 footage, no crop/bars)
+      - card     : inset ~0.85, thin dark edge  (cinematic floating card)
+      - border   : inset ~0.82, thick themed edge  (cartoon/anime frame)
+    """
     grade = grade_for(niche, shot.mood, style["sepia"])
-    fw, fh = int(W * 0.90) // 2 * 2, int(H * 0.90) // 2 * 2
+    fw = max(2, int(W * inset) // 2 * 2)
+    fh = max(2, int(H * inset) // 2 * 2)
     ax, ay = max(4, int(0.012 * W)), max(4, int(0.016 * H))
     if shot.kind == "image":
         ins = ["-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", shot.path]
@@ -136,12 +141,16 @@ def _render_blurfill(shot, out, style, niche, W, H, secs, log, timeout=180):
         post += f",noise=alls={style['grain']}:allf=t+u"
     if style["vignette"]:
         post += ",vignette=PI/5"
+    borderf = ""
+    if border_px > 0:
+        borderf = (f",pad=iw+{2*border_px}:ih+{2*border_px}:"
+                   f"{border_px}:{border_px}:color={border_color}")
     fc = (
         f"[0:v]split=2[a][b];"
         f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
         f"boxblur=26:1,eq=brightness=-0.15:saturation=1.05,setsar=1[bg];"
         f"[b]scale={fw}:{fh}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"setsar=1,{grade}[fg];"
+        f"setsar=1,{grade}{borderf}[fg];"
         f"[bg][fg]overlay=x='(W-w)/2+{ax}*sin(t/3)':"
         f"y='(H-h)/2+{ay}*cos(t/3.4)':format=auto{post}[v]"
     )
@@ -151,6 +160,23 @@ def _render_blurfill(shot, out, style, niche, W, H, secs, log, timeout=180):
            "-preset", "veryfast", out]
     _run(cmd, log, timeout=timeout)
     _ensure_duration(out, secs, log)
+
+
+def _render_blurfill(shot, out, style, niche, W, H, secs, log, timeout=180):
+    _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.90,
+                  timeout=timeout)
+
+
+def _render_framed(shot, out, style, niche, W, H, secs, log, mode, log_theme,
+                   timeout=180):
+    if mode == "border":
+        _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.82,
+                      border_px=max(6, int(0.012 * W)), border_color=log_theme,
+                      timeout=timeout)
+    else:                                         # card
+        _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.85,
+                      border_px=max(2, int(0.0025 * W)),
+                      border_color="0x0d1014", timeout=timeout)
 
 
 def _glow_png(path, size=1000):
@@ -352,16 +378,30 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
     A single bad/huge/corrupt file can never stall or fail the whole job."""
     secs = shot.secs + pad
     work = work or os.path.dirname(out)
-    # non-16:9 sources look premium as a blurred-fill (no crop / no black bars);
-    # a 'blurfill' framing flag can also force it. Spotlight format keeps its
-    # own compositing path.
-    use_blur = (getattr(shot, "framing", "") == "blurfill" or
-                (not style.get("spotlight") and not style.get("letterbox")
-                 and _wants_blurfill(shot, W, H)))
+    # framing: explicit shot.framing wins; otherwise auto (blurfill for non-16:9
+    # so nothing is cropped / no black bars, else full-bleed). Spotlight and
+    # letterbox formats keep their own compositing path when framing is auto.
+    framing = getattr(shot, "framing", "")
+    if not framing:
+        framing = ("blurfill" if (not style.get("spotlight")
+                                  and not style.get("letterbox")
+                                  and _wants_blurfill(shot, W, H)) else "full")
     try:
-        if use_blur:
+        if framing == "card":
+            _render_framed(shot, out, style, niche, W, H, secs, log, "card",
+                           _theme_color(niche), timeout=180)
+        elif framing == "border":
+            _render_framed(shot, out, style, niche, W, H, secs, log, "border",
+                           _theme_color(niche), timeout=180)
+        elif framing == "blurfill":
             _render_blurfill(shot, out, style, niche, W, H, secs, log,
                              timeout=180)
+        elif framing == "letterbox":
+            st = dict(style)
+            st["letterbox"] = True
+            st["spotlight"] = False
+            _render_full(shot, out, st, niche, W, H, secs, glow, log,
+                         timeout=180)
         else:
             _render_full(shot, out, style, niche, W, H, secs, glow, log,
                          timeout=180)

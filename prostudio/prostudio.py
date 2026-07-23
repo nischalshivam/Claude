@@ -169,7 +169,7 @@ def plan_job(job: Job, job_index: int = 0, log=print) -> dict:
 
     # 4) shot plan (clips first, J/L cuts, drift seeds, subject-safe zones)
     log("[ 20%] planning shots (arranging clips + images, avoiding faces) ...")
-    shots = plan_shots(scenes, windows, rng, log)
+    shots = plan_shots(scenes, windows, rng, log, niche=job.niche)
     log(f"  shots: {len(shots)}  "
         f"(avg {sum(s.secs for s in shots)/max(1,len(shots)):.1f}s)")
 

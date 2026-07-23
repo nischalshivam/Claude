@@ -142,7 +142,40 @@ NICHE_BASE = {
         "colorbalance=bs=0.06:bm=0.02:bh=-0.03:rh=0.04",
     "Documentary":
         "eq=contrast=1.06:saturation=1.04,colorbalance=rh=0.02:bh=0.01",
+    # entertainment niches (movies / cartoon / anime / old films)
+    "Cartoon":
+        "eq=contrast=1.06:saturation=1.22:brightness=0.008,"
+        "colorbalance=rh=0.02:gh=0.01",
+    "Anime":
+        "eq=contrast=1.11:saturation=1.18:brightness=-0.006,"
+        "colorbalance=bh=0.04:rh=0.02",
+    "Old Movie":
+        "eq=contrast=1.14:saturation=0.86:brightness=-0.02,"
+        "colorbalance=rh=0.06:rm=0.03:bs=-0.03",
 }
+
+# themed border colour for the 'border' framing (cartoon/anime recap look)
+NICHE_THEME = {
+    "Cartoon": "0xF2B705", "Anime": "0xE23B6D", "Old Movie": "0xC9A24B",
+    "Internet Lore": "0x3BA7E2",
+}
+DEFAULT_THEME = "0xE8C26A"
+
+# per-niche framing pool (weights). 'full'=full-bleed, 'blurfill'=blur bg,
+# 'card'=cinematic floating card, 'border'=themed frame, 'letterbox'=21:9 bars.
+# Cartoon/anime lean into the framed recap look; cinema niches stay clean.
+NICHE_FRAMING = {
+    "Cartoon":   {"border": 60, "blurfill": 25, "full": 15},
+    "Anime":     {"border": 55, "blurfill": 25, "full": 20},
+    "Old Movie": {"full": 55, "letterbox": 22, "card": 23},
+    "Movie Essay": {"full": 70, "card": 18, "letterbox": 12},
+    "Internet Lore": {"full": 62, "card": 20, "border": 18},
+}
+DEFAULT_FRAMING = {"full": 78, "card": 14, "letterbox": 8}
+
+
+def theme_color(niche: str) -> str:
+    return NICHE_THEME.get(niche, DEFAULT_THEME)
 
 MOOD_TWEAK = {
     "danger": ",eq=saturation=0.92:brightness=-0.018,colorbalance=bs=0.05",
