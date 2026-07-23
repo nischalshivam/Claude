@@ -39,7 +39,7 @@ class JobCard(ttk.LabelFrame):
             "language": tk.StringVar(value="en"),
             "niche": tk.StringVar(value="Movie Essay"),
             "kw": tk.BooleanVar(value=True),
-            "text": tk.BooleanVar(value=True),
+            "text": tk.BooleanVar(value=False),   # on-screen text OFF by default
         }
         r = 0
 
@@ -80,7 +80,7 @@ class JobCard(ttk.LabelFrame):
         ttk.Combobox(opts, textvariable=self.vars["niche"],
                      values=list(NICHE_BASE), width=26,
                      state="readonly").pack(side="left", padx=(2, 10))
-        ttk.Checkbutton(opts, text="On-screen text",
+        ttk.Checkbutton(opts, text="On-screen text (optional)",
                         variable=self.vars["text"]).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(opts, text="Keyword colors",
                         variable=self.vars["kw"]).pack(side="left", padx=(0, 10))

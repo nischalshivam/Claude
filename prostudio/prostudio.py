@@ -40,7 +40,8 @@ class Job:
     language: str = "en"
     niche: str = "Movie Essay"
     keyword_colors: bool = True
-    text: bool = True           # on-screen text; False = clean footage only
+    text: bool = False          # on-screen text OFF by default (optional);
+                                #   clean footage = premium clips/animation focus
     resolution: str = "4K"
     whisper_model: str = "base"
     seed: int = 0
@@ -260,8 +261,9 @@ def main(argv=None):
     p.add_argument("--niche", default="Movie Essay",
                    choices=list(NICHE_BASE))
     p.add_argument("--no-keyword-colors", action="store_true")
-    p.add_argument("--no-text", action="store_true",
-                   help="no on-screen text at all (clean footage for an editor)")
+    p.add_argument("--text", action="store_true",
+                   help="add on-screen text (OPTIONAL; off by default)")
+    p.add_argument("--no-text", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--resolution", default="4K", choices=list(RESOLUTIONS))
     p.add_argument("--whisper-model", default="base")
     p.add_argument("--seed", type=int, default=0)
@@ -279,7 +281,7 @@ def main(argv=None):
                 language=j.get("language", "en"),
                 niche=j.get("niche", "Movie Essay"),
                 keyword_colors=j.get("keyword_colors", True),
-                text=j.get("text", True),
+                text=j.get("text", False),
                 resolution=j.get("resolution", data.get("resolution", "4K")),
                 whisper_model=j.get("whisper_model", "base"),
                 seed=j.get("seed", 0)))
@@ -291,7 +293,7 @@ def main(argv=None):
                         format_choice=a.format,
                         language=a.language, niche=a.niche,
                         keyword_colors=not a.no_keyword_colors,
-                        text=not a.no_text,
+                        text=a.text and not a.no_text,
                         resolution=a.resolution,
                         whisper_model=a.whisper_model, seed=a.seed))
 

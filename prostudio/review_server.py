@@ -567,6 +567,7 @@ if __name__ == "__main__":
     ap.add_argument("--format", default="auto"); ap.add_argument("--language", default="en")
     ap.add_argument("--niche", default="Movie Essay")
     ap.add_argument("--resolution", default="4K")
+    ap.add_argument("--text", action="store_true")
     ap.add_argument("--no-text", action="store_true")
     ap.add_argument("--no-keyword-colors", action="store_true")
     ap.add_argument("--whisper-model", default="base")
@@ -582,13 +583,14 @@ if __name__ == "__main__":
                   language=j.get("language", "en"),
                   niche=j.get("niche", "Movie Essay"),
                   keyword_colors=j.get("keyword_colors", True),
-                  text=j.get("text", True),
+                  text=j.get("text", False),
                   resolution=j.get("resolution", d.get("resolution", "4K")),
                   whisper_model=j.get("whisper_model", "base"))
     else:
         job = Job(scenes_dir=a.scenes, audio=a.audio, out_path=a.out,
                   script=a.script, instructor=a.instructor,
                   format_choice=a.format, language=a.language, niche=a.niche,
-                  keyword_colors=not a.no_keyword_colors, text=not a.no_text,
+                  keyword_colors=not a.no_keyword_colors,
+                  text=a.text and not a.no_text,
                   resolution=a.resolution, whisper_model=a.whisper_model)
     serve(job, port=a.port, open_browser=not a.no_open)

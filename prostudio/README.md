@@ -50,11 +50,13 @@ the video, renders a **fast low-res draft**, and opens a page in your browser:
 This is the ~5-minute check to make sure the footage fits the voiceover before
 committing to the long 4K export. (CLI: `python review_server.py --queue jobs.json`)
 
-## On-screen text (per-video toggle)
-- **On-screen text: ON** — text synced to the narration. With `faster-whisper`
-  installed you get **word-perfect** sync (text lands on the spoken word);
-  without it, a silence-based fallback (~90%).
-- **On-screen text: OFF** — clean footage, no text (add it later in an editor).
+## On-screen text (optional — OFF by default)
+The focus is premium clips, animation and transitions — **no on-screen text by
+default**. It stays available as an option per video:
+- **Default (text OFF)** — clean footage, no captions.
+- **On-screen text ON** (tick "On-screen text" / `--text`) — text synced to the
+  narration. With `faster-whisper` you get **word-perfect** sync; without it, a
+  silence-based fallback (~90%).
 
 ## Languages
 - **Any language's audio + footage works** for the video itself.
