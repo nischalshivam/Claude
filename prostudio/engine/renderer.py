@@ -386,12 +386,16 @@ def render_job(job, shots, text_events, log=print, proxy=False):
         if style.get("spotlight"):
             _glow_png(glow)
 
-        # per-join pads (soft within scene / scene at boundary)
+        # transitions: format signature + curated variety, anti-repeat, rare
+        # accents (see engine/variety). Clamp each to the neighbouring shots.
+        import random as _random
+        from .variety import plan_transitions
         n = len(shots)
+        vplan = plan_transitions(shots, style,
+                                 _random.Random(getattr(job, "seed", 0) or 1234))
         joins = []
         for i in range(n - 1):
-            ttype, tdur = style["scene" if shots[i].transition == "scene"
-                                else "soft"]
+            ttype, tdur = vplan[i]
             tdur = min(tdur, shots[i].secs * 0.5, shots[i + 1].secs * 0.5)
             joins.append((ttype, max(0.05, tdur)))
 
