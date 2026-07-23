@@ -129,7 +129,7 @@ def _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.90,
     grade = grade_for(niche, shot.mood, style["sepia"])
     fw = max(2, int(W * inset) // 2 * 2)
     fh = max(2, int(H * inset) // 2 * 2)
-    ax, ay = max(4, int(0.012 * W)), max(4, int(0.016 * H))
+    frames = max(1, int(secs * FPS))
     if shot.kind == "image":
         ins = ["-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", shot.path]
     else:
@@ -145,14 +145,19 @@ def _render_inset(shot, out, style, niche, W, H, secs, log, inset=0.90,
     if border_px > 0:
         borderf = (f",pad=iw+{2*border_px}:ih+{2*border_px}:"
                    f"{border_px}:{border_px}:color={border_color}")
+    # the FOREGROUND frame stays perfectly still (overlay at a fixed centre);
+    # for a still, life comes from a slow zoom on the BLURRED BACKGROUND only,
+    # so the framed content never slides around the screen.
+    bg_move = (f",zoompan=z='min(1.0+0.0004*on,1.06)':d={frames}"
+               f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+               f":s={W}x{H}:fps={FPS}") if shot.kind == "image" else ""
     fc = (
         f"[0:v]split=2[a][b];"
         f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-        f"boxblur=26:1,eq=brightness=-0.15:saturation=1.05,setsar=1[bg];"
+        f"boxblur=26:1,eq=brightness=-0.15:saturation=1.05,setsar=1{bg_move}[bg];"
         f"[b]scale={fw}:{fh}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"setsar=1,{grade}{borderf}[fg];"
-        f"[bg][fg]overlay=x='(W-w)/2+{ax}*sin(t/3)':"
-        f"y='(H-h)/2+{ay}*cos(t/3.4)':format=auto{post}[v]"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2:format=auto{post}[v]"
     )
     cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *ins,
            "-filter_complex", fc, "-map", "[v]", "-t", f"{secs:.3f}",
