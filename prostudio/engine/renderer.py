@@ -94,6 +94,65 @@ def job_out(cmd):
     return cmd[-1]
 
 
+def _dims(path):
+    """(width, height) of the first video stream, or None."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+        w, h = out.split("x")[:2]
+        return int(w), int(h)
+    except Exception:
+        return None
+
+
+def _wants_blurfill(shot, W, H):
+    """Use a blurred-fill background when the SOURCE is not ~16:9 (portrait,
+    4:3, square — common for cartoons/anime/old footage). Cropping those to
+    fill loses content; black bars look cheap. Blur-fill is the premium fix."""
+    d = _dims(shot.path)
+    if not d or d[1] == 0:
+        return False
+    src = d[0] / d[1]
+    return src < 1.55 or src > 2.15          # narrower than 14:9 or ultrawide
+
+
+def _render_blurfill(shot, out, style, niche, W, H, secs, log, timeout=180):
+    """Sharp, gently-floating foreground centered over a blurred, darkened
+    fill of the same frame — no crop, no black bars. The premium way to put
+    4:3 / portrait footage in a 16:9 frame."""
+    grade = grade_for(niche, shot.mood, style["sepia"])
+    fw, fh = int(W * 0.90) // 2 * 2, int(H * 0.90) // 2 * 2
+    ax, ay = max(4, int(0.012 * W)), max(4, int(0.016 * H))
+    if shot.kind == "image":
+        ins = ["-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", shot.path]
+    else:
+        ss = max(0.0, getattr(shot, "src_in", 0.0) or 0.0)
+        ins = (["-ss", f"{ss:.3f}"] if ss > 0 else []) + \
+            ["-t", f"{secs + 0.4:.3f}", "-i", shot.path]
+    post = ""
+    if style["grain"]:
+        post += f",noise=alls={style['grain']}:allf=t+u"
+    if style["vignette"]:
+        post += ",vignette=PI/5"
+    fc = (
+        f"[0:v]split=2[a][b];"
+        f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+        f"boxblur=26:1,eq=brightness=-0.15:saturation=1.05,setsar=1[bg];"
+        f"[b]scale={fw}:{fh}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"setsar=1,{grade}[fg];"
+        f"[bg][fg]overlay=x='(W-w)/2+{ax}*sin(t/3)':"
+        f"y='(H-h)/2+{ay}*cos(t/3.4)':format=auto{post}[v]"
+    )
+    cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *ins,
+           "-filter_complex", fc, "-map", "[v]", "-t", f"{secs:.3f}",
+           "-an", "-r", str(FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-preset", "veryfast", out]
+    _run(cmd, log, timeout=timeout)
+    _ensure_duration(out, secs, log)
+
+
 def _glow_png(path, size=1000):
     from PIL import Image
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -276,9 +335,19 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
     A single bad/huge/corrupt file can never stall or fail the whole job."""
     secs = shot.secs + pad
     work = work or os.path.dirname(out)
+    # non-16:9 sources look premium as a blurred-fill (no crop / no black bars);
+    # a 'blurfill' framing flag can also force it. Spotlight format keeps its
+    # own compositing path.
+    use_blur = (getattr(shot, "framing", "") == "blurfill" or
+                (not style.get("spotlight") and not style.get("letterbox")
+                 and _wants_blurfill(shot, W, H)))
     try:
-        _render_full(shot, out, style, niche, W, H, secs, glow, log,
-                     timeout=180)
+        if use_blur:
+            _render_blurfill(shot, out, style, niche, W, H, secs, log,
+                             timeout=180)
+        else:
+            _render_full(shot, out, style, niche, W, H, secs, glow, log,
+                         timeout=180)
         return "full"
     except Exception as exc:
         log(f"  shot slow/failed ({exc}); retrying in safe mode "

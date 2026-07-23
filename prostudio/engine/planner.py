@@ -73,6 +73,7 @@ class Shot:
     drift_seed: int = 0
     src_in: float = 0.0      # seconds INTO a source video to start (in-point);
                              #   lets the user pick the best N sec of a long clip
+    framing: str = ""        # "" = auto, "blurfill"/"full" force a framing look
     faces: list = field(default_factory=list)   # face boxes for text-zone veto
     transition: str | None = None   # into the NEXT shot
 
