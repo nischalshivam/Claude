@@ -174,7 +174,9 @@ def _render_full(shot, out, style, niche, W, H, secs, glow, log, timeout):
         ins = ["-loop", "1", "-t", f"{secs + 0.4:.3f}", "-i", shot.path]
     else:
         vf = _video_vf(shot, W, H, style)
-        ins = ["-t", f"{secs + 0.4:.3f}", "-i", shot.path]
+        ss = max(0.0, getattr(shot, "src_in", 0.0) or 0.0)   # user in-point
+        ins = (["-ss", f"{ss:.3f}"] if ss > 0 else []) + \
+            ["-t", f"{secs + 0.4:.3f}", "-i", shot.path]
     vf += "," + grade_for(niche, shot.mood, style["sepia"])
     if style["grain"]:
         vf += f",noise=alls={style['grain']}:allf=t+u"
@@ -205,7 +207,7 @@ def _render_full(shot, out, style, niche, W, H, secs, glow, log, timeout):
     _ensure_duration(out, secs, log)
 
 
-def _safe_still(path, kind, W, H, work, log, timeout=60):
+def _safe_still(path, kind, W, H, work, log, timeout=60, src_in=0.0):
     """Decode ONE frame (single pass, bounded) and normalize it to WxH.
 
     This is the escape hatch for a pathological input (huge / corrupt /
@@ -215,7 +217,9 @@ def _safe_still(path, kind, W, H, work, log, timeout=60):
     seek = []
     if kind == "video":
         d = duration(path)
-        if d > 0.2:
+        if src_in > 0:
+            seek = ["-ss", f"{src_in:.2f}"]        # honor the user's in-point
+        elif d > 0.2:
             seek = ["-ss", f"{min(max(d * 0.5, 0.0), max(0.0, d - 0.1)):.2f}"]
     cmd = (["ffmpeg", "-nostdin", "-y", "-v", "error", *seek, "-i", path,
             "-frames:v", "1", "-vf",
@@ -280,7 +284,8 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
         log(f"  shot slow/failed ({exc}); retrying in safe mode "
             f"[{os.path.basename(shot.path)}] ...")
     try:
-        still = _safe_still(shot.path, shot.kind, W, H, work, log)
+        still = _safe_still(shot.path, shot.kind, W, H, work, log,
+                            src_in=max(0.0, getattr(shot, "src_in", 0.0) or 0.0))
         if still:
             _render_still_simple(still, out, shot, W, H, secs, style, niche, log)
             return "safe"

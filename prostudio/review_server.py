@@ -92,11 +92,23 @@ class Review:
     def replace_media(self, i, path, kind=None):
         sh = self.shots[i]
         sh.path = path
+        sh.src_in = 0.0                          # reset in-point for new media
         if kind:
             sh.kind = kind
         else:
             sh.kind = "video" if path.lower().endswith(
                 (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")) else "image"
+
+    def media_duration(self, i):
+        return duration(self.shots[i].path)
+
+    def set_in(self, i, src_in):
+        """Pick which part of a longer source clip to use (the in-point). The
+        shot keeps its slot length; we just start the source later."""
+        sh = self.shots[i]
+        d = duration(sh.path)
+        slot = sh.secs
+        sh.src_in = max(0.0, min(float(src_in), max(0.0, d - slot)))
 
     def delete_shot(self, i):
         si = self.shots[i].scene_i
@@ -194,6 +206,7 @@ class Review:
                 "i": i, "scene": sh.scene_i + 1, "kind": sh.kind,
                 "t0": round(sh.t0, 2), "t1": round(sh.t1, 2),
                 "secs": round(sh.secs, 2),
+                "src_in": round(getattr(sh, "src_in", 0.0), 2),
                 "name": os.path.basename(sh.path),
                 "narration": narr[i] if i < len(narr) else "",
             })
@@ -297,6 +310,7 @@ function render(){
     <div class="ops">
      <label class="rep">Replace…<input type="file" accept="video/*,image/*"
         onchange="replaceShot(${s.i},this)"></label>
+     ${s.kind==='video'?`<button onclick="openTrim(${s.i})">✂ Pick best part</button>`:''}
      <div class="row">
        <button onclick="edit('trim',${s.i},-0.5)">−0.5s</button>
        <button onclick="edit('trim',${s.i},0.5)">+0.5s</button>
@@ -338,8 +352,68 @@ function poll(){
 function rebuild(){api('/api/rebuild',{method:'POST'}).then(()=>{})}
 function exportFinal(){if(confirm('Export the full-quality final video now? This can take a while.'))
   api('/api/export',{method:'POST'}).then(()=>{})}
+
+// ---- in-point trimmer: pick which N seconds of a longer clip to use --------
+let TRIM={i:-1,dur:0,slot:0};
+function openTrim(i){
+ api('/api/media_info?shot='+i).then(m=>{
+  TRIM={i:i,dur:m.duration,slot:m.slot};
+  let mv=document.getElementById('mvid');
+  mv.src='/media/'+i+'?t='+Date.now();
+  let sl=document.getElementById('mslider');
+  let maxIn=Math.max(0,m.duration-m.slot);
+  sl.min=0;sl.max=maxIn.toFixed(2);sl.step=0.1;sl.value=Math.min(m.src_in,maxIn);
+  document.getElementById('mslot').textContent=m.slot.toFixed(1);
+  document.getElementById('mdur').textContent=m.duration.toFixed(1);
+  if(m.duration<=m.slot+0.05){
+    document.getElementById('mnote').textContent=
+      'This clip ('+m.duration.toFixed(1)+'s) is not longer than the '+m.slot.toFixed(1)+'s slot — the whole clip is used.';
+    sl.disabled=true;
+  } else { sl.disabled=false; document.getElementById('mnote').textContent=''; }
+  updTrim();
+  document.getElementById('modal').style.display='flex';
+ });
+}
+function updTrim(){
+ let sl=document.getElementById('mslider'), inp=parseFloat(sl.value)||0;
+ document.getElementById('min').textContent=inp.toFixed(1);
+ document.getElementById('mout').textContent=(inp+TRIM.slot).toFixed(1);
+ let mv=document.getElementById('mvid');
+ if(Math.abs(mv.currentTime-inp)>0.15){try{mv.currentTime=inp}catch(e){}}
+}
+function playSeg(){let mv=document.getElementById('mvid');mv.currentTime=parseFloat(document.getElementById('mslider').value)||0;mv.play();
+ clearTimeout(window._segT);window._segT=setTimeout(()=>mv.pause(),TRIM.slot*1000);}
+function closeTrim(){document.getElementById('modal').style.display='none';
+ let mv=document.getElementById('mvid');mv.pause();mv.src='';}
+function confirmTrim(){
+ let inp=parseFloat(document.getElementById('mslider').value)||0;
+ api('/api/edit',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({action:'setin',shot:TRIM.i,value:inp})}).then(()=>{
+   closeTrim();load();alert('Best part set. Click "Rebuild draft" to see it in the video.');
+ });
+}
 load();setInterval(poll,1000);
-</script></body></html>"""
+</script>
+<div id="modal" style="display:none;position:fixed;inset:0;background:#000b;
+  z-index:20;align-items:center;justify-content:center" onclick="if(event.target===this)closeTrim()">
+ <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;
+   padding:16px;max-width:640px;width:92%">
+  <h3 style="margin:0 0 4px">Pick the best part of this clip</h3>
+  <p class="hint" id="mnote"></p>
+  <video id="mvid" style="width:100%;border-radius:10px;background:#000" muted playsinline></video>
+  <p class="hint">Clip length <b id="mdur">0</b>s · this slot needs <b id="mslot">0</b>s.
+    Drag to choose the start; the tool keeps <b id="mslot2"></b> the slot length and
+    uses <b><span id="min">0</span>s → <span id="mout">0</span>s</b>.</p>
+  <input type="range" id="mslider" style="width:100%" oninput="updTrim()">
+  <div style="display:flex;gap:8px;margin-top:12px">
+   <button onclick="playSeg()">▶ Preview selection</button>
+   <span class="grow"></span>
+   <button onclick="closeTrim()">Cancel</button>
+   <button class="go" onclick="confirmTrim()">Use this part</button>
+  </div>
+ </div>
+</div>
+</body></html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -400,6 +474,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json(STATE.progress)
         elif p == "/proxy.mp4":
             self._file(STATE.proxy_path, "video/mp4")
+        elif p == "/api/media_info":
+            i = int(parse_qs(u.query).get("shot", [-1])[0])
+            sh = STATE.shots[i]
+            self._json({"duration": round(STATE.media_duration(i), 2),
+                        "src_in": round(getattr(sh, "src_in", 0.0), 2),
+                        "slot": round(sh.secs, 2), "kind": sh.kind})
+        elif p.startswith("/media/"):
+            try:
+                i = int(p.split("/")[2].split("?")[0])
+            except ValueError:
+                self._send(404, b"", "text/plain"); return
+            self._file(STATE.shots[i].path)
         elif p.startswith("/thumb/"):
             try:
                 i = int(p.split("/")[2].split("?")[0])
@@ -426,6 +512,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE.move_shot(i, +1)
                 elif act == "trim":
                     STATE.trim_shot(i, float(d.get("value", 0)))
+                elif act == "setin":
+                    STATE.set_in(i, float(d.get("value", 0)))
             self._json({"ok": True})
         elif p == "/api/replace":
             i = int(q.get("shot", [-1])[0])
