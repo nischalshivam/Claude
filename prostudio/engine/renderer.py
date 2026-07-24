@@ -426,6 +426,84 @@ def render_shot(shot, out, style, niche, W, H, pad, glow, log, work=None):
     return "filler"
 
 
+def _compose_chain(clips, nets, joins, out, W, H, crf, preset, work, log,
+                   job=None, text_events=None, audio=None, total=None,
+                   tag="c", progress=False):
+    """Cross-fade a list of clips into one, with optional text + audio.
+
+    Kept SMALL on purpose: it is called on a bounded number of inputs at a
+    time (see render_job's chunking), so ffmpeg never has to open ~150 4K
+    decoders at once (that caused 'Cannot allocate memory' and truncated
+    videos). `nets[i]` is how much clip i advances the timeline; `joins` are
+    the (type, dur) transitions between clips."""
+    n = len(clips)
+    inputs = []
+    for c in clips:
+        inputs += ["-i", c]
+    durs = [duration(c) for c in clips]
+    filt, prev, acc = [], "0:v", 0.0
+    for i in range(1, n):
+        ttype, tdur = joins[i - 1]
+        acc += nets[i - 1]
+        filt.append(f"[{prev}][{i}:v]xfade=transition={ttype}"
+                    f":duration={tdur:.3f}:offset={acc:.3f}[x{i}]")
+        prev = f"x{i}"
+    comp_total = (acc + durs[-1]) if n > 1 else durs[0]
+    if total is None:
+        total = comp_total
+    if text_events and job is not None:
+        style = FORMATS[job.format_key]
+        tfilters = []
+        for (t0, t1, si, chunk, zone) in text_events:
+            tfilters += chunk_filters(chunk, t0, t1, style, zone, W, H,
+                                      lang=job.language,
+                                      letterbox=style["letterbox"])
+        if tfilters:
+            batch, label = 8, prev
+            for i in range(0, len(tfilters), batch):
+                grp = tfilters[i:i + batch]
+                ol = "vt" if i + batch >= len(tfilters) else f"vt{i}"
+                filt.append(f"[{label}]" + ",".join(grp) + f"[{ol}]")
+                label = ol
+            prev = "vt"
+    vmap = f"[{prev}]" if prev != "0:v" else "0:v"
+    maps, acodec = ["-map", vmap], ["-an"]
+    if audio:
+        filt.append(f"[{n}:a]atrim=0:{total:.3f},afade=t=in:d=0.25,"
+                    f"afade=t=out:st={max(0, total - 1.2):.3f}:d=1.2[a]")
+        inputs += ["-i", audio]
+        maps += ["-map", "[a]"]
+        acodec = ["-c:a", "aac", "-b:a", "160k"]
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    if filt:
+        graph_file = os.path.join(work, f"graph_{tag}.txt")
+        with open(graph_file, "w", encoding="utf-8") as f:
+            f.write(";\n".join(filt))
+        cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
+               "-filter_complex_script", graph_file, *maps,
+               "-c:v", "libx264", "-crf", str(crf), "-preset", preset,
+               "-pix_fmt", "yuv420p", "-r", str(FPS), *acodec,
+               "-movflags", "+faststart", "-t", f"{total:.3f}", out]
+    else:                                   # single clip, no filters -> copy
+        cmd = ["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", clips[0],
+               "-c", "copy", "-t", f"{total:.3f}", out]
+    if progress:
+        _run_progress(cmd, log, total=total, work=work)
+    else:
+        _run(cmd, log, timeout=None)
+    return out, comp_total
+
+
+def _group_size(W, H):
+    """How many clips to cross-fade at once. Bounded so ffmpeg never opens too
+    many decoders — scaled down for higher resolutions (4K is memory-heavy)."""
+    import os as _os
+    env = _os.environ.get("PS_GROUP")
+    if env and env.isdigit():
+        return max(2, int(env))
+    return max(6, int(48 * (1920 * 1080) / max(1, W * H)))   # 4K->12, 1080p->48
+
+
 def render_job(job, shots, text_events, log=print, proxy=False, resume=False):
     style = dict(FORMATS[job.format_key])
     W, H = RESOLUTIONS[job.resolution]
@@ -503,68 +581,50 @@ def render_job(job, shots, text_events, log=print, proxy=False, resume=False):
                 "(a source file was too large/slow/corrupt) — the video is "
                 "complete; you can swap those clips in your editor if needed.")
 
-        durs = [duration(s) for s in segs]
-        inputs = []
-        for s in segs:
-            inputs += ["-i", s]
-        filt, prev, acc = [], "0:v", 0.0
-        for i in range(1, n):
-            ttype, tdur = joins[i - 1]
-            acc += shots[i - 1].secs
-            filt.append(f"[{prev}][{i}:v]xfade=transition={ttype}"
-                        f":duration={tdur:.3f}:offset={acc:.3f}[x{i}]")
-            prev = f"x{i}"
-        total = acc + durs[-1]
-
-        # text overlay on the composite, absolute times (== audio times).
-        # IMPORTANT: split the drawtext filters into MANY short filterchains
-        # (one per line) instead of one gigantic line. Some ffmpeg builds
-        # (notably Windows) truncate an over-long line when reading
-        # -filter_complex_script, which corrupts the graph mid-filter and
-        # fails with "Invalid argument". Small per-line batches avoid that.
-        tfilters = []
-        for (t0, t1, si, chunk, zone) in text_events:
-            tfilters += chunk_filters(chunk, t0, t1, style, zone, W, H,
-                                      lang=job.language,
-                                      letterbox=style["letterbox"])
-        if tfilters:
-            batch = 8                              # ~8 drawtext/line, well under
-            label = prev                           # any line-length buffer
-            for i in range(0, len(tfilters), batch):
-                grp = tfilters[i:i + batch]
-                out_label = "vt" if i + batch >= len(tfilters) else f"vt{i}"
-                filt.append(f"[{label}]" + ",".join(grp) + f"[{out_label}]")
-                label = out_label
-            prev = "vt"
-
-        filt.append(f"[{n}:a]atrim=0:{total:.3f},afade=t=in:d=0.25,"
-                    f"afade=t=out:st={max(0, total - 1.2):.3f}:d=1.2[a]")
-        inputs += ["-i", job.audio]
-
-        out = out_path
-        os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-        # long timelines (many shots + text events) produce a filtergraph far
-        # bigger than the OS command-line limit -> pass it as a script file
-        graph_file = os.path.join(work, "graph.txt")
-        with open(graph_file, "w", encoding="utf-8") as f:
-            f.write(";\n".join(filt))
-        # encoder preset: at 4K, "medium" is needlessly slow — "fast" at the
-        # same CRF looks all but identical and cuts the compose time a lot.
+        total = sum(sh.secs for sh in shots)     # audio-driven target length
+        nets = [sh.secs for sh in shots]
+        # at 4K, "medium" is needlessly slow — "fast" at the same CRF looks all
+        # but identical and cuts compose time a lot.
         if not proxy and W * H >= 3840 * 2160 and preset in (
                 "medium", "slow", "slower"):
             preset = "fast"
+        out = out_path
+        G = _group_size(W, H)
         kind = "draft proxy" if proxy else "final video"
-        log(f"[ 88%] compositing {kind} (longest step, ~{total:.0f}s at "
-            f"{W}x{H}/{preset}) — live progress below ...")
-        _run_progress(
-            ["ffmpeg", "-nostdin", "-y", "-v", "error", *inputs,
-             "-filter_complex_script", graph_file,
-             "-map", f"[{prev}]", "-map", "[a]",
-             "-c:v", "libx264", "-crf", str(crf), "-preset", preset,
-             "-pix_fmt", "yuv420p", "-r", str(FPS),
-             "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
-             "-t", f"{total:.3f}", out],
-            log, total=total, work=work)
+
+        if n <= G:
+            # small enough to cross-fade in one memory-safe pass
+            log(f"[ 88%] compositing {kind} (~{total:.0f}s at {W}x{H}/{preset}) "
+                "— live progress below ...")
+            _compose_chain(segs, nets, joins, out, W, H, crf, preset, work, log,
+                           job=job, text_events=text_events, audio=job.audio,
+                           total=total, tag="final", progress=True)
+        else:
+            # MANY shots: cross-fade in bounded groups first (so ffmpeg never
+            # opens ~150 decoders at once -> no 'Cannot allocate memory'), then
+            # cross-fade the group clips (with text + audio) at the top.
+            starts = list(range(0, n, G))
+            log(f"[ 86%] compositing {kind} in {len(starts)} memory-safe groups "
+                f"(~{total:.0f}s at {W}x{H}) ...")
+            gclips, gnets, gjoins = [], [], []
+            for gi, a in enumerate(starts):
+                b = min(a + G, n)
+                gc = os.path.join(work, f"g{gi:03d}.mp4")
+                # intermediate clips near-lossless (crf 16) so the second pass
+                # doesn't visibly degrade them
+                _compose_chain(segs[a:b], nets[a:b], joins[a:b - 1], gc, W, H,
+                               16, "veryfast", work, log, tag=f"g{gi}")
+                gclips.append(gc)
+                gnets.append(sum(nets[a:b]))
+                if b < n:
+                    gjoins.append(joins[b - 1])
+                pct = 86 + int(6 * (gi + 1) / len(starts))
+                log(f"[{pct:3d}%] group {gi + 1}/{len(starts)} composed")
+            log(f"[ 94%] joining {len(gclips)} groups + audio — live progress ...")
+            _compose_chain(gclips, gnets, gjoins, out, W, H, crf, preset, work,
+                           log, job=job, text_events=text_events,
+                           audio=job.audio, total=total, tag="final",
+                           progress=True)
         log(f"[100%] done: {out} ({total:.1f}s, {os.path.getsize(out)/1e6:.1f} MB)")
         # success -> the checkpoint is no longer needed
         shutil.rmtree(work, ignore_errors=True)
