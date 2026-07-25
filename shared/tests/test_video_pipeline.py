@@ -16,6 +16,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from media_index import cutter, library, probe, search, subtitles, sync   # noqa: E402
+from media_index.demo import make_combined_demo as cdemo               # noqa: E402
 from media_index.demo import make_demo_video as dv                        # noqa: E402
 
 HAVE_FFMPEG = probe.ffmpeg_bin() is not None
@@ -235,6 +236,104 @@ class TestEndToEnd(unittest.TestCase):
         for a, b in zip(got, want):
             self.assertLessEqual(abs(a - b), 14,
                                  f"clip colour {got} != segment colour {want}")
+
+
+@skip_no_ffmpeg
+class TestCombinedSeasonFile(unittest.TestCase):
+    """A single file holding several episodes — a very common download shape.
+
+    The danger is silent: "S01E01-E07.mkv" also matches the plain "S01E01"
+    pattern, so without care an entire season is filed as episode one.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="combined_")
+        root = os.path.join(cls.tmp, "Iron Harvest")
+        cls.vid = cdemo.build(
+            os.path.join(root, "Iron_Harvest_S01_COMBINED_720p_BluRay_HEVC.mkv"),
+            log=lambda *a: None)
+        cls.db = os.path.join(cls.tmp, "library.db")
+        cls.res = library.build(root, cls.db, log=lambda *a: None)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_not_mistaken_for_episode_one(self):
+        con = library.connect(self.db)
+        row = con.execute("SELECT is_combined, season FROM media").fetchone()
+        con.close()
+        self.assertTrue(row["is_combined"])
+        self.assertEqual(row["season"], 1)
+
+    def test_scan_warns_that_the_file_is_combined(self):
+        self.assertTrue(any("several episodes" in w
+                            for _, w in self.res.warnings))
+
+    def test_chapters_were_stored(self):
+        con = library.connect(self.db)
+        n = con.execute("SELECT COUNT(*) FROM chapter").fetchone()[0]
+        con.close()
+        self.assertEqual(n, len(cdemo.EPISODES))
+
+    def test_hit_names_its_episode(self):
+        hit = search.find(self.db, "I came back for the people on it")[0]
+        self.assertTrue(hit.is_combined)
+        self.assertEqual(hit.chapter_index, 2)          # third episode
+        self.assertIn("E03", hit.label)
+
+    def test_timecode_is_reported_within_the_episode(self):
+        hit = search.find(self.db, "I came back for the people on it")[0]
+        # 52 s into episode 3, which itself starts two episodes in
+        self.assertAlmostEqual(hit.chapter_offset_ms, 52_000, delta=1500)
+        self.assertAlmostEqual(hit.start_ms, 2 * cdemo.EPISODE_SECONDS * 1000 + 52_000,
+                               delta=1500)
+
+    def test_recap_and_original_are_both_found(self):
+        """Every episode opens with a recap, so the same line really does
+        occur more than once inside one file. Keeping only the best hit per
+        file hid the second one entirely."""
+        hits = search.find(self.db, "I never wanted the harvest", limit=4)
+        chapters = {h.chapter_index for h in hits if h.confidence == "high"}
+        self.assertIn(0, chapters)      # the original, in episode 1
+        self.assertIn(1, chapters)      # the recap, in episode 2
+
+    def test_cut_from_a_combined_file_lands_correctly(self):
+        hit = search.find(self.db, "I came back for the people on it")[0]
+        out = os.path.join(self.tmp, "clip.mp4")
+        cut = cutter.clip_for_hit(hit, out, target_seconds=4.0)
+        want = dv.color_at(53.0)                 # colour 53 s into any episode
+        got = cutter.average_rgb(out, cut.duration / 2)
+        for a, b in zip(got, want):
+            self.assertLessEqual(abs(a - b), 14)
+
+
+class TestSubtitleScript(unittest.TestCase):
+    """Hindi subtitles indexed against an English script match nothing, with
+    no explanation — unless we notice and say so."""
+
+    def _cues(self, text):
+        return [subtitles.Cue(0, 0, 1000, text)]
+
+    def test_detects_latin(self):
+        self.assertEqual(
+            subtitles.detect_script(self._cues("I never wanted the harvest")),
+            "latin")
+
+    def test_detects_devanagari(self):
+        self.assertEqual(
+            subtitles.detect_script(self._cues("मैंने कभी फ़सल नहीं चाही थी")),
+            "devanagari")
+
+    def test_romanised_hindi_reads_as_latin(self):
+        self.assertEqual(
+            subtitles.detect_script(self._cues("Maine kabhi fasal nahi chahi")),
+            "latin")
+
+    def test_detects_cjk(self):
+        self.assertEqual(
+            subtitles.detect_script(self._cues("私は収穫を望んでいなかった")), "cjk")
 
 
 if __name__ == "__main__":

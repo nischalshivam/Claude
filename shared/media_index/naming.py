@@ -21,17 +21,38 @@ VIDEO_EXT = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts", ".wmv")
 MIN_MEDIA_BYTES = 200_000
 
 # Release junk we strip out of a title. Order matters: longest first.
+# The season markers matter as much as the codec names: a season folder is
+# usually called "Show.SEASON.01.S01.COMPLETE.1080p...-GROUP", and without
+# these the show name comes out as "Show SEASON 01 S01 6CH".
 _JUNK = r"""(?ix)
     \b(
       2160p|1080p|720p|480p|4k|uhd|hdr10\+?|hdr|dolby\s?vision|dv|sdr
     | x264|x265|h\.?264|h\.?265|hevc|avc|xvid|divx
     | bluray|blu-ray|brrip|bdrip|bdremux|remux|webrip|web-?dl|web|hdtv|dvdrip|dvd|hdrip
     | aac|ac3|eac3|dts(-hd)?|truehd|atmos|flac|mp3|opus|ddp?5\.1|dd\+?|5\.1|7\.1|2\.0
+    | \d{1,2}ch
     | 10bit|8bit|hi10p|dual\s?audio|multi|repack|proper|extended|remastered|uncut
-    | complete|internal|limited|imax|theatrical|directors?\.?cut
-    | ita|eng|english|hindi|dual|subbed|dubbed|esub|msub
+    | complete|combined|internal|limited|imax|theatrical|directors?\.?cut
+    | (season|series)\s*\d{1,2}|season|series|episodes?|s\d{1,2}|e\d{1,3}
+    | ita|eng|english|hindi|tamil|telugu|dual|subbed|dubbed|esub|msub
+    | psa|zee\s?caf[eé]
     )\b
 """
+
+# A single file holding a whole season (or a run of episodes). These are common
+# and must NOT be silently mistaken for "episode 1" — that would attribute
+# every line in a 7-hour file to the first episode.
+_EP_RANGE = [
+    # S01E01-E07 / S01E01-07 / S01.E01-E10
+    re.compile(r"(?i)\bs(?P<season>\d{1,2})\s*[\._\- ]?\s*e(?P<ep_from>\d{1,3})"
+               r"\s*[-–~]\s*e?(?P<ep_to>\d{1,3})\b"),
+    # E01-E13 with the season elsewhere
+    re.compile(r"(?i)\be(?P<ep_from>\d{1,3})\s*[-–~]\s*e(?P<ep_to>\d{1,3})\b"),
+]
+# S03 with no episode number, plus a "whole season" word
+_SEASON_PACK = re.compile(
+    r"(?i)\bs(?:eason)?\s*[\._\- ]?\s*(?P<season>\d{1,2})\b(?=.*\b"
+    r"(complete|combined|full|all[\._\- ]?episodes|pack|batch)\b)")
 # Trailing release-group tag. Deliberately strict: it must be hyphen-attached
 # ("-KOGi") or bracketed. A looser rule eats the last word of real titles —
 # "The Long Winter" would become "The".
@@ -55,15 +76,25 @@ _SKIP_DIR = re.compile(r"(?i)^(subs?|subtitles|extras|specials|sample|media|movi
 
 @dataclass
 class MediaId:
-    kind: str                 # "episode" | "movie"
+    kind: str                 # "episode" | "movie" | "season_pack"
     show: str                 # series name, or movie title
     year: int | None = None
     season: int | None = None
-    episode: int | None = None
+    episode: int | None = None      # first episode for a season pack
+    episode_to: int | None = None   # last episode, when it is a range
     confidence: str = "high"  # high | medium | low
 
     @property
+    def is_combined(self) -> bool:
+        return self.kind == "season_pack"
+
+    @property
     def label(self) -> str:
+        if self.kind == "season_pack":
+            span = ""
+            if self.episode and self.episode_to:
+                span = f"E{self.episode:02d}-E{self.episode_to:02d}"
+            return f"{self.show} S{self.season:02d} {span}".strip() + " [combined]"
         if self.kind == "episode":
             return f"{self.show} S{self.season:02d}E{self.episode:02d}"
         return f"{self.show}" + (f" ({self.year})" if self.year else "")
@@ -110,10 +141,50 @@ def _season_from_dirs(path: str) -> int | None:
     return None
 
 
+_SEPS = re.compile(r"[._]")
+
+
 def parse(path: str) -> MediaId:
     """Best-effort identification of a media file."""
-    stem = os.path.splitext(os.path.basename(path))[0]
+    raw_stem = os.path.splitext(os.path.basename(path))[0]
+    # "Breaking_Bad_S03_COMBINED" has no word boundary before S03, because "_"
+    # is itself a word character — every \b pattern below would silently miss.
+    # This is a 1:1 character swap, so match offsets still index into raw_stem.
+    stem = _SEPS.sub(" ", raw_stem)
     dir_title, dir_year = _title_from_dirs(path)
+
+    def _show_for(match_start: int) -> str:
+        head = _clean_title(stem[:match_start])
+        # A filename title that is already substantial is trusted. Only a short
+        # one (an abbreviation like "GoT", or nothing at all) defers to the
+        # folder — "longest wins" let a random parent directory beat a perfectly
+        # good "Iron Harvest".
+        if len(head) >= 8:
+            return head
+        if dir_title and len(dir_title) > len(head):
+            return dir_title
+        return head if len(head) >= 2 else (dir_title or stem)
+
+    # --- a single file holding several episodes -----------------------------
+    # Checked BEFORE the single-episode patterns: "S01E01-E07" also matches
+    # "S01E01", and taking that would attribute seven hours to episode one.
+    for pat in _EP_RANGE:
+        m = pat.search(stem)
+        if not m:
+            continue
+        g = m.groupdict()
+        season = int(g["season"]) if g.get("season") else _season_from_dirs(path)
+        ep_from, ep_to = int(g["ep_from"]), int(g["ep_to"])
+        if ep_to <= ep_from:                     # "E05-E02" is not a range
+            continue
+        return MediaId("season_pack", _show_for(m.start()), dir_year,
+                       season, ep_from, ep_to,
+                       "high" if season is not None else "medium")
+
+    m = _SEASON_PACK.search(stem)
+    if m and not any(p.search(stem) for p in _EP_PATTERNS):
+        return MediaId("season_pack", _show_for(m.start()), dir_year,
+                       int(m.group("season")), None, None, "medium")
 
     for pat in _EP_PATTERNS:
         m = pat.search(stem)
@@ -121,14 +192,8 @@ def parse(path: str) -> MediaId:
             continue
         season = int(m.group("season"))
         episode = int(m.group("episode"))
-        # title = whatever precedes the SxxExx marker, else the folder name
-        head = _clean_title(stem[:m.start()])
-        show = head if len(head) >= 2 else (dir_title or head or stem)
-        # a folder title is usually cleaner than a filename fragment
-        if dir_title and (len(head) < 2 or len(dir_title) > len(head)):
-            show = dir_title
-        return MediaId("episode", show, dir_year, season, episode,
-                       "high" if show else "medium")
+        return MediaId("episode", _show_for(m.start()), dir_year, season,
+                       episode, None, "high")
 
     # No episode marker in the filename: maybe the season is only in the folder
     season = _season_from_dirs(path)

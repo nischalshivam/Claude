@@ -30,6 +30,10 @@ FTS_LIMIT = 600         # candidate cues pulled from the full-text prefilter
 MAX_CUE_GAP_MS = 4000       # silence allowed between two merged cues
 MAX_WINDOW_MS = 20_000      # a merged window may never exceed this
 
+# Two matches closer together than this are the same moment seen through two
+# overlapping windows, not two occurrences of the line.
+REPEAT_SEPARATION_MS = 30_000
+
 try:                                                     # optional accelerator
     from rapidfuzz import fuzz as _fuzz
 
@@ -80,12 +84,39 @@ class Hit:
     confidence: str                      # high | medium | low
     cue_span: tuple = (0, 0)
     alternatives: int = 0                # other places this line also appears
+    is_combined: bool = False            # source file holds several episodes
+    episode_to: int | None = None
+    chapter_title: str = ""              # names the episode inside a pack
+    chapter_index: int | None = None
+    chapter_offset_ms: int = 0           # position within that episode
 
     @property
     def label(self) -> str:
+        if self.is_combined:
+            # Inside a season pack the useful answer is which episode, not an
+            # offset into a seven-hour blob. Chapters give us that when the
+            # release carries them.
+            if self.chapter_index is not None:
+                ep = (self.episode or 1) + self.chapter_index
+                name = f" — {self.chapter_title}" if self.chapter_title else ""
+                return (f"{self.show} S{self.season:02d}E{ep:02d}{name}"
+                        if self.season is not None else f"{self.show}{name}")
+            span = (f" E{self.episode:02d}-E{self.episode_to:02d}"
+                    if self.episode and self.episode_to else "")
+            return (f"{self.show} S{self.season:02d}{span} [combined]"
+                    if self.season is not None else f"{self.show} [combined]")
         if self.kind == "episode" and self.season is not None:
             return f"{self.show} S{self.season:02d}E{self.episode:02d}"
         return f"{self.show}" + (f" ({self.year})" if self.year else "")
+
+    @property
+    def episode_timecode(self) -> str:
+        """Position within the episode, when the file holds several."""
+        ms = self.chapter_offset_ms if self.chapter_index is not None else self.start_ms
+        s, ms = divmod(ms, 1000)
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        return f"{h:d}:{m:02d}:{s:02d}.{ms:03d}"
 
     @property
     def timecode(self) -> str:
@@ -102,6 +133,10 @@ class Hit:
         a, b = self.cut_window()
         return {"label": self.label, "path": self.path, "show": self.show,
                 "season": self.season, "episode": self.episode,
+                "is_combined": self.is_combined,
+                "chapter_index": self.chapter_index,
+                "chapter_title": self.chapter_title,
+                "episode_timecode": self.episode_timecode,
                 "start_ms": self.start_ms, "end_ms": self.end_ms,
                 "timecode": self.timecode, "cut_start_ms": a, "cut_end_ms": b,
                 "score": round(self.score, 1), "coverage": round(self.coverage, 3),
@@ -223,7 +258,7 @@ def _find_once(db_path, quote, show, season, episode, limit, min_score, con):
                 if j >= 0:
                     s.add(j)
 
-        best_per_media: dict[int, Hit] = {}
+        scored = []                      # every window worth considering
         for mid, idxs in need.items():
             lo, hi = min(idxs), max(idxs)
             cues = con.execute(
@@ -246,26 +281,61 @@ def _find_once(db_path, quote, show, season, episode, limit, min_score, con):
                         break
                     w_norm = " ".join(c["text_norm"] for c in seq)
                     sc, cov = _score(q_norm, q_tok, w_norm, _tokens(w_norm))
-                    prev = best_per_media.get(mid)
-                    if prev and sc <= prev.score:
+                    if sc < min_score:
                         continue
-                    m = con.execute(
-                        "SELECT path,show,kind,year,season,episode FROM media WHERE id=?",
-                        (mid,)).fetchone()
-                    best_per_media[mid] = Hit(
-                        media_id=mid, path=m["path"], show=m["show"], kind=m["kind"],
-                        year=m["year"], season=m["season"], episode=m["episode"],
-                        start_ms=seq[0]["start_ms"], end_ms=seq[-1]["end_ms"],
-                        matched_text=" ".join(c["text"] for c in seq),
-                        score=sc, coverage=cov, confidence=_confidence(sc, cov),
-                        cue_span=(s0, s0 + wlen - 1))
+                    scored.append((sc, cov, mid, s0, wlen, seq))
 
-        hits = sorted((h for h in best_per_media.values() if h.score >= min_score),
-                      key=lambda h: -h.score)
+        # Keep the best window, then the next best far enough away from it, and
+        # so on. Keeping only one hit per FILE hid every repeat inside a single
+        # file — and a season pack is full of them, because each episode opens
+        # with a recap of the last one.
+        scored.sort(key=lambda t: -t[0])
+        kept, taken = [], {}
+        for sc, cov, mid, s0, wlen, seq in scored:
+            start_ms = seq[0]["start_ms"]
+            if any(abs(start_ms - t) < REPEAT_SEPARATION_MS
+                   for t in taken.get(mid, ())):
+                continue
+            taken.setdefault(mid, []).append(start_ms)
+            kept.append((sc, cov, mid, s0, wlen, seq))
+            if len(kept) >= limit * 3:
+                break
+
+        meta = {}
+        hits = []
+        for sc, cov, mid, s0, wlen, seq in kept:
+            if mid not in meta:
+                meta[mid] = con.execute(
+                    "SELECT path,show,kind,year,season,episode,episode_to,"
+                    "       is_combined FROM media WHERE id=?", (mid,)).fetchone()
+            m = meta[mid]
+            hits.append(Hit(
+                media_id=mid, path=m["path"], show=m["show"], kind=m["kind"],
+                year=m["year"], season=m["season"], episode=m["episode"],
+                episode_to=m["episode_to"], is_combined=bool(m["is_combined"]),
+                start_ms=seq[0]["start_ms"], end_ms=seq[-1]["end_ms"],
+                matched_text=" ".join(c["text"] for c in seq),
+                score=sc, coverage=cov, confidence=_confidence(sc, cov),
+                cue_span=(s0, s0 + wlen - 1)))
+        hits.sort(key=lambda h: -h.score)
         strong = [h for h in hits if h.confidence in ("high", "medium")]
         for h in hits:
             h.alternatives = max(0, len(strong) - 1)
+            if h.is_combined:
+                _attach_chapter(con, h)
         return hits[:limit]
+
+
+def _attach_chapter(con, hit: Hit) -> None:
+    """Name the episode a timestamp falls in, inside a season pack."""
+    row = con.execute(
+        """SELECT idx, start_ms, title FROM chapter
+            WHERE media_id=? AND start_ms<=? ORDER BY start_ms DESC LIMIT 1""",
+        (hit.media_id, hit.start_ms)).fetchone()
+    if row:
+        hit.chapter_index = row["idx"]
+        hit.chapter_title = row["title"] or ""
+        hit.chapter_offset_ms = max(0, hit.start_ms - row["start_ms"])
 
 
 # ---------------------------------------------------------------------------

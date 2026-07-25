@@ -142,6 +142,44 @@ def _ep_key(name: str) -> tuple | None:
     return int(m.group(3)), int(m.group(4))
 
 
+# Unicode ranges that tell us what script the subtitles are actually in.
+# Checking the TEXT beats trusting a language tag, which is routinely wrong or
+# missing in scene releases — and a Hindi subtitle silently indexed against an
+# English script produces zero matches with no explanation.
+_SCRIPTS = [
+    ("devanagari", (0x0900, 0x097F)),
+    ("arabic", (0x0600, 0x06FF)),
+    ("cyrillic", (0x0400, 0x04FF)),
+    ("cjk", (0x4E00, 0x9FFF)),
+    ("hangul", (0xAC00, 0xD7AF)),
+    ("thai", (0x0E00, 0x0E7F)),
+    ("hebrew", (0x0590, 0x05FF)),
+]
+
+
+def detect_script(cues, sample=400) -> str:
+    """'latin' | 'devanagari' | 'cjk' | ... — based on the characters present."""
+    text = " ".join(c.text for c in cues[:sample])
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return "unknown"
+    counts = {name: 0 for name, _ in _SCRIPTS}
+    latin = 0
+    for ch in letters:
+        o = ord(ch)
+        if o < 0x0250:
+            latin += 1
+            continue
+        for name, (lo, hi) in _SCRIPTS:
+            if lo <= o <= hi:
+                counts[name] += 1
+                break
+    best, n = max(counts.items(), key=lambda kv: kv[1])
+    if n > len(letters) * 0.20:
+        return best
+    return "latin" if latin else "unknown"
+
+
 def find_sidecar(video_path: str) -> str | None:
     """Best subtitle file sitting next to the video (English preferred).
 

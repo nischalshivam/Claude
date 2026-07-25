@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from . import naming, subtitles
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS media (
     year        INTEGER,
     season      INTEGER,
     episode     INTEGER,
+    episode_to  INTEGER,               -- last episode when one file holds many
+    is_combined INTEGER DEFAULT 0,     -- a season pack rather than one episode
     id_conf     TEXT,
     sub_kind    TEXT,                   -- sidecar | embedded | none
     sub_path    TEXT,
@@ -76,6 +78,7 @@ CREATE TABLE IF NOT EXISTS media (
     sub_scale   REAL DEFAULT 1.0,       -- framerate correction, likewise
     sync_score  REAL DEFAULT 0,
     sync_conf   TEXT DEFAULT 'unchecked',
+    sub_script  TEXT DEFAULT 'unknown',  -- latin | devanagari | cjk | ...
     cue_count   INTEGER DEFAULT 0,
     last_cue_ms INTEGER DEFAULT 0,
     file_size   INTEGER,
@@ -91,6 +94,15 @@ CREATE TABLE IF NOT EXISTS cue (
     text      TEXT NOT NULL,
     text_norm TEXT NOT NULL);
 
+CREATE TABLE IF NOT EXISTS chapter (
+    id       INTEGER PRIMARY KEY,
+    media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    idx      INTEGER NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms   INTEGER NOT NULL,
+    title    TEXT DEFAULT '');
+
+CREATE INDEX IF NOT EXISTS chapter_media ON chapter(media_id, start_ms);
 CREATE INDEX IF NOT EXISTS cue_media_idx ON cue(media_id, idx);
 CREATE INDEX IF NOT EXISTS media_show    ON media(show_norm, season, episode);
 
@@ -113,7 +125,10 @@ END;
 _ADDED_COLUMNS = {
     "media": [("sub_scale", "REAL DEFAULT 1.0"),
               ("sync_score", "REAL DEFAULT 0"),
-              ("sync_conf", "TEXT DEFAULT 'unchecked'")],
+              ("sync_conf", "TEXT DEFAULT 'unchecked'"),
+              ("episode_to", "INTEGER"),
+              ("is_combined", "INTEGER DEFAULT 0"),
+              ("sub_script", "TEXT DEFAULT 'unknown'")],
 }
 
 
@@ -148,6 +163,7 @@ class ScanResult:
     skipped: int = 0
     no_subs: list = None          # [(path, reason)]
     desynced: list = None         # [(path, SyncResult-ish description)]
+    warnings: list = None         # [(path, reason)] — indexed, but read this
     cues: int = 0
     seconds: float = 0.0
 
@@ -156,6 +172,8 @@ class ScanResult:
             self.no_subs = []
         if self.desynced is None:
             self.desynced = []
+        if self.warnings is None:
+            self.warnings = []
 
 
 def _index_one(con, path: str, log, verify_sync=False,
@@ -173,6 +191,7 @@ def _index_one(con, path: str, log, verify_sync=False,
     # Correct subtitle drift BEFORE storing, so every timestamp in the index
     # is already true against the video. A low-confidence result is recorded
     # but never applied — guessing a shift is worse than leaving it alone.
+    script = subtitles.detect_script(cues) if cues else "unknown"
     offset_ms, scale, sync_score, sync_conf = 0, 1.0, 0.0, "unchecked"
     if cues and verify_sync:
         from . import sync as _sync
@@ -194,29 +213,46 @@ def _index_one(con, path: str, log, verify_sync=False,
         media_id = row["id"]
         con.execute(
             """UPDATE media SET kind=?,show=?,show_norm=?,year=?,season=?,episode=?,
+                   episode_to=?,is_combined=?,
                    id_conf=?,sub_kind=?,sub_path=?,sub_offset_ms=?,sub_scale=?,
-                   sync_score=?,sync_conf=?,cue_count=?,last_cue_ms=?,
+                   sync_score=?,sync_conf=?,sub_script=?,cue_count=?,last_cue_ms=?,
                    file_size=?,file_mtime=?,indexed_at=? WHERE id=?""",
             (mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
-             mid.episode, mid.confidence, kind, sub_path, offset_ms, scale,
-             sync_score, sync_conf, len(cues),
+             mid.episode, mid.episode_to, int(mid.is_combined),
+             mid.confidence, kind, sub_path, offset_ms, scale,
+             sync_score, sync_conf, script, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time()), media_id))
         status = "updated"
     else:
         cur = con.execute(
             """INSERT INTO media(path,kind,show,show_norm,year,season,episode,
-                   id_conf,sub_kind,sub_path,sub_offset_ms,sub_scale,
-                   sync_score,sync_conf,cue_count,last_cue_ms,
-                   file_size,file_mtime,indexed_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   episode_to,is_combined,id_conf,sub_kind,sub_path,
+                   sub_offset_ms,sub_scale,sync_score,sync_conf,sub_script,
+                   cue_count,last_cue_ms,file_size,file_mtime,indexed_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (path, mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
-             mid.episode, mid.confidence, kind, sub_path, offset_ms, scale,
-             sync_score, sync_conf, len(cues),
+             mid.episode, mid.episode_to, int(mid.is_combined),
+             mid.confidence, kind, sub_path, offset_ms, scale,
+             sync_score, sync_conf, script, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time())))
         media_id = cur.lastrowid
         status = "added"
+
+    # chapters let a timestamp inside a season pack name its episode
+    con.execute("DELETE FROM chapter WHERE media_id=?", (media_id,))
+    try:
+        from .probe import chapters as _chapters
+        chaps = _chapters(path) if mid.is_combined else []
+    except Exception:
+        chaps = []
+    if chaps:
+        con.executemany(
+            "INSERT INTO chapter(media_id,idx,start_ms,end_ms,title) VALUES(?,?,?,?,?)",
+            [(media_id, c.index, int(c.start * 1000), int(c.end * 1000), c.title)
+             for c in chaps])
+        log(f"      {len(chaps)} chapters — episodes can be named")
 
     con.executemany(
         "INSERT INTO cue(media_id,idx,start_ms,end_ms,text,text_norm) VALUES(?,?,?,?,?,?)",
@@ -253,8 +289,20 @@ def build(media_root: str, db_path: str, log=print,
         else:
             log(f"  [{i}/{len(files)}] {mid.label}  —  {n} lines")
             row = con.execute(
-                "SELECT sync_conf, sub_offset_ms FROM media WHERE path=?",
-                (path,)).fetchone()
+                "SELECT sync_conf, sub_offset_ms, sub_script, is_combined, "
+                "       (SELECT COUNT(*) FROM chapter c WHERE c.media_id=m.id) chaps "
+                "  FROM media m WHERE path=?", (path,)).fetchone()
+            if row and row["sub_script"] not in ("latin", "unknown"):
+                res.warnings.append(
+                    (path, f"subtitles are in {row['sub_script']} script — an "
+                           "English script will not match these"))
+            if row and row["is_combined"]:
+                res.warnings.append(
+                    (path, "one file holds several episodes"
+                           + (f" — {row['chaps']} chapters found, episodes can "
+                              "be named" if row["chaps"] else
+                              " — no chapters, timestamps are offsets into the "
+                              "whole file")))
             if row and row["sync_conf"] == "low":
                 res.desynced.append((path, "sync unverifiable — check subtitles"))
             elif row and row["sub_offset_ms"]:

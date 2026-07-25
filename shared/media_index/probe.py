@@ -45,6 +45,14 @@ class SubStream:
 
 
 @dataclass
+class Chapter:
+    index: int
+    start: float             # seconds
+    end: float
+    title: str = ""
+
+
+@dataclass
 class MediaInfo:
     path: str
     duration: float = 0.0        # seconds
@@ -55,6 +63,7 @@ class MediaInfo:
     acodec: str = ""
     has_audio: bool = False
     subs: list = field(default_factory=list)      # [SubStream]
+    chapters: list = field(default_factory=list)  # [Chapter]
 
     @property
     def resolution(self) -> str:
@@ -166,6 +175,59 @@ def probe(path: str) -> MediaInfo:
         except (ProbeError, json.JSONDecodeError, ValueError):
             pass                                   # fall through to the parser
     return _probe_with_ffmpeg(path)
+
+
+def chapters(path: str, timeout=120) -> list:
+    """Chapter markers, if the container has them.
+
+    Season packs muxed by a release group very often carry one chapter per
+    episode. When they do, a timestamp inside a seven-hour file can be
+    attributed to the right episode instead of being reported as an offset
+    into an anonymous blob. Empty list when there are none (or no ffprobe).
+    """
+    if not ffprobe_bin():
+        return _chapters_with_ffmpeg(path, timeout)
+    out = _run([ffprobe_bin(), "-v", "error", "-print_format", "json",
+                "-show_chapters", path], timeout=timeout)
+    if out.returncode != 0:
+        return _chapters_with_ffmpeg(path, timeout)
+    try:
+        data = json.loads(out.stdout or "{}")
+    except json.JSONDecodeError:
+        return []
+    result = []
+    for i, ch in enumerate(data.get("chapters", [])):
+        try:
+            start = float(ch.get("start_time") or 0)
+            end = float(ch.get("end_time") or 0)
+        except (TypeError, ValueError):
+            continue
+        title = (ch.get("tags") or {}).get("title", "")
+        result.append(Chapter(index=i, start=start, end=end, title=title))
+    return result
+
+
+_RE_CHAP = re.compile(
+    r"Chapter #\d+[:.](\d+):\s*start\s*([\d.]+),\s*end\s*([\d.]+)")
+_RE_CHAP_TITLE = re.compile(r"(?m)^\s*title\s*:\s*(.+)$")
+
+
+def _chapters_with_ffmpeg(path: str, timeout=120) -> list:
+    """Chapters as printed by `ffmpeg -i`, for installs without ffprobe."""
+    if not ffmpeg_bin():
+        return []
+    out = _run([ffmpeg_bin(), "-hide_banner", "-i", path], timeout=timeout)
+    text = out.stderr or ""
+    result = []
+    for i, m in enumerate(_RE_CHAP.finditer(text)):
+        title = ""
+        tail = text[m.end():m.end() + 220]
+        tm = _RE_CHAP_TITLE.search(tail)
+        if tm:
+            title = tm.group(1).strip()
+        result.append(Chapter(index=i, start=float(m.group(2)),
+                              end=float(m.group(3)), title=title))
+    return result
 
 
 def keyframes(path: str, start: float = 0.0, window: float = 60.0) -> list[float]:
