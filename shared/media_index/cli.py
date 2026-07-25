@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-from . import cutter, library, search, subtitles, sync
+from . import cutter, library, search, sources, subtitles, sync
 
 
 def _fmt_bytes(n: int) -> str:
@@ -159,6 +159,29 @@ def cmd_cut(a):
     return 0
 
 
+def cmd_sources(a):
+    """Which titles does this script need, and are they in the library?"""
+    with open(a.script, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    beats = data if isinstance(data, list) else data.get("beats", [])
+    reqs = sources.check(a.db, beats, resolve_dialogue=not a.fast)
+    print(sources.format_report(reqs))
+    if a.out:
+        payload = [{"title": r.title, "shots": r.shots, "status": r.status,
+                    "note": r.note, "beats": r.beats,
+                    "library_titles": r.library_titles,
+                    "episodes_needed": sorted(
+                        f"S{s:02d}E{e:02d}" for s, e in
+                        (r.episodes_declared | r.episodes_resolved) if e),
+                    "episodes_missing": sorted(
+                        f"S{s:02d}E{e:02d}" for s, e in r.missing_episodes if e)}
+                   for r in reqs]
+        with open(a.out, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        print(f"\nwrote {a.out}")
+    return 1 if any(r.status == "missing" for r in reqs) else 0
+
+
 def main(argv=None):
     # --db is shared by every subcommand, and works on either side of it
     common = argparse.ArgumentParser(add_help=False)
@@ -220,6 +243,14 @@ def main(argv=None):
     c.add_argument("--force", action="store_true",
                    help="cut even a low-confidence match")
     c.set_defaults(func=cmd_cut)
+
+    o = sub.add_parser("sources", parents=[common],
+                       help="what titles this script needs, and what is missing")
+    o.add_argument("script", help="JSON from the visual-script prompt")
+    o.add_argument("--out", help="write the report as JSON")
+    o.add_argument("--fast", action="store_true",
+                   help="skip dialogue resolution (titles only, no episodes)")
+    o.set_defaults(func=cmd_sources)
 
     a = p.parse_args(argv)
     return a.func(a)

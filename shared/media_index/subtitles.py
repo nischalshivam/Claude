@@ -24,6 +24,7 @@ _ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
 # Language hints that mark a sidecar as English (or language-neutral)
 _EN_HINT = re.compile(r"(?i)(^|[\.\-_ ])(en|eng|english)([\.\-_ ]|$)")
 _FORCED = re.compile(r"(?i)(forced|sdh|cc|commentary|signs?[\.\-_ ]?songs?)")
+_EN_WORDS = re.compile(r"(?i)\b(eng|english)\b")
 
 # Formatting we strip out of cue text
 _TAG_HTML = re.compile(r"<[^>]+>")
@@ -241,50 +242,82 @@ def has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+# Subtitles stored as IMAGES. ffmpeg cannot turn these into text at all —
+# BluRay rips very often carry nothing else, so this must be detected and
+# reported rather than producing a mysteriously empty index.
+BITMAP_CODECS = {"hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub",
+                 "dvb_subtitle", "xsub"}
+
+
+def _rank_sub_stream(st) -> tuple:
+    """Sort key: English first, real text before bitmaps, forced/SDH last."""
+    en = st.lang.startswith("en") or bool(_EN_WORDS.search(st.title or ""))
+    bitmap = st.codec.lower() in BITMAP_CODECS
+    forced = st.forced or bool(_FORCED.search(st.title or ""))
+    return (0 if not bitmap else 1, 0 if en else 1, 1 if forced else 0, st.index)
+
+
 def extract_embedded(video_path: str) -> tuple[str, list[Cue]] | None:
-    """Pull the first English (or first available) text subtitle track."""
+    """Pull the best text subtitle track out of the container.
+
+    Tries every text track in preference order, because the first choice can
+    still decode to nothing (an empty or malformed track is common). Bitmap
+    tracks are skipped — they would need OCR, which is a different problem.
+    """
     if not has_ffmpeg():
         return None
     try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "s",
-             "-show_entries", "stream=index:stream_tags=language",
-             "-of", "csv=p=0", video_path],
-            capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
+        from .probe import probe as _probe          # has an ffprobe-free path
+        info = _probe(video_path)
+    except Exception:
         return None
-    tracks = []
-    for line in probe.stdout.splitlines():
-        bits = [b for b in line.strip().split(",") if b]
-        if not bits:
+
+    usable = [s for s in info.subs if s.codec.lower() not in BITMAP_CODECS]
+    if not usable:
+        return None
+    usable.sort(key=_rank_sub_stream)
+
+    for st in usable[:4]:
+        out = os.path.join(tempfile.gettempdir(),
+                           f"_mi_{abs(hash(video_path))}_{st.index}.srt")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-i", video_path,
+                 "-map", f"0:s:{st.index}", "-c:s", "srt", out],
+                capture_output=True, timeout=600)
+        except (OSError, subprocess.SubprocessError):
             continue
-        lang = bits[1].lower() if len(bits) > 1 else ""
-        tracks.append((0 if lang.startswith("en") else 1, len(tracks)))
-    if not tracks:
-        return None
-    tracks.sort()
-    stream_no = tracks[0][1]
-    out = os.path.join(tempfile.gettempdir(),
-                       f"_mi_{abs(hash(video_path))}.srt")
+        cues = []
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            cues = parse_file(out)
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        if cues:
+            return ("embedded", cues)
+    return None
+
+
+def bitmap_only(video_path: str) -> bool:
+    """True when the file has subtitles but all of them are images."""
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-i", video_path,
-             "-map", f"0:s:{stream_no}", "-c:s", "srt", out],
-            capture_output=True, timeout=600)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if not os.path.exists(out) or os.path.getsize(out) == 0:
-        return None
-    cues = parse_file(out)
-    try:
-        os.remove(out)
-    except OSError:
-        pass
-    return ("embedded", cues) if cues else None
+        from .probe import probe as _probe
+        info = _probe(video_path)
+    except Exception:
+        return False
+    return bool(info.subs) and all(
+        s.codec.lower() in BITMAP_CODECS for s in info.subs)
 
 
 def load_for_video(video_path: str) -> tuple[str, str, list[Cue]]:
-    """Return (source_kind, source_path, cues). Empty cues when nothing found."""
+    """Return (source_kind, source_path, cues).
+
+    source_kind is "sidecar" | "embedded" | "bitmap_only" | "none". The
+    bitmap_only case matters: the file DOES have subtitles, they just cannot
+    be read as text, and saying "no subtitles found" would send the user
+    hunting for a problem that is really "download an .srt for this file".
+    """
     side = find_sidecar(video_path)
     if side:
         cues = parse_file(side)
@@ -293,4 +326,6 @@ def load_for_video(video_path: str) -> tuple[str, str, list[Cue]]:
     emb = extract_embedded(video_path)
     if emb:
         return "embedded", video_path, emb[1]
+    if bitmap_only(video_path):
+        return "bitmap_only", "", []
     return "none", "", []

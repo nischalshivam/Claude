@@ -284,7 +284,15 @@ def build(media_root: str, db_path: str, log=print,
         res.cues += n
         mid = naming.parse(path)
         if n == 0:
-            res.no_subs.append((path, "no subtitles found"))
+            # _index_one already recorded HOW the subtitles were sourced; read
+            # it back rather than reaching for a variable it owns.
+            sk = con.execute("SELECT sub_kind FROM media WHERE path=?",
+                             (path,)).fetchone()
+            reason = ("subtitles are image-based (PGS/VobSub) — they need an "
+                      ".srt download or OCR"
+                      if sk and sk["sub_kind"] == "bitmap_only"
+                      else "no subtitles found")
+            res.no_subs.append((path, reason))
             log(f"  [{i}/{len(files)}] {mid.label}  —  NO SUBTITLES")
         else:
             log(f"  [{i}/{len(files)}] {mid.label}  —  {n} lines")

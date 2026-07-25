@@ -45,6 +45,15 @@ class SubStream:
 
 
 @dataclass
+class AudioStream:
+    index: int          # index within the audio streams (for -map 0:a:N)
+    lang: str = ""
+    codec: str = ""
+    title: str = ""
+    channels: int = 0
+
+
+@dataclass
 class Chapter:
     index: int
     start: float             # seconds
@@ -62,6 +71,7 @@ class MediaInfo:
     vcodec: str = ""
     acodec: str = ""
     has_audio: bool = False
+    audios: list = field(default_factory=list)    # [AudioStream]
     subs: list = field(default_factory=list)      # [SubStream]
     chapters: list = field(default_factory=list)  # [Chapter]
 
@@ -110,9 +120,15 @@ def _probe_with_ffprobe(path: str) -> MediaInfo:
                                  or st.get("r_frame_rate") or "0")
             if not info.duration:
                 info.duration = float(st.get("duration") or 0)
-        elif kind == "audio" and not info.has_audio:
-            info.has_audio = True
-            info.acodec = st.get("codec_name", "")
+        elif kind == "audio":
+            tags = st.get("tags") or {}
+            info.audios.append(AudioStream(
+                index=len(info.audios), lang=(tags.get("language") or "").lower(),
+                codec=st.get("codec_name", ""), title=tags.get("title", ""),
+                channels=int(st.get("channels") or 0)))
+            if not info.has_audio:
+                info.has_audio = True
+                info.acodec = st.get("codec_name", "")
         elif kind == "subtitle":
             tags = st.get("tags") or {}
             info.subs.append(SubStream(
@@ -127,7 +143,8 @@ _RE_DUR = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d+)")
 _RE_VIDEO = re.compile(
     r"Stream #\d+:(\d+).*?:\s*Video:\s*([\w0-9]+).*?(\d{2,5})x(\d{2,5})")
 _RE_FPS = re.compile(r"([\d.]+)\s+fps")
-_RE_AUDIO = re.compile(r"Stream #\d+:\d+.*?:\s*Audio:\s*([\w0-9]+)")
+_RE_AUDIO = re.compile(
+    r"Stream #\d+:\d+(?:\((\w+)\))?.*?:\s*Audio:\s*([\w0-9]+)(.*)")
 _RE_SUB = re.compile(
     r"Stream #\d+:\d+(?:\((\w+)\))?.*?:\s*Subtitle:\s*([\w0-9]+)(.*)")
 
@@ -153,10 +170,17 @@ def _probe_with_ffmpeg(path: str) -> MediaInfo:
         f = _RE_FPS.search(line)
         if f:
             info.fps = float(f.group(1))
-    m = _RE_AUDIO.search(text)
-    if m:
-        info.has_audio = True
-        info.acodec = m.group(1)
+    for i, am in enumerate(_RE_AUDIO.finditer(text)):
+        lang, codec, tail = am.groups()
+        info.audios.append(AudioStream(index=i, lang=(lang or "").lower(),
+                                       codec=codec))
+        # ffmpeg prints the track title on the following metadata line
+        tm = re.search(r"(?m)^\s*title\s*:\s*(.+)$", text[am.end():am.end() + 220])
+        if tm:
+            info.audios[-1].title = tm.group(1).strip()
+        if not info.has_audio:
+            info.has_audio = True
+            info.acodec = codec
     for i, sm in enumerate(_RE_SUB.finditer(text)):
         lang, codec, tail = sm.groups()
         info.subs.append(SubStream(index=i, lang=(lang or "").lower(),
@@ -175,6 +199,30 @@ def probe(path: str) -> MediaInfo:
         except (ProbeError, json.JSONDecodeError, ValueError):
             pass                                   # fall through to the parser
     return _probe_with_ffmpeg(path)
+
+
+# Words that mark an audio/subtitle track as English when the language tag is
+# missing — releases label tracks in the title far more reliably than in tags.
+_EN_WORDS = re.compile(r"(?i)\b(eng|english)\b")
+
+
+def pick_audio(info: MediaInfo, prefer_lang="en") -> int:
+    """Index of the best audio track for analysis (-map 0:a:N).
+
+    A Hindi-dubbed release lists the dub FIRST, so taking track 0 analyses the
+    dub while the subtitles are English. The timings are close (dubs follow lip
+    sync) but not identical, and any transcription would come out in the wrong
+    language entirely.
+    """
+    if not info.audios:
+        return 0
+    for a in info.audios:
+        if a.lang.startswith(prefer_lang):
+            return a.index
+    for a in info.audios:
+        if _EN_WORDS.search(a.title or ""):
+            return a.index
+    return info.audios[0].index
 
 
 def chapters(path: str, timeout=120) -> list:

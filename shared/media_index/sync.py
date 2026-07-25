@@ -25,7 +25,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 
-from .probe import ProbeError, probe, require_ffmpeg
+from .probe import ProbeError, pick_audio, probe, require_ffmpeg
 
 # Common framerate conversions. A wrong-framerate subtitle drifts steadily —
 # perfect at the start, minutes out by the end.
@@ -94,7 +94,7 @@ def speech_intervals(video_path: str, noise_db=-30, min_silence=0.30,
     cmd = [require_ffmpeg(), "-hide_banner", "-nostats"]
     if max_seconds:
         cmd += ["-t", str(max_seconds)]
-    cmd += ["-i", video_path, "-map", "0:a:0",
+    cmd += ["-i", video_path, "-map", f"0:a:{pick_audio(info)}",
             "-ac", "1", "-ar", "8000",                 # cheap: mono, low rate
             "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
             "-f", "null", "-"]
