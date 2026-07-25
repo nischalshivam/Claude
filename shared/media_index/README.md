@@ -1,8 +1,8 @@
-# media_index — the dialogue index
+# media_index — locate and cut
 
 Turns a folder of owned movies / series into a searchable index of **every
 spoken line**, so a quote from a script resolves to an exact file and
-millisecond.
+millisecond — then cuts that moment out as a clip or a still frame.
 
 This is the foundation of the movie automation tool. It replaces the step that
 is currently broken — asking an LLM for a YouTube link and timestamp, which it
@@ -19,13 +19,21 @@ cannot know and therefore invents.
 # 1. build the index (subtitles only — no video is decoded)
 python -m media_index build "D:/Media" --db library.db
 
+#    …and verify every subtitle against the audio while indexing
+python -m media_index build "D:/Media" --db library.db --verify-sync
+
 # 2. find a line
 python -m media_index find "I never wanted the harvest" --db library.db
 
-# 3. pre-flight a whole script before rendering anything
+# 3. cut it — locate, snap to the shot, write clip + still
+python -m media_index cut "I never wanted the harvest" --db library.db \
+        --out clip.mp4 --seconds 4 --still frame.jpg
+
+# 4. pre-flight a whole script before rendering anything
 python -m media_index resolve script.json --db library.db --out report.json
 
-# what is in the library
+# check one file's subtitle timing;  what is in the library
+python -m media_index sync "D:/Media/Movie/Movie.mkv"
 python -m media_index stats --db library.db
 ```
 
@@ -56,10 +64,88 @@ video project.**
 
 ## Dependencies
 
-**None required.** `rapidfuzz` is used when installed and gives a faster, more
-accurate fuzzy match; without it the module falls back to stdlib `difflib`.
-The test suite passes on both paths. `ffmpeg` is optional and only needed to
-pull subtitles embedded inside a video file.
+**None required for the index.** `rapidfuzz` is used when installed and gives a
+faster fuzzy match; without it the module falls back to stdlib `difflib`, and
+the suite passes on both paths.
+
+**`ffmpeg` is required for sync detection and cutting** (and to read subtitles
+embedded inside a video). `ffprobe` is used when present; when it is missing,
+`probe.py` parses `ffmpeg -i` output instead, so nothing breaks.
+
+---
+
+## Subtitle sync detection (`sync.py`)
+
+A downloaded `.srt` is very often timed for a *different release* — another
+cut, another framerate, with or without a distributor intro. It then runs
+seconds early or late, and every clip lands next to the line instead of on it.
+The dangerous part is that it fails **silently**: the index looks healthy.
+
+Detection needs no ML:
+
+1. `ffmpeg silencedetect` gives where the audio is speaking.
+2. The cues give where it *should* be speaking.
+3. Slide one against the other; keep the offset with the best agreement.
+
+Both timelines are packed into Python big integers, so testing one offset is a
+shift + AND + popcount. That is fast enough in pure Python — no numpy.
+
+Framerate conversion (23.976 vs 25 fps) shows up as **stretch**, not shift, so
+nine standard ratios are searched alongside the offset.
+
+### Measured on planted drift
+
+| Case | Detected | Error |
+|---|---|---|
+| clean, +3000 ms | −3000 ms | **0 ms** |
+| audio has 4 unsubtitled sounds, −4500 ms | +4500 ms | **0 ms** |
+| subtitles have 4 lines with no audio, +2000 ms | −2000 ms | **0 ms** |
+| both messy, +6000 ms | −6000 ms | **0 ms** |
+| framerate 25→23.976 + 1200 ms | scale + offset | **−44 ms** |
+| **subtitles from a different film** | — | **refused: `low`** |
+
+Confidence comes from **peak prominence** — how far the winning offset beats
+every rival more than 2 s away. Real matches scored 0.20–0.32; wrong subtitles
+scored **0.01**. That clean separation is what makes the last row safe.
+
+A `high`/`medium` result is applied to the cues **before** they are stored, so
+every timestamp in the index is already true against the video. A `low` result
+is recorded and reported but **never applied** — guessing a shift is worse than
+leaving it alone.
+
+---
+
+## Cutting (`cutter.py`)
+
+Two things stand between "the line is at 14:32.5" and a usable clip:
+
+- **Shot boundaries.** A clip that runs across a camera change looks like a
+  mistake. Boundaries around the line are detected with ffmpeg's own `scene`
+  score, and the clip is pulled inside a single shot where it fits. When it
+  cannot fit, `crossed_shots` says so rather than hiding it.
+- **Seek accuracy.** Stream copy can only start on a keyframe. The default
+  re-encodes and is frame-accurate; `--mode fast` stream-copies when speed
+  matters more.
+
+`target_seconds` is honoured even when the matched line runs longer. The clip
+is silent b-roll under your own narration, so its length is an editing
+decision — a 5.5 s quote must not silently become an 8 s clip. Pass
+`--full-line` when the whole line really is wanted.
+
+### A note on the scene threshold
+
+Measured across identical hard cuts, ffmpeg's scene score ranged from **0.03
+to 0.74** — the score reflects how different two frames happen to look, not
+whether an edit occurred. The default is 0.15. **It needs re-validating on real
+footage**, where camera motion (absent from synthetic tests) creates false
+positives that solid-colour test video cannot show.
+
+### Stills are the images half of the pipeline
+
+`extract_frame()` pulls a still straight out of the scene you already located.
+For a scene that exists in your own library this beats searching the web for an
+image of it: right shot by construction, source resolution, no watermark, and
+consistent in look with the clips around it.
 
 ---
 
@@ -145,14 +231,21 @@ the real match wins and the disagreement is reported.
 cd shared && python -m unittest discover tests -v
 ```
 
-30 tests, covering filename parsing, subtitle formats, contraction handling,
-split-cue merging, the silence-gap regression, ambiguity, scoping, and every
-`resolve` status. They run in under a second and need no media files.
+**52 tests in ~10 s.** The index tests need no media at all. The video tests
+render a small file with ffmpeg (known scene-cut times, known audio timings,
+known colour per segment) and are skipped when ffmpeg is absent.
+
+The end-to-end test is the one that matters: it indexes a file whose subtitles
+are deliberately **3500 ms out of sync**, and asserts that the drift is
+corrected during indexing, the quote resolves to its *true* position, and the
+resulting clip shows the *correct scene* — verified by sampling the frame
+colour, not by trusting the timestamps.
 
 ## Not in scope (yet)
 
-- **Subtitle sync verification** — a downloaded `.srt` can be timed for a
-  different release. The `media.sub_offset_ms` column exists for the
-  correction; the Whisper-based detector that fills it is the next piece.
-- **Visual index** (shot detection + embeddings) for shots with no dialogue —
-  that is Ladder 2, a separate module.
+- **Visual index** — shot detection + embeddings for shots with no dialogue.
+  That is Ladder 2, a separate module.
+- **Frame quality scoring** — picking the sharpest, best-composed frame within
+  a shot rather than the midpoint.
+- **Queue runner** — per-video isolation and the pre-flight gate that stops a
+  render from starting when a scene cannot be resolved.

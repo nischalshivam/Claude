@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm", ".ts", ".wmv")
 
+# Files below this are thumbnails, trailers or stray fragments — not content.
+# Kept low on purpose: a legitimate short film or clip must not be discarded
+# just because a bigger number looked safer.
+MIN_MEDIA_BYTES = 200_000
+
 # Release junk we strip out of a title. Order matters: longest first.
 _JUNK = r"""(?ix)
     \b(
@@ -160,7 +165,7 @@ def walk_media(root: str):
                 continue
             full = os.path.join(dirpath, fn)
             try:
-                if os.path.getsize(full) < 5_000_000:   # < 5 MB is not an episode
+                if os.path.getsize(full) < MIN_MEDIA_BYTES:
                     continue
             except OSError:
                 continue

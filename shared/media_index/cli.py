@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-from . import library, search
+from . import cutter, library, search, subtitles, sync
 
 
 def _fmt_bytes(n: int) -> str:
@@ -24,13 +24,18 @@ def _fmt_bytes(n: int) -> str:
 
 
 def cmd_build(a):
-    res = library.build(a.media_dir, a.db)
+    res = library.build(a.media_dir, a.db, verify_sync=a.verify_sync,
+                        sync_seconds=a.sync_seconds)
     print("")
     print(f"  added {res.added} · updated {res.updated} · skipped {res.skipped}")
     print(f"  {res.cues:,} dialogue lines indexed in {res.seconds:.1f}s")
     if res.no_subs:
         print(f"\n  ⚠ {len(res.no_subs)} file(s) with no usable subtitles:")
         for p, why in res.no_subs[:20]:
+            print(f"      {os.path.basename(p)}  —  {why}")
+    if res.desynced:
+        print(f"\n  ⚠ {len(res.desynced)} file(s) with subtitle timing issues:")
+        for p, why in res.desynced[:20]:
             print(f"      {os.path.basename(p)}  —  {why}")
     st = library.stats(a.db)
     print(f"\n  library.db = {_fmt_bytes(st['db_bytes'])}")
@@ -109,6 +114,51 @@ def cmd_resolve(a):
     return 0 if counts.get("not_found", 0) == 0 else 1
 
 
+def cmd_sync(a):
+    """Check one file's subtitles against its audio."""
+    kind, sub_path, cues = subtitles.load_for_video(a.video)
+    if not cues:
+        print("no subtitles found for this file")
+        return 1
+    print(f"{len(cues)} cues from {kind}"
+          + (f" ({os.path.basename(sub_path)})" if sub_path else ""))
+    r = sync.detect(a.video, cues, try_framerates=not a.no_framerate,
+                    max_seconds=a.seconds,
+                    log=(lambda m: print(m)) if a.verbose else (lambda *x: None))
+    print(f"\n  {r.describe()}")
+    if r.confidence == "low":
+        print("  → these subtitles may belong to a different release")
+        return 1
+    if not r.in_sync:
+        print(f"  → apply {r.offset_ms:+d} ms"
+              + (f" and scale {r.scale:.5f} ({r.scale_name})" if r.scale != 1 else ""))
+    return 0
+
+
+def cmd_cut(a):
+    """Find a line and write the clip in one step."""
+    hits = search.find(a.db, a.quote, show=a.show, season=a.season,
+                       episode=a.episode, limit=1)
+    if not hits:
+        print("no match — nothing cut")
+        return 1
+    h = hits[0]
+    print(f"{h.label}  {h.timecode}  [{h.confidence}]")
+    print(f'  "{h.matched_text}"')
+    if h.confidence == "low" and not a.force:
+        print("  refusing to cut a low-confidence match (use --force)")
+        return 1
+    cut = cutter.clip_for_hit(h, a.out, target_seconds=a.seconds,
+                              mode=a.mode, height=a.height,
+                              cover_full_line=a.full_line, log=print)
+    print(f"  wrote {a.out}  ({cut.duration:.2f}s)")
+    if a.still:
+        mid = (cut.start + cut.end) / 2
+        cutter.extract_frame(h.path, mid, a.still, width=a.still_width)
+        print(f"  wrote {a.still}")
+    return 0
+
+
 def main(argv=None):
     # --db is shared by every subcommand, and works on either side of it
     common = argparse.ArgumentParser(add_help=False)
@@ -122,6 +172,10 @@ def main(argv=None):
     b = sub.add_parser("build", parents=[common],
                        help="scan a media folder into the index")
     b.add_argument("media_dir")
+    b.add_argument("--verify-sync", action="store_true",
+                   help="check every subtitle against the audio and correct drift")
+    b.add_argument("--sync-seconds", type=float,
+                   help="only analyse the first N seconds when checking sync")
     b.set_defaults(func=cmd_build)
 
     s = sub.add_parser("stats", parents=[common], help="what is in the index")
@@ -139,6 +193,33 @@ def main(argv=None):
     r.add_argument("script", help="JSON from the visual-script prompt")
     r.add_argument("--out", help="write the full report as JSON")
     r.set_defaults(func=cmd_resolve)
+
+    y = sub.add_parser("sync", parents=[common],
+                       help="check one file's subtitle timing against its audio")
+    y.add_argument("video")
+    y.add_argument("--seconds", type=float, help="analyse only the first N seconds")
+    y.add_argument("--no-framerate", action="store_true",
+                   help="skip the framerate-conversion search")
+    y.add_argument("-v", "--verbose", action="store_true")
+    y.set_defaults(func=cmd_sync)
+
+    c = sub.add_parser("cut", parents=[common],
+                       help="find a line and write the clip")
+    c.add_argument("quote")
+    c.add_argument("--out", required=True, help="output clip path")
+    c.add_argument("--seconds", type=float, default=4.0, help="clip length")
+    c.add_argument("--full-line", action="store_true",
+                   help="cover the whole spoken line instead of --seconds")
+    c.add_argument("--mode", choices=("accurate", "fast"), default="accurate")
+    c.add_argument("--height", type=int, help="scale output to this height")
+    c.add_argument("--still", help="also write a still frame here")
+    c.add_argument("--still-width", type=int, default=1920)
+    c.add_argument("--show")
+    c.add_argument("--season", type=int)
+    c.add_argument("--episode", type=int)
+    c.add_argument("--force", action="store_true",
+                   help="cut even a low-confidence match")
+    c.set_defaults(func=cmd_cut)
 
     a = p.parse_args(argv)
     return a.func(a)

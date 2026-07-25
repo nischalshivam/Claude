@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from . import naming, subtitles
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -72,7 +72,10 @@ CREATE TABLE IF NOT EXISTS media (
     id_conf     TEXT,
     sub_kind    TEXT,                   -- sidecar | embedded | none
     sub_path    TEXT,
-    sub_offset_ms INTEGER DEFAULT 0,    -- sync correction, applied on read
+    sub_offset_ms INTEGER DEFAULT 0,    -- sync correction ALREADY applied to cues
+    sub_scale   REAL DEFAULT 1.0,       -- framerate correction, likewise
+    sync_score  REAL DEFAULT 0,
+    sync_conf   TEXT DEFAULT 'unchecked',
     cue_count   INTEGER DEFAULT 0,
     last_cue_ms INTEGER DEFAULT 0,
     file_size   INTEGER,
@@ -105,6 +108,25 @@ END;
 """
 
 
+# Columns added after v1. Existing databases are upgraded in place rather
+# than rebuilt — reindexing a large library just to gain a column is waste.
+_ADDED_COLUMNS = {
+    "media": [("sub_scale", "REAL DEFAULT 1.0"),
+              ("sync_score", "REAL DEFAULT 0"),
+              ("sync_conf", "TEXT DEFAULT 'unchecked'")],
+}
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    for table, cols in _ADDED_COLUMNS.items():
+        have = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+        for name, decl in cols:
+            if name not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)",
+                (str(SCHEMA_VERSION),))
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     first = not os.path.exists(db_path)
     os.makedirs(os.path.dirname(os.path.abspath(db_path)) or ".", exist_ok=True)
@@ -114,9 +136,7 @@ def connect(db_path: str) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(DDL)
     con.executescript(TRIGGERS)
-    if first:
-        con.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)",
-                    (str(SCHEMA_VERSION),))
+    _migrate(con)
     con.commit()
     return con
 
@@ -127,15 +147,19 @@ class ScanResult:
     updated: int = 0
     skipped: int = 0
     no_subs: list = None          # [(path, reason)]
+    desynced: list = None         # [(path, SyncResult-ish description)]
     cues: int = 0
     seconds: float = 0.0
 
     def __post_init__(self):
         if self.no_subs is None:
             self.no_subs = []
+        if self.desynced is None:
+            self.desynced = []
 
 
-def _index_one(con, path: str, log) -> tuple[str, int]:
+def _index_one(con, path: str, log, verify_sync=False,
+               sync_seconds=None) -> tuple[str, int]:
     """Index a single video. Returns (status, cue_count)."""
     st = os.stat(path)
     row = con.execute(
@@ -146,26 +170,49 @@ def _index_one(con, path: str, log) -> tuple[str, int]:
     mid = naming.parse(path)
     kind, sub_path, cues = subtitles.load_for_video(path)
 
+    # Correct subtitle drift BEFORE storing, so every timestamp in the index
+    # is already true against the video. A low-confidence result is recorded
+    # but never applied — guessing a shift is worse than leaving it alone.
+    offset_ms, scale, sync_score, sync_conf = 0, 1.0, 0.0, "unchecked"
+    if cues and verify_sync:
+        from . import sync as _sync
+        try:
+            r = _sync.detect(path, cues, max_seconds=sync_seconds)
+            sync_score, sync_conf = r.score, r.confidence
+            if r.confidence in ("high", "medium") and not r.in_sync:
+                offset_ms, scale = r.offset_ms, r.scale
+                cues = _sync.apply(cues, offset_ms, scale)
+                log(f"      sync: {r.describe()} — corrected")
+            elif r.confidence == "low":
+                log(f"      sync: {r.describe()} — NOT corrected, needs review")
+        except Exception as exc:                  # a sync failure is not fatal
+            sync_conf = "unchecked"
+            log(f"      sync check failed: {exc}")
+
     if row:
         con.execute("DELETE FROM cue WHERE media_id=?", (row["id"],))
         media_id = row["id"]
         con.execute(
             """UPDATE media SET kind=?,show=?,show_norm=?,year=?,season=?,episode=?,
-                   id_conf=?,sub_kind=?,sub_path=?,cue_count=?,last_cue_ms=?,
+                   id_conf=?,sub_kind=?,sub_path=?,sub_offset_ms=?,sub_scale=?,
+                   sync_score=?,sync_conf=?,cue_count=?,last_cue_ms=?,
                    file_size=?,file_mtime=?,indexed_at=? WHERE id=?""",
             (mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
-             mid.episode, mid.confidence, kind, sub_path, len(cues),
+             mid.episode, mid.confidence, kind, sub_path, offset_ms, scale,
+             sync_score, sync_conf, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time()), media_id))
         status = "updated"
     else:
         cur = con.execute(
             """INSERT INTO media(path,kind,show,show_norm,year,season,episode,
-                   id_conf,sub_kind,sub_path,cue_count,last_cue_ms,
+                   id_conf,sub_kind,sub_path,sub_offset_ms,sub_scale,
+                   sync_score,sync_conf,cue_count,last_cue_ms,
                    file_size,file_mtime,indexed_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (path, mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
-             mid.episode, mid.confidence, kind, sub_path, len(cues),
+             mid.episode, mid.confidence, kind, sub_path, offset_ms, scale,
+             sync_score, sync_conf, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time())))
         media_id = cur.lastrowid
@@ -178,7 +225,8 @@ def _index_one(con, path: str, log) -> tuple[str, int]:
     return status, len(cues)
 
 
-def build(media_root: str, db_path: str, log=print) -> ScanResult:
+def build(media_root: str, db_path: str, log=print,
+          verify_sync=False, sync_seconds=None) -> ScanResult:
     """Scan `media_root` and bring `db_path` up to date."""
     t0 = time.time()
     res = ScanResult()
@@ -188,7 +236,7 @@ def build(media_root: str, db_path: str, log=print) -> ScanResult:
 
     for i, path in enumerate(files, 1):
         try:
-            status, n = _index_one(con, path, log)
+            status, n = _index_one(con, path, log, verify_sync, sync_seconds)
         except Exception as exc:                       # never abort a bulk scan
             log(f"  ERROR {os.path.basename(path)}: {exc}")
             res.no_subs.append((path, f"error: {exc}"))
@@ -204,6 +252,14 @@ def build(media_root: str, db_path: str, log=print) -> ScanResult:
             log(f"  [{i}/{len(files)}] {mid.label}  —  NO SUBTITLES")
         else:
             log(f"  [{i}/{len(files)}] {mid.label}  —  {n} lines")
+            row = con.execute(
+                "SELECT sync_conf, sub_offset_ms FROM media WHERE path=?",
+                (path,)).fetchone()
+            if row and row["sync_conf"] == "low":
+                res.desynced.append((path, "sync unverifiable — check subtitles"))
+            elif row and row["sub_offset_ms"]:
+                res.desynced.append(
+                    (path, f"corrected by {row['sub_offset_ms']:+d} ms"))
         if i % 25 == 0:
             con.commit()
 
