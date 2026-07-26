@@ -128,6 +128,27 @@ class TestBatchFiles(unittest.TestCase):
                     self.assertTrue(m.group(1).strip(),
                                     f"{name} calls :{label} with no argument")
 
+    def test_the_updater_does_not_overwrite_itself_while_running(self):
+        """cmd reads a batch file from disk as it goes, keeping a byte offset
+        between lines. update.bat replaces the folder it lives in, itself
+        included, so once the copy lands cmd resumes at that offset in a
+        different file and runs whatever fragment is there — which is how a
+        successful update ended with
+
+            'DIRTMPDIR'' is not recognized as an internal or external command
+
+        The fix is to run the copy from somewhere the copy cannot reach."""
+        text = read("update.bat")
+        self.assertIn("--worker", text,
+                      "update.bat must relaunch itself before copying")
+        self.assertRegex(text, r'copy\s+/y\s+"%~f0"\s+"%TEMP%',
+                         "update.bat must run from a copy outside the target")
+        worker = text.split(":work", 1)
+        self.assertEqual(len(worker), 2, "update.bat has no worker half")
+        self.assertIn("Copy-Item", worker[1],
+                      "the copy must happen in the relaunched half only")
+        self.assertNotIn("Copy-Item", worker[0])
+
     def test_no_trailing_backslash_in_exist_test(self):
         """if exist "%DIR%\\" can be read as an escaped quote; use "%DIR%\\."."""
         for name in BATS:
