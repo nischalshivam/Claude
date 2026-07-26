@@ -194,3 +194,54 @@ class TestBatchFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestRepositoryStaysSmall(unittest.TestCase):
+    """update.bat downloads the branch as a zip, so repository size IS
+    update time for every user, on every update, forever.
+
+    Eight rendered sample MP4s once made this repository 169 MB — 166 MB of
+    them — and updating took hours instead of seconds. Nothing referenced
+    those files. They are still in the history if one is ever wanted.
+    """
+    # Comfortably above any source file, far below a rendered video.
+    MAX_TRACKED_BYTES = 2 * 1024 * 1024
+    MAX_TOTAL_BYTES = 20 * 1024 * 1024
+
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        repo = os.path.dirname(ROOT)
+        out = subprocess.run(["git", "ls-files", "-z"], cwd=repo,
+                             capture_output=True)
+        cls.repo = repo
+        cls.files = [f for f in out.stdout.decode().split("\0") if f]
+
+    def test_git_is_available_so_this_test_means_something(self):
+        self.assertTrue(self.files, "could not list tracked files")
+
+    def test_no_single_tracked_file_is_huge(self):
+        big = []
+        for rel in self.files:
+            path = os.path.join(self.repo, rel)
+            if os.path.isfile(path):
+                size = os.path.getsize(path)
+                if size > self.MAX_TRACKED_BYTES:
+                    big.append(f"{rel} ({size / 1024 / 1024:.1f} MB)")
+        self.assertEqual(big, [], "tracked files too large to ship: " + str(big))
+
+    def test_no_rendered_media_is_tracked(self):
+        """Source belongs in git; output does not. .gitignore covers these,
+        but a `git add -f` would slip past it."""
+        media = [f for f in self.files
+                 if f.lower().endswith((".mp4", ".mkv", ".mov", ".avi",
+                                        ".webm", ".mp3", ".wav"))]
+        self.assertEqual(media, [], f"rendered media in the repo: {media}")
+
+    def test_the_whole_checkout_stays_small(self):
+        total = sum(os.path.getsize(os.path.join(self.repo, f))
+                    for f in self.files
+                    if os.path.isfile(os.path.join(self.repo, f)))
+        self.assertLess(total, self.MAX_TOTAL_BYTES,
+                        f"repository is {total / 1024 / 1024:.0f} MB; every "
+                        "update downloads all of it")

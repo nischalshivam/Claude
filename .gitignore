@@ -1,6 +1,27 @@
+# Rendered video and audio never belong in version control. Eight sample
+# MP4s once sat in auto_editor/sample_output and made this repository 169 MB,
+# 166 MB of which was those files. update.bat downloads the branch as a zip,
+# so every single update pulled all of them again — the reason updating took
+# hours instead of seconds. They are still in the history if one is needed:
+#
+#   git show HEAD~1:auto_editor/sample_output/pro_demo.mp4 > pro_demo.mp4
+#
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.wav
+*.mp3
+*.m4a
+
+# Built by the tool, per machine
+library.db
+library.db-wal
+library.db-shm
+settings.txt
+proof/
+built/
+out/
 __pycache__/
 *.pyc
-*.db
-*.db-wal
-*.db-shm
-demo_media/
