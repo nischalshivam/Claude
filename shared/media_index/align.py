@@ -158,7 +158,27 @@ def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
     # point. Keeping the longest run that IS in order throws out the odd
     # misplaced line instead of everything after it.
     found.sort(key=lambda a: a[0])
-    return _longest_increasing(found)
+    return _longest_increasing(_last_of_each_moment(found))
+
+
+def _last_of_each_moment(anchors: list) -> list:
+    """One anchor per moment, and when a line is quoted twice, the later one.
+
+    Essays open by quoting the ending. On the real script "Well? Get back to
+    work." — the closing line of the scene — is quoted at index 0 as a hook
+    and again at 50 and 61 where it belongs. Keeping the first occurrence
+    pinned the end of the scene to the start of the run and laid all seventy
+    shots AFTER it, so the video opened on the cleanup that follows the
+    killing instead of on the killing.
+
+    The later index is also the safer one when the choice is a guess: it puts
+    most of the run before the anchor, and a scene almost always builds
+    towards the line worth quoting rather than away from it.
+    """
+    keep: dict = {}
+    for a in anchors:
+        keep[a[1]] = a          # later indices arrive last and win
+    return sorted(keep.values(), key=lambda a: a[0])
 
 
 def _longest_increasing(anchors: list) -> list:
@@ -261,6 +281,16 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
         f"span {lo/1000:.0f}s-{hi/1000:.0f}s "
         f"(script says {ax[-1] + run.entries[-1].target_seconds / 2:.0f}s, "
         f"x{scale:.2f})")
+    if len(anchors) < 2 and len(run.entries) >= 4:
+        # One anchor fixes WHERE the run sits but not which way it runs. If
+        # the script put that line at the wrong end, every shot lands on the
+        # wrong side of it — which is how seventy shots of a killing came
+        # back as the cleanup that follows it.
+        at = anchors[0][0]
+        log(f"      only one line matched, at shot {at + 1} of "
+            f"{len(run.entries)}. Everything else is placed relative to it, "
+            "so if that line is not really there, none of them are. A second "
+            "quoted line anywhere else in this run would fix that.")
 
     try:
         boundaries = cutter.detect_shots(path, lo / 1000, hi / 1000)

@@ -276,5 +276,52 @@ class TestAnchorsSurviveAMisplacedLine(unittest.TestCase):
         self.assertEqual(align._longest_increasing([]), [])
 
 
+
+class TestAQuoteUsedAsAHook(unittest.TestCase):
+    """An essay opens by quoting its ending, then earns it.
+
+    On the real script "Well? Get back to work." — the closing line of the
+    box-cutter scene — is quoted at shot 1 as a hook and again at 51 and 62
+    where it belongs. All three resolve to the same moment, 37:09. Anchoring
+    on the first pinned the END of the scene to the START of the run and laid
+    all seventy shots after it: the finished sheet opened on Walt hosing down
+    the lab, which is what happens once the killing is over.
+    """
+    def _run(self, n, each=3.6):
+        return align.Run("Breaking Bad", "S04E01",
+                         [align.Entry(beat=i + 1, shot=1,
+                                      data={"duration_target_sec": each})
+                          for i in range(n)])
+
+    def test_the_later_occurrence_wins(self):
+        found = [(0, 2229000, 2232000, "p", "high"),
+                 (50, 2229000, 2232000, "p", "high"),
+                 (61, 2229000, 2232000, "p", "high")]
+        kept = align.\
+            _longest_increasing(align._last_of_each_moment(found))
+        self.assertEqual([k[0] for k in kept], [61])
+
+    def test_the_run_then_sits_before_the_line_not_after_it(self):
+        run = self._run(70)
+        ax = align.axis(run)
+        early, late = [], []
+        for idx, out in ((0, early), (61, late)):
+            scale, off = align.fit(run, [(idx, 2229000, 2232000, "p", "high")])
+            out += [a * scale * 1000 + off for a in ax]
+        self.assertGreater(min(early) / 1000, 2225)     # starts at the line
+        self.assertLess(min(late) / 1000, 2100)         # starts well before it
+        self.assertLess(abs(max(late) / 1000 - 2318), 90)
+
+    def test_distinct_moments_are_all_kept(self):
+        """Only identical times collapse — two different lines are two anchors."""
+        found = [(3, 1000, 1500, "p", "high"), (9, 5000, 5500, "p", "high")]
+        self.assertEqual(len(align._last_of_each_moment(found)), 2)
+
+    def test_order_is_preserved(self):
+        found = [(9, 5000, 5500, "p", "high"), (3, 1000, 1500, "p", "high")]
+        self.assertEqual([a[0] for a in align._last_of_each_moment(found)],
+                         [3, 9])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
