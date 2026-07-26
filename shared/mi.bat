@@ -24,7 +24,9 @@ if not defined PY (
 
 if "%~1"=="" (
     echo.
-    echo   Usage:  mi.bat ^<command^> [options]
+    echo   Easier: double-click  start.bat  for a menu.
+
+    echo   Or use this directly:  mi.bat ^<command^> [options]
     echo.
     echo     mi.bat check    "D:\Breaking Bad Season 2"
     echo     mi.bat build    "D:\Breaking Bad Season 2" --db library.db --verify-sync

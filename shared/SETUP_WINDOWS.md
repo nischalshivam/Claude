@@ -64,17 +64,41 @@ You should end with:
 
 ---
 
-## Step 3 — check your download
+## Step 3 — double-click `start.bat`
 
-**Drag the `Breaking Bad Season 2` folder onto `check.bat`.**
-
-Or open Command Prompt in the `shared` folder and run:
+Everything after setup happens from one menu. No commands to remember, no
+Command Prompt needed.
 
 ```
-check.bat "D:\Breaking Bad Season 2"
+ ==========================================================
+   media_index
+ ==========================================================
+
+   media folder : D:\Breaking Bad Season 2
+   index file   : library.db
+
+ ----------------------------------------------------------
+   1.  Check a media folder      - is my download usable?
+   2.  Make subtitles from audio - when a folder has none
+   3.  Build the library index
+   4.  Search for a line         - prove it works
+   5.  Show what is in the index
+
+   6.  Set the media folder
+   7.  Run a job queue (jobs.json)
+   0.  Exit
+ ----------------------------------------------------------
+
+   Pick a number:
 ```
 
-You get a verdict per episode:
+Pick **6** once to set your media folder — you can **drag the folder into the
+window** instead of typing it. It is remembered from then on.
+
+Then work down the list: **1** to check, **2** if subtitles are missing, **3**
+to build, **4** to prove it works.
+
+Option **1** gives a verdict per episode:
 
 ```
 MEDIA CHECK — 13 file(s)
@@ -93,43 +117,33 @@ again.
 
 ---
 
-## Step 4 — build the index
+## Step 4 — build and test
 
-Once everything is `✅`:
-
-```
-mi.bat build "D:\Breaking Bad Season 2" --db library.db --verify-sync
-```
-
-Then test any line you remember:
-
-```
-mi.bat find "I am the one who knocks" --db library.db
-```
-
-If that returns the right episode and timestamp, the whole system is proven on
-real footage.
+Menu option **3** builds the index, option **4** searches for a line you
+remember. If option 4 returns the right episode and timestamp, the whole
+system is proven on real footage.
 
 ---
 
-## The three files in `shared`
+## The files in `shared`
 
 | File | What it does |
 |---|---|
+| **`start.bat`** | **the menu — start here every time** |
 | `setup.bat` | one-time setup and health check |
-| `check.bat` | inspect a downloaded folder (drag a folder onto it) |
-| `mi.bat` | run any command — `mi.bat build …`, `mi.bat find …`, `mi.bat run jobs.json` |
+| `check.bat` | inspect a folder by dragging it onto the file |
+| `mi.bat` | type a command directly, if you prefer that |
 
-`mi.bat` with no arguments prints the list of commands.
+Double-clicking `mi.bat` shows its usage rather than doing anything — it is
+built to take arguments. `start.bat` is the one to double-click.
 
 ---
 
 ## Two things worth knowing
 
-**Open Command Prompt in the right folder.** In Explorer, open the `shared`
-folder, click the address bar, type `cmd`, press Enter. The prompt opens
-already in that folder. `mi.bat` and `check.bat` also work by double-click.
+**Everything is resumable.** Transcribing, indexing and the job queue all skip
+work that is already finished, so closing the window and starting again later
+costs nothing.
 
-**Paths with spaces need quotes.** `"D:\Breaking Bad Season 2"` — with the
-quotes. Without them Windows reads it as three separate arguments. Dragging a
-folder onto `check.bat` adds the quotes for you.
+**You never need to type a path.** In the menu, drag the folder into the
+window instead — Windows fills in the path, quotes and all.
