@@ -229,7 +229,7 @@ def average_rgb(path: str, t: float, timeout=120) -> tuple:
 def clip_for_hit(hit, out: str, target_seconds: float = 4.0,
                  mode: str = "accurate", height: int | None = None,
                  scan_window: float = 12.0, cover_full_line: bool = False,
-                 log=lambda *a: None) -> Cut:
+                 with_audio: bool = False, log=lambda *a: None) -> Cut:
     """Take a search Hit and produce a shot-aware clip.
 
     The dialogue tells us *where*; shot detection tells us *how much*.
@@ -239,6 +239,11 @@ def clip_for_hit(hit, out: str, target_seconds: float = 4.0,
     an editing decision, not something the original line gets to dictate — a
     5.5 s quote must not silently become an 8 s clip. Pass
     `cover_full_line=True` when the whole line really is wanted.
+
+    Audio is dropped by default because narration replaces it downstream.
+    Pass `with_audio=True` when a human is going to watch the clip: hearing
+    the line is the only way to confirm the timing, and a silent clip of the
+    right scene proves only that the scene was found.
     """
     line_start = hit.start_ms / 1000.0
     line_end = hit.end_ms / 1000.0
@@ -266,5 +271,6 @@ def clip_for_hit(hit, out: str, target_seconds: float = 4.0,
     cut.path = hit.path
     log(f"  {os.path.basename(hit.path)} {cut.start:.2f}s → {cut.end:.2f}s "
         f"({cut.duration:.1f}s) — {cut.note}")
-    cut.out = cut_clip(hit.path, cut.start, cut.end, out, mode=mode, height=height)
+    cut.out = cut_clip(hit.path, cut.start, cut.end, out, mode=mode,
+                       height=height, with_audio=with_audio)
     return cut

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -115,9 +116,11 @@ class TestSyncDetector(unittest.TestCase):
         """
         cues = cues_from(dv.CUES, offset_ms=1200, scale=25.0 / 23.976)
         r = sync.detect(self.vid, cues, try_framerates=True)
-        self.assertEqual(r.scale, 1.0)
-        self.assertEqual(r.confidence, "low")
-        self.assertTrue(r.note)
+        self.assertEqual(r.scale, 1.0, "claimed a stretch it could not measure")
+        # A single shift does fit the middle of a stretched track, so this is
+        # not a total mismatch — but it is 2.5 s out at both ends, and must
+        # never be reported with the confidence of a track that really fits.
+        self.assertNotEqual(r.confidence, "high")
 
     def test_wrong_subtitles_are_not_trusted(self):
         """The safety case: subtitles from another film must not be applied.
@@ -479,3 +482,65 @@ class TestDriftMeasurement(unittest.TestCase):
         scale, _o, residual, _e, _l = self._measure(scale=1.0 + 0.012)
         self.assertEqual(scale, 1.0)
         self.assertGreater(residual, 1000, "the disagreement must be reported")
+
+
+@skip_no_ffmpeg
+class TestScoredAudio(unittest.TestCase):
+    """Audio with a score under it — which is to say, a film.
+
+    The demo video is speech over silence, and every sync test passed on it
+    for weeks. Real drama is scored end to end: music, room tone, traffic,
+    weather. Almost none of that drops under a fixed -30 dB floor, so the
+    "speech" timeline came back as one unbroken block, and correlating a
+    solid block against subtitle cues gives the same answer at every offset.
+
+    Measured on a real Breaking Bad season, all thirteen episodes scored
+    0.43-0.68 with prominence 0.00 — which is what two unrelated signals
+    score, sqrt(speech_share x cue_share). Every offset it reported was
+    noise, and the season it "corrected" had never needed correcting.
+    """
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="scored_")
+        clean = dv.build(os.path.join(cls.tmp, "clean.mkv"), write_srt=False,
+                         log=lambda *a: None)
+        cls.vid = os.path.join(cls.tmp, "scored.mkv")
+        subprocess.run(
+            [probe.ffmpeg_bin(), "-y", "-v", "error", "-i", clean,
+             "-f", "lavfi", "-t", str(int(dv.DURATION)),
+             "-i", "anoisesrc=c=pink:a=0.06",
+             "-filter_complex",
+             "[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]",
+             "-map", "0:v", "-map", "[a]", "-c:v", "copy", cls.vid],
+            check=True, capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_old_measurement_cannot_see_anything_here(self):
+        """Not a requirement — the reason the requirement below exists."""
+        speech, analysed = sync.speech_intervals(self.vid)
+        covered = sum(b - a for a, b in speech) / analysed
+        self.assertGreater(covered, 0.98,
+                           "this fixture is meant to defeat silencedetect")
+
+    def test_the_offset_is_still_found_under_a_score(self):
+        for planted in (-6000, -3000, 0, 2500):
+            r = sync.detect(self.vid, cues_from(dv.CUES, offset_ms=planted),
+                            try_framerates=False)
+            self.assertEqual(r.method, "loudness")
+            self.assertLessEqual(abs(r.offset_ms + planted), 200,
+                                 f"planted {planted}, got {r.offset_ms}")
+            self.assertEqual(r.confidence, "high", f"planted {planted}")
+
+    def test_a_real_fit_stands_well_above_coincidence(self):
+        r = sync.detect(self.vid, cues_from(dv.CUES, offset_ms=-3000),
+                        try_framerates=False)
+        self.assertGreater(r.lift, 2.0)
+
+    def test_wrong_subtitles_still_refused_under_a_score(self):
+        other = [(t * 1000, t * 1000 + 2500, "unrelated")
+                 for t in (3, 17, 29, 44, 58, 71, 88, 99, 111)]
+        r = sync.detect(self.vid, cues_from(other), try_framerates=False)
+        self.assertNotEqual(r.confidence, "high")

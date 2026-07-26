@@ -7,9 +7,20 @@ on it. Worst of all it fails silently: the index looks perfectly healthy.
 
 How it works, without any ML:
 
-  1. `ffmpeg silencedetect` gives us where the audio is speaking.
-  2. The subtitle cues give us where the audio *should* be speaking.
-  3. Slide one against the other and keep the offset with the best agreement.
+  1. A loudness reading every 50 ms says how loud the voice band is.
+  2. The loudest share of the episode is called speech — the share the
+     subtitles themselves claim, so both timelines end up equally dense.
+  3. The subtitle cues give us where the audio *should* be speaking.
+  4. Slide one against the other and keep the offset with the best agreement.
+
+Step 1 used to be `silencedetect` with a fixed -30 dB floor, and that never
+worked on a film. Drama is scored end to end, so almost nothing falls under
+the floor and the "speech" timeline comes back as one unbroken block; on a
+real Breaking Bad season every episode was called 100% speech. A solid block
+agrees with subtitle cues equally well at every offset, so every drift it
+reported was noise, and the episodes it "corrected" had never needed it.
+Deciding the threshold from this episode's own loudness has no floor to be
+wrong about.
 
 Both timelines are rasterised into bins and packed into Python big integers, so
 one candidate offset is a single shift + AND + popcount. That makes a full
@@ -97,10 +108,21 @@ class SyncResult:
     scale: float = 1.0            # MULTIPLY every cue time by this (before offset)
     scale_name: str = "none"
     score: float = 0.0            # 0..1 agreement at the winning offset
+    chance: float = 0.0           # what two unrelated tracks would score here
     prominence: float = 0.0       # how far the peak stands above every rival
     confidence: str = "unknown"   # high | medium | low | unknown
     method: str = "silencedetect"
     note: str = ""
+
+    @property
+    def lift(self) -> float:
+        """How far above coincidence the fit sits.
+
+        Both timelines are made comparably dense before they are compared,
+        so an unrelated pair scores `chance` and this lands at 1.0. Unlike a
+        raw score it does not move when the content gets more talkative.
+        """
+        return (self.score / self.chance) if self.chance else 0.0
 
     @property
     def in_sync(self) -> bool:
@@ -115,7 +137,7 @@ class SyncResult:
         if self.scale != 1.0:
             bits.append(self.scale_name)
         return (f"drift {' · '.join(bits)} "
-                f"(score {self.score:.2f}, prom {self.prominence:.2f}, "
+                f"(score {self.score:.2f}, {self.lift:.1f}x chance, "
                 f"{self.confidence})")
 
 
@@ -166,6 +188,90 @@ def speech_intervals(video_path: str, noise_db=-30, min_silence=0.30,
     if limit and cursor < limit:
         speech.append((cursor, limit))
     return speech, (limit or (speech[-1][1] if speech else 0.0))
+
+
+def loudness_envelope(video_path: str, bin_ms: int = FINE_BIN_MS,
+                      max_seconds: float | None = None,
+                      timeout=1800) -> list[float]:
+    """Loudness in dBFS, one reading every `bin_ms`, over the voice band.
+
+    This exists because `silencedetect` cannot find the silence in a film.
+    Drama is scored end to end — music, room tone, traffic, weather — and
+    almost none of it drops below a fixed -30 dB floor, so the "speech"
+    timeline comes back as one unbroken block. Correlating a solid block
+    against subtitle cues gives the same answer at every offset: measured on
+    a real Breaking Bad season, every episode scored within noise of
+    sqrt(speech_share x cue_share), which is precisely what two unrelated
+    signals score, and prominence was 0.00 across the board.
+
+    A continuous reading has no floor to be wrong about. What counts as
+    speech is decided afterwards, against the rest of this episode's own
+    loudness, so a quiet film and a loud one are treated alike.
+    """
+    info = probe(video_path)
+    if not info.has_audio:
+        raise ProbeError("file has no audio track")
+    samples = max(1, int(round(8000 * bin_ms / 1000.0)))
+    chain = (f"aresample=8000,aformat=channel_layouts=mono,"
+             # the voice band, so score and rumble carry less of the reading
+             f"highpass=f=200,lowpass=f=3500,"
+             f"asetnsamples=n={samples}:p=0,astats=metadata=1:reset=1,"
+             f"ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-")
+    cmd = [require_ffmpeg(), "-hide_banner", "-nostats"]
+    if max_seconds:
+        cmd += ["-t", str(max_seconds)]
+    cmd += ["-i", video_path, "-map", f"0:a:{pick_audio(info)}",
+            "-af", chain, "-f", "null", "-"]
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       errors="replace", timeout=timeout)
+
+    out = []
+    for line in (r.stdout or "").splitlines():
+        if "RMS_level" not in line:
+            continue
+        value = line.rsplit("=", 1)[-1].strip()
+        try:
+            out.append(-200.0 if value.endswith("inf") else float(value))
+        except ValueError:
+            continue
+    if not out:
+        raise ProbeError("no loudness readings — ffmpeg lacks astats")
+    return out
+
+
+def bits_from_envelope(env: list, duty: float, bin_ms: int, n_bins: int,
+                       group: int = 1) -> int:
+    """Mark the loudest `duty` share of the episode as speech.
+
+    Calibrating against the episode's own distribution rather than a fixed
+    dB floor is what makes this work on any mix. `duty` comes from how much
+    of the running time the subtitles themselves cover, so the two timelines
+    are made comparably dense before they are ever compared — otherwise a
+    nearly-solid audio track scores well against everything.
+    """
+    if not env:
+        return 0
+    ordered = sorted(env)
+    k = min(max(int(len(ordered) * (1.0 - duty)), 0), len(ordered) - 1)
+    threshold = ordered[k]
+
+    buf = bytearray((n_bins + 7) // 8)
+    for i, value in enumerate(env):
+        if value <= threshold:
+            continue
+        slot = i // group
+        if slot >= n_bins:
+            break
+        buf[slot >> 3] |= 1 << (slot & 7)
+    return int.from_bytes(bytes(buf), "little")
+
+
+def cue_duty(cues, analysed_s: float) -> float:
+    """What share of the running time the subtitles claim someone is talking."""
+    if not cues or analysed_s <= 0:
+        return 0.30
+    spoken = sum(max(0, c.end_ms - c.start_ms) for c in cues) / 1000.0
+    return min(0.60, max(0.15, spoken / analysed_s))
 
 
 # ---------------------------------------------------------------------------
@@ -382,28 +488,45 @@ def detect(video_path: str, cues, search_ms=DEFAULT_RANGE_MS,
     """Compare `cues` against the audio of `video_path`."""
     if not cues:
         return SyncResult(confidence="unknown", note="no cues")
+    method = "loudness"
     try:
-        speech, analysed = speech_intervals(video_path, max_seconds=max_seconds)
+        env = loudness_envelope(video_path, FINE_BIN_MS, max_seconds)
+        analysed = len(env) * FINE_BIN_MS / 1000.0
     except (ProbeError, subprocess.SubprocessError, OSError) as exc:
-        return SyncResult(confidence="unknown", note=str(exc)[:120])
-    if not speech or analysed <= 0:
-        return SyncResult(confidence="unknown", note="no speech detected")
+        # Older ffmpeg builds have no astats. Falling back keeps the tool
+        # working, and the caller can see which measurement it got.
+        try:
+            speech, analysed = speech_intervals(video_path,
+                                                max_seconds=max_seconds)
+        except (ProbeError, subprocess.SubprocessError, OSError):
+            return SyncResult(confidence="unknown", note=str(exc)[:120])
+        env, method = None, "silencedetect"
+    if analysed <= 0:
+        return SyncResult(confidence="unknown", note="no audio to measure")
 
     n_coarse = int(analysed * 1000) // COARSE_BIN_MS + 2
-    a_coarse = _bits_from_intervals(speech, COARSE_BIN_MS, n_coarse)
+    n_fine = int(analysed * 1000) // FINE_BIN_MS + 2
+    if env is not None:
+        duty = cue_duty(cues, analysed)
+        group = COARSE_BIN_MS // FINE_BIN_MS
+        a_coarse = bits_from_envelope(env, duty, COARSE_BIN_MS, n_coarse, group)
+        a_fine = bits_from_envelope(env, duty, FINE_BIN_MS, n_fine)
+    else:
+        a_coarse = _bits_from_intervals(speech, COARSE_BIN_MS, n_coarse)
+        a_fine = _bits_from_intervals(speech, FINE_BIN_MS, n_fine)
     if a_coarse.bit_count() == 0:
-        return SyncResult(confidence="unknown", note="audio is entirely silent")
+        return SyncResult(confidence="unknown", note="audio is entirely silent",
+                          method=method)
 
     # 1. one shift, no stretch — where does the whole track sit?
     coarse = _scan(a_coarse, cues, COARSE_BIN_MS, n_coarse, 1.0,
                    -search_ms, search_ms, COARSE_BIN_MS)
     if not coarse.real:
         return SyncResult(score=round(coarse.score, 4), confidence="low",
+                          method=method,
                           note="no alignment found anywhere in range — "
                                "these subtitles are for another release")
 
-    n_fine = int(analysed * 1000) // FINE_BIN_MS + 2
-    a_fine = _bits_from_intervals(speech, FINE_BIN_MS, n_fine)
     fine = _scan(a_fine, cues, FINE_BIN_MS, n_fine, 1.0,
                  coarse.offset_ms - COARSE_BIN_MS,
                  coarse.offset_ms + COARSE_BIN_MS, FINE_BIN_MS)
@@ -417,9 +540,13 @@ def detect(video_path: str, cues, search_ms=DEFAULT_RANGE_MS,
             a_coarse, a_fine, cues, n_coarse, n_fine, analysed,
             best.offset_ms, log)
 
+    n = max(1, n_fine)
+    chance = math.sqrt((a_fine.bit_count() / n)
+                       * (_bits_from_cues(cues, FINE_BIN_MS, n).bit_count() / n))
     res = SyncResult(offset_ms=int(off), scale=scale,
                      scale_name=SCALES.get(scale, "none"),
-                     score=round(best.score, 4),
+                     score=round(best.score, 4), method=method,
+                     chance=round(chance, 4),
                      prominence=round(best.prominence, 4))
 
     # 3. a correction that walks the subtitles off the end of the file is not
@@ -427,19 +554,32 @@ def detect(video_path: str, cues, search_ms=DEFAULT_RANGE_MS,
     moved = apply(cues, res.offset_ms, res.scale)
     span_ms = (probe(video_path).duration or analysed) * 1000.0
     if moved and (moved[0].start_ms < -2000 or moved[-1].end_ms > span_ms + 5000):
-        return SyncResult(score=res.score, confidence="low",
+        return SyncResult(score=res.score, confidence="low", method=method,
                           note="the fit pushes the subtitles outside the "
                                "running time — not applied")
 
     # 4. confidence is how well the two ends agree, not how spiky the peak is
+    lift = res.lift
     if residual is None:
-        res.confidence = "high" if best.score >= 0.80 else "low"
-        if res.confidence == "low":
-            res.note = "too short to check for stretch — offset only"
-    elif residual <= 300 and best.score >= 0.45:
+        # No lever arm, so the only evidence is how far the single fit sits
+        # above coincidence. Both bars matter: lift alone passes a handful of
+        # cues that happened to land on something, and a raw score alone moves
+        # with how talkative the content is.
+        if best.score >= 0.70 and lift >= 1.8:
+            res.confidence = "high"
+        elif best.score >= 0.55 and lift >= 1.5:
+            res.confidence = "medium"
+        else:
+            res.confidence = "low"
+            res.note = "no clear fit, and too short to check for stretch"
+    elif residual <= 300 and lift >= 1.6:
         res.confidence = "high"
-    elif residual <= 1000 and best.score >= 0.35:
+    elif residual <= 1000 and lift >= 1.3:
         res.confidence = "medium"
+    elif lift < 1.3:
+        res.confidence = "low"
+        res.note = (f"the fit is only {lift:.1f}x better than coincidence — "
+                    "these subtitles do not match this audio")
     else:
         res.confidence = "low"
         res.note = (f"the start and the end disagree by {residual:.0f} ms — "

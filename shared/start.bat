@@ -196,9 +196,10 @@ goto menu
 
 :do_clip
 echo.
-echo   This cuts the real clip and opens it. If the line is spoken in it,
-echo   the whole chain is right: the subtitle, the timing, and the cut.
-echo   Nothing else proves that - a score of 100 only means the TEXT matched.
+echo   This cuts the real clip WITH SOUND and opens it. If you HEAR the
+echo   line, the whole chain is right: the subtitle, the timing, the cut.
+echo   Seeing the right scene is not enough - a clip can show the right
+echo   scene and still sit seconds away from the line.
 echo.
 set "Q="
 set /p "Q=  Type a line of dialogue: "
@@ -206,7 +207,7 @@ if not defined Q goto menu
 if not exist "proof" mkdir "proof"
 set "CLIP=proof\clip.mp4"
 echo.
-%PY% -m media_index cut "!Q!" --db "!DB!" --out "!CLIP!" --seconds 5 --full-line
+%PY% -m media_index cut "!Q!" --db "!DB!" --out "!CLIP!" --seconds 5 --full-line --audio
 if not exist "!CLIP!" goto clip_done
 echo.
 echo   Opening !CLIP!

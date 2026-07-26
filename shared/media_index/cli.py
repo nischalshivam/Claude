@@ -154,7 +154,8 @@ def cmd_cut(a):
         return 1
     cut = cutter.clip_for_hit(h, a.out, target_seconds=a.seconds,
                               mode=a.mode, height=a.height,
-                              cover_full_line=a.full_line, log=print)
+                              cover_full_line=a.full_line,
+                              with_audio=a.audio, log=print)
     print(f"  wrote {a.out}  ({cut.duration:.2f}s)")
     if a.still:
         mid = (cut.start + cut.end) / 2
@@ -323,6 +324,8 @@ def main(argv=None):
                    help="cover the whole spoken line instead of --seconds")
     c.add_argument("--mode", choices=("accurate", "fast"), default="accurate")
     c.add_argument("--height", type=int, help="scale output to this height")
+    c.add_argument("--audio", action="store_true",
+                   help="keep the original sound (use when you will watch it)")
     c.add_argument("--still", help="also write a still frame here")
     c.add_argument("--still-width", type=int, default=1920)
     c.add_argument("--show")
