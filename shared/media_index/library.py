@@ -79,6 +79,8 @@ CREATE TABLE IF NOT EXISTS media (
     sync_score  REAL DEFAULT 0,
     sync_conf   TEXT DEFAULT 'unchecked',
     sub_script  TEXT DEFAULT 'unknown',  -- latin | devanagari | cjk | ...
+    sub_stamp   TEXT DEFAULT '',          -- subtitle identity, so a swapped
+                                          -- .srt is not mistaken for no change
     cue_count   INTEGER DEFAULT 0,
     last_cue_ms INTEGER DEFAULT 0,
     file_size   INTEGER,
@@ -128,7 +130,8 @@ _ADDED_COLUMNS = {
               ("sync_conf", "TEXT DEFAULT 'unchecked'"),
               ("episode_to", "INTEGER"),
               ("is_combined", "INTEGER DEFAULT 0"),
-              ("sub_script", "TEXT DEFAULT 'unknown'")],
+              ("sub_script", "TEXT DEFAULT 'unknown'"),
+              ("sub_stamp", "TEXT DEFAULT ''")],
 }
 
 
@@ -181,12 +184,25 @@ def _index_one(con, path: str, log, verify_sync=False,
     """Index a single video. Returns (status, cue_count)."""
     st = os.stat(path)
     row = con.execute(
-        "SELECT id, file_size, file_mtime FROM media WHERE path=?", (path,)).fetchone()
-    if row and row["file_size"] == st.st_size and row["file_mtime"] == int(st.st_mtime):
-        return "skipped", 0
-
+        "SELECT id, file_size, file_mtime, sub_stamp FROM media WHERE path=?",
+        (path,)).fetchone()
     mid = naming.parse(path)
     kind, sub_path, cues = subtitles.load_for_video(path)
+
+    # What is indexed is the SUBTITLE, so the subtitle has to be part of what
+    # decides whether this file is up to date. Watching only the video meant
+    # that replacing a bad .srt and rebuilding reported "skipped 13" and
+    # changed nothing — the fix was applied and silently ignored.
+    stamp = ""
+    if sub_path and os.path.isfile(sub_path):
+        sub_st = os.stat(sub_path)
+        stamp = f"{sub_path}|{sub_st.st_size}|{int(sub_st.st_mtime)}"
+    elif kind:
+        stamp = kind
+    if (row and row["file_size"] == st.st_size
+            and row["file_mtime"] == int(st.st_mtime)
+            and (row["sub_stamp"] or "") == stamp):
+        return "skipped", 0
 
     # Correct subtitle drift BEFORE storing, so every timestamp in the index
     # is already true against the video. A low-confidence result is recorded
@@ -221,12 +237,13 @@ def _index_one(con, path: str, log, verify_sync=False,
             """UPDATE media SET kind=?,show=?,show_norm=?,year=?,season=?,episode=?,
                    episode_to=?,is_combined=?,
                    id_conf=?,sub_kind=?,sub_path=?,sub_offset_ms=?,sub_scale=?,
-                   sync_score=?,sync_conf=?,sub_script=?,cue_count=?,last_cue_ms=?,
+                   sync_score=?,sync_conf=?,sub_script=?,sub_stamp=?,
+                   cue_count=?,last_cue_ms=?,
                    file_size=?,file_mtime=?,indexed_at=? WHERE id=?""",
             (mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
              mid.episode, mid.episode_to, int(mid.is_combined),
              mid.confidence, kind, sub_path, offset_ms, scale,
-             sync_score, sync_conf, script, len(cues),
+             sync_score, sync_conf, script, stamp, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time()), media_id))
         status = "updated"
@@ -235,12 +252,13 @@ def _index_one(con, path: str, log, verify_sync=False,
             """INSERT INTO media(path,kind,show,show_norm,year,season,episode,
                    episode_to,is_combined,id_conf,sub_kind,sub_path,
                    sub_offset_ms,sub_scale,sync_score,sync_conf,sub_script,
-                   cue_count,last_cue_ms,file_size,file_mtime,indexed_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   sub_stamp,cue_count,last_cue_ms,file_size,file_mtime,
+                   indexed_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (path, mid.kind, mid.show, normalize(mid.show), mid.year, mid.season,
              mid.episode, mid.episode_to, int(mid.is_combined),
              mid.confidence, kind, sub_path, offset_ms, scale,
-             sync_score, sync_conf, script, len(cues),
+             sync_score, sync_conf, script, stamp, len(cues),
              cues[-1].end_ms if cues else 0, st.st_size, int(st.st_mtime),
              int(time.time())))
         media_id = cur.lastrowid

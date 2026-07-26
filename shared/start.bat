@@ -37,11 +37,12 @@ echo  ==========================================================
 echo    media_index
 echo  ==========================================================
 echo.
-if defined MEDIA (
-    echo    media folder : !MEDIA!
-) else (
-    echo    media folder : (not set yet)
-)
+REM  Built before the echo rather than inside an if-block. A closing
+REM  bracket in echoed text ends the block instead of printing, which is
+REM  why this line used to lose its final bracket on screen.
+set "SHOWMEDIA=!MEDIA!"
+if not defined MEDIA set "SHOWMEDIA=none yet - press 8"
+echo    media folder : !SHOWMEDIA!
 echo    index file   : !DB!
 echo.
 echo  ----------------------------------------------------------
@@ -162,15 +163,25 @@ goto menu
 :do_transcribe
 call :need_folder || goto menu
 echo.
-echo   This reads the audio and writes a .srt next to each video.
-echo   Roughly 10 minutes per episode. It is safe to stop and restart -
-echo   finished files are skipped.
+echo   This reads the audio and writes a .srt next to each video, so the
+echo   subtitles come from THIS copy of the film and cannot be out of sync.
+echo   Roughly 10 minutes per episode. Safe to stop and restart.
+echo.
+echo   Say Y below only if this folder's subtitles are WRONG - it will
+echo   replace them. Say N to fill in only the episodes that have none.
+echo.
+set "OVER="
+set /p "OVER=  Replace the subtitles that are already there? [y/N]: "
 echo.
 set "GO="
 set /p "GO=  Start? [Y/n]: "
 if /i "!GO!"=="n" goto menu
 echo.
-%PY% -m media_index transcribe "!MEDIA!"
+if /i "!OVER!"=="y" (
+    %PY% -m media_index transcribe "!MEDIA!" --overwrite
+) else (
+    %PY% -m media_index transcribe "!MEDIA!"
+)
 echo.
 pause
 goto menu

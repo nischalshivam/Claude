@@ -283,6 +283,15 @@ def cmd_preflight(a):
 
 
 def cmd_run(a):
+    if os.path.isdir(a.jobs):
+        print(f"  {a.jobs} is a folder.\n"
+              "  This step wants a job FILE (jobs.json) listing the videos to\n"
+              "  build. To point the tool at a folder of episodes, use "
+              "'Set the media folder'.")
+        return 1
+    if not os.path.isfile(a.jobs):
+        print(f"  No such job file: {a.jobs}")
+        return 1
     """Pre-flight the whole queue, then build what passed."""
     results = runner.run_queue(a.jobs, dry_run=a.dry_run,
                                allow_gaps=not a.strict)

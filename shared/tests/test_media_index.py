@@ -236,3 +236,48 @@ class TestResolveScript(_LibraryCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReindexWhenSubtitlesChange(unittest.TestCase):
+    """Replacing a bad .srt must actually take effect.
+
+    The skip check compared only the video's size and mtime, so swapping in a
+    corrected subtitle and rebuilding reported "skipped 13" and changed
+    nothing. The repair was applied and silently ignored, and the index kept
+    serving the timings that were wrong — the exact failure this tool exists
+    to prevent, produced by the tool itself.
+    """
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = os.path.join(self.tmp, "Show Season 1")
+        make_demo_library.build(self.root)
+        self.db = os.path.join(self.tmp, "library.db")
+        self.srts = [os.path.join(dp, f)
+                     for dp, _d, fs in os.walk(self.root) for f in fs
+                     if f.lower().endswith(".srt")]
+
+    def test_an_unchanged_library_is_skipped(self):
+        library.build(self.root, self.db, log=lambda *a: None)
+        again = library.build(self.root, self.db, log=lambda *a: None)
+        self.assertEqual(again.added, 0)
+        self.assertGreater(again.skipped, 0)
+
+    def test_a_rewritten_subtitle_is_picked_up(self):
+        library.build(self.root, self.db, log=lambda *a: None)
+        with open(self.srts[0], "a", encoding="utf-8") as f:
+            f.write("\n999\n00:40:00,000 --> 00:40:02,000\n"
+                    "a line that was not there before\n\n")
+        after = library.build(self.root, self.db, log=lambda *a: None)
+        self.assertEqual(after.updated, 1, "the new subtitle was ignored")
+
+    def test_the_new_line_is_searchable(self):
+        """Counting the rebuild is not enough — the line has to be findable."""
+        library.build(self.root, self.db, log=lambda *a: None)
+        with open(self.srts[0], "a", encoding="utf-8") as f:
+            f.write("\n999\n00:40:00,000 --> 00:40:02,000\n"
+                    "a line that was not there before\n\n")
+        library.build(self.root, self.db, log=lambda *a: None)
+        hits = search.find(self.db, "a line that was not there before")
+        self.assertTrue(hits)
+        self.assertEqual(hits[0].start_ms, 2_400_000)
