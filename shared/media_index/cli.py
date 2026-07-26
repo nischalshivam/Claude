@@ -12,9 +12,9 @@ import json
 import os
 import sys
 
-from . import (align, contact, cutter, doctor, frames, jobs as jobs_mod,
+from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
                library, runner, search, sources, subs, subtitles, sync,
-               term, transcribe)
+               term, transcribe, visual)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -243,6 +243,42 @@ def cmd_stills(a):
     return 0 if written else 1
 
 
+def cmd_look(a):
+    """Index what the footage LOOKS like, so shots can be checked, not guessed.
+
+    Slow and one-time, exactly like building the dialogue index — and for the
+    same reason. Every script written about these episodes afterwards asks
+    this index questions for free.
+    """
+    ok, why = embed.available()
+    if not ok:
+        print(f"  The picture model is not installed — {why}")
+        print("\n  Install it with:")
+        print("      pip install torch transformers sentencepiece")
+        print(f"\n  The first run then downloads ~1 GB into {embed.models_dir()}")
+        print("  After that it works with no internet at all.")
+        return 1
+
+    done, total = visual.coverage(a.db)
+    print(f"  {done} of {total} file(s) already have their pictures indexed")
+    if done >= total and total and not a.force:
+        print("  nothing to do — add --force to redo them")
+        return 0
+
+    res = visual.build(a.db, fps=a.fps, force=a.force, log=print)
+    print("")
+    print(f"  looked at {res.indexed} file(s) {term.sym('dot')} "
+          f"skipped {res.skipped} {term.sym('dot')} "
+          f"{res.frames:,} frames in {res.seconds / 60:.0f} min")
+    if res.failed:
+        print(f"\n  {len(res.failed)} file(s) could not be read:")
+        for path, why in res.failed[:20]:
+            print(f"      {os.path.basename(path)}  —  {why}")
+    done, total = visual.coverage(a.db)
+    print(f"\n  {done} of {total} file(s) can now be checked by picture")
+    return 0 if not res.failed else 1
+
+
 def cmd_check(a):
     """Inspect a media folder and say whether it will work."""
     reports = doctor.inspect_folder(
@@ -468,6 +504,14 @@ def main(argv=None):
     sh.add_argument("--out", default="contact_sheet.jpg")
     sh.add_argument("--columns", type=int, default=8)
     sh.set_defaults(func=cmd_sheet)
+
+    lk = sub.add_parser("look", parents=[common],
+                        help="index what the footage looks like (slow, once)")
+    lk.add_argument("--fps", type=float, default=visual.DEFAULT_FPS,
+                    help=f"frames sampled per second (default {visual.DEFAULT_FPS})")
+    lk.add_argument("--force", action="store_true",
+                    help="redo files that are already done")
+    lk.set_defaults(func=cmd_look)
 
     q = sub.add_parser("preflight", parents=[common],
                        help="check a queue of jobs without building anything")

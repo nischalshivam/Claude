@@ -56,17 +56,18 @@ echo    7.  Show what is in the index
 echo.
 echo    8.  Set the media folder
 echo    9.  BUILD A VIDEO from a visual script
+echo    L.  Look at the footage       - teach it what your episodes LOOK like
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
 REM  Say what to do next, so the list is never a guess.
 set "NEXT=press 8 and point it at your episode folder"
 if defined MEDIA set "NEXT=press 1, then 2, then 4 - in that order"
-if defined MEDIA if exist "!DB!" set "NEXT=press 6 to prove a clip, then 9 to build a video"
+if defined MEDIA if exist "!DB!" set "NEXT=press 6 to prove a clip, then L, then 9"
 echo    NEXT:  !NEXT!
 echo.
 set "CHOICE="
-set /p "CHOICE=  Pick a number: "
+set /p "CHOICE=  Pick a number, or L: "
 if not defined CHOICE goto menu
 
 if "!CHOICE!"=="1" goto do_check
@@ -78,6 +79,7 @@ if "!CHOICE!"=="6" goto do_clip
 if "!CHOICE!"=="7" goto do_stats
 if "!CHOICE!"=="8" goto do_setfolder
 if "!CHOICE!"=="9" goto do_queue
+if /i "!CHOICE!"=="L" goto do_look
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -242,6 +244,29 @@ echo.
 set "WCLIP=proof\window.mp4"
 %PY% -m media_index cut "!Q!" --db "!DB!" --out "!WCLIP!" --window 40
 if exist "!WCLIP!" start "" "!WCLIP!"
+echo.
+pause
+goto menu
+
+:do_look
+echo.
+echo   This teaches the tool what your episodes LOOK like, so it can check
+echo   every shot against the script instead of inferring it from one
+echo   quoted line. It is the step that stops one wrong match ruining a
+echo   whole scene.
+echo.
+echo   Slow, and done ONCE per episode. A few minutes each, nothing to
+echo   watch while it runs, and every script you build afterwards uses it
+echo   for free.
+echo.
+echo   The first run downloads the picture model, about 1 GB. After that
+echo   it needs no internet at all.
+echo.
+set "GO="
+set /p "GO=  Start? [Y/n]: "
+if /i "!GO!"=="n" goto menu
+echo.
+%PY% -m media_index look --db "!DB!"
 echo.
 pause
 goto menu

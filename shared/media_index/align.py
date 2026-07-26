@@ -460,10 +460,13 @@ def align(db_path: str, beats: list, log=lambda *a: None) -> list[Placement]:
 def summarise(placements: list[Placement]) -> str:
     from . import term
     anchored = sum(1 for p in placements if p.method == "anchor")
+    verified = sum(1 for p in placements if p.method == "verified")
     interp = sum(1 for p in placements if p.method == "interpolated")
     none = sum(1 for p in placements if p.method == "none")
     total = len(placements) or 1
     return (f"  {anchored} anchored on dialogue "
-            f"{term.sym('dot')} {interp} placed along the scene "
+            + (f"{term.sym('dot')} {verified} confirmed by the picture "
+               if verified else "")
+            + f"{term.sym('dot')} {interp} placed along the scene "
             f"{term.sym('dot')} {none} unplaced "
-            f"({(anchored + interp) / total:.0%} usable)")
+            f"({(anchored + verified + interp) / total:.0%} usable)")

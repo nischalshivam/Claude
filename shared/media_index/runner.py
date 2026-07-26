@@ -32,7 +32,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import align, cutter, frames, jobs as jobs_mod, term
+from . import align, cutter, frames, jobs as jobs_mod, term, verify
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -61,6 +61,11 @@ class SceneResult:
     @property
     def anchored(self) -> int:
         return sum(1 for m in self.methods.values() if m == "anchor")
+
+    @property
+    def verified(self) -> int:
+        """Assets whose picture was checked against the shot's description."""
+        return sum(1 for m in self.methods.values() if m == "verified")
 
     @property
     def interpolated(self) -> int:
@@ -253,7 +258,13 @@ def _asset_score(scene, path: str, ceiling: float) -> float:
     """
     method = scene.methods.get(os.path.basename(path), "unknown")
     base = {"high": 1.0, "medium": 0.7}.get(scene.confidence, 0.5)
-    return round(ceiling * base * (1.0 if method == "anchor" else 0.75), 3)
+    # "verified" sits with "anchor" on purpose. One was located by a line that
+    # is provably spoken there; the other by a picture that provably matches
+    # the description. Both were checked against the film. Interpolation was
+    # not, and the gap between "checked" and "inferred" is the only thing in
+    # this manifest an editor cannot recover by looking.
+    weight = 1.0 if method in ("anchor", "verified") else 0.75
+    return round(ceiling * base * weight, 3)
 
 
 def write_manifest(job, result: JobResult) -> str:
@@ -270,6 +281,7 @@ def write_manifest(job, result: JobResult) -> str:
             "source": s.source,
             "confidence": s.confidence,
             "anchored": s.anchored,
+            "verified": s.verified,
             "interpolated": s.interpolated,
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
@@ -299,6 +311,12 @@ def run_job(job, report, log=print) -> JobResult:
         # ones inherit a position from the few that quote a line.
         placements = align.align(job.db, report.beats, log=log)
         log("  " + align.summarise(placements))
+        # Alignment says where a shot probably is. This says whether the
+        # picture there is the one the script asked for, and moves it when it
+        # is not. Without the model installed it reports why and changes
+        # nothing — a build never depends on it.
+        checked = verify.apply(job.db, report.beats, placements, log=log)
+        log(checked.summary())
         seen: list = []          # every still already taken, for de-duplication
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log)

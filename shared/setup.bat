@@ -57,6 +57,32 @@ if /i "!WANTTX!"=="n" (
     )
 )
 
+REM ------------------------------------------------------- the picture model
+echo.
+echo The tool can LOOK at your footage and check that every shot really
+echo shows what the script asked for, instead of inferring it from one
+echo quoted line. That needs a picture model - about 2 GB of packages, and
+echo a 1 GB download the first time it runs. After that it works offline.
+echo.
+echo Without it everything still works; shots are placed by inference only.
+echo.
+set "WANTCV="
+set /p "WANTCV=Install it now? [Y/n]: "
+if /i "!WANTCV!"=="n" (
+    echo [--] skipped - install later with:
+    echo      pip install torch transformers sentencepiece
+) else (
+    echo     installing torch, transformers, sentencepiece...
+    echo     this is the big one - give it a few minutes.
+    %PY% -m pip install --quiet --disable-pip-version-check torch transformers sentencepiece
+    if !errorlevel!==0 (
+        echo [OK] picture model packages installed
+    ) else (
+        echo [--] install failed - the tool still runs, it just cannot
+        echo      check shots against the picture.
+    )
+)
+
 REM ------------------------------------------------------------------ ffmpeg
 echo.
 set "FFOK="

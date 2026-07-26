@@ -220,22 +220,36 @@ class TestBatchFiles(unittest.TestCase):
         # takes a job file describing many videos, and typing that path is
         # not the thing to put in front of someone testing one script. It
         # stays available as `mi.bat run jobs.json`.
+        # "look" builds the picture index. Without it every shot is placed by
+        # inference alone, which is the failure this whole stage exists to
+        # end — so it has to be reachable from the menu, not just the CLI.
         for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
-                    "make", "sheet"):
+                    "make", "sheet", "look"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 
     def test_menu_choices_all_have_a_destination(self):
+        """Every option on the list, letters included.
+
+        This used to look only at numbers. A lettered option would have been
+        offered on screen and routed nowhere, and the test would have passed
+        while the menu silently did nothing.
+        """
         text = read("start.bat").replace("\r\n", "\n")
-        offered = set(re.findall(r'(?m)^\s*echo\s+(\d+)\.', text))
-        routed = set(re.findall(r'if\s+"!CHOICE!"=="(\d+)"', text))
-        self.assertTrue(offered, "no numbered options found")
+        offered = set(re.findall(r'(?m)^\s*echo\s+(\w+)\.\s{2,}', text))
+        routed = set(re.findall(r'if\s+(?:/i\s+)?"!CHOICE!"=="(\w+)"', text))
+        self.assertTrue(offered, "no menu options found")
         self.assertEqual(offered - routed, set(),
                          f"menu offers {offered - routed} with no handler")
 
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    def test_lettered_choices_are_matched_case_insensitively(self):
+        """`if "!CHOICE!"=="L"` misses a typed lowercase l, which reads to
+        the user as the menu ignoring them."""
+        text = read("start.bat").replace("\r\n", "\n")
+        for m in re.finditer(r'(?m)^\s*(if\s+(?:/i\s+)?)"!CHOICE!"=="([A-Za-z])"',
+                             text):
+            self.assertIn("/i", m.group(1),
+                          f'choice "{m.group(2)}" is matched case-sensitively')
 
 
 class TestRepositoryStaysSmall(unittest.TestCase):
@@ -287,3 +301,7 @@ class TestRepositoryStaysSmall(unittest.TestCase):
         self.assertLess(total, self.MAX_TOTAL_BYTES,
                         f"repository is {total / 1024 / 1024:.0f} MB; every "
                         "update downloads all of it")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

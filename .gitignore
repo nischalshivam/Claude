@@ -20,6 +20,14 @@ library.db
 library.db-wal
 library.db-shm
 settings.txt
+
+# The picture model, and the vectors it produces. Both are large, both are
+# reproducible from the footage on the machine that holds it, and neither
+# means anything on another machine — the weights are a 1 GB download and the
+# vectors are ~4 MB per episode. Tracking either would put this repository
+# straight back into the state that made update.bat take hours.
+models/
+*_visual/
 proof/
 built/
 out/

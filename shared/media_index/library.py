@@ -104,6 +104,21 @@ CREATE TABLE IF NOT EXISTS chapter (
     end_ms   INTEGER NOT NULL,
     title    TEXT DEFAULT '');
 
+-- What each video LOOKS like, one row per file. The vectors themselves are
+-- megabytes apiece and live in .npz files beside this database; this table
+-- only records which file holds them and whether it is still current, so
+-- that re-indexing a season skips the episodes that have not changed.
+CREATE TABLE IF NOT EXISTS visual (
+    path        TEXT PRIMARY KEY,
+    file_size   INTEGER,
+    file_mtime  INTEGER,
+    model       TEXT NOT NULL,
+    fps         REAL NOT NULL,
+    frames      INTEGER DEFAULT 0,
+    dim         INTEGER DEFAULT 0,
+    vectors     TEXT NOT NULL,
+    built_at    INTEGER);
+
 CREATE INDEX IF NOT EXISTS chapter_media ON chapter(media_id, start_ms);
 CREATE INDEX IF NOT EXISTS cue_media_idx ON cue(media_id, idx);
 CREATE INDEX IF NOT EXISTS media_show    ON media(show_norm, season, episode);
