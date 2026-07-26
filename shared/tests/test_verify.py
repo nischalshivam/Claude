@@ -447,6 +447,102 @@ class TestSearchingOneEpisode(unittest.TestCase):
         self.assertIn("nothing indexed", m.note)
 
 
+class FakeTensor:
+    """Just enough of a torch tensor for the unwrapping code to be tested."""
+
+    def __init__(self, array):
+        self._a = np.asarray(array)
+        self.ndim = self._a.ndim
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self._a
+
+
+class Pooled:
+    def __init__(self, pooler_output, last_hidden_state=None):
+        self.pooler_output = pooler_output
+        self.last_hidden_state = last_hidden_state
+
+
+class TestGettingTheEmbeddingOutOfTheModel(unittest.TestCase):
+    """The one place a transformers upgrade can break this silently.
+
+    transformers 4 returned a plain tensor from `get_image_features`;
+    transformers 5 returns an output object whose embedding is
+    `pooler_output`, and calling `.cpu()` on that raises AttributeError. The
+    tool cannot pin the version pip resolves on someone else's machine, and
+    the failure lands after a twenty-minute download.
+    """
+
+    def _unwrap(self, out):
+        return embed.SigLIP._vectors(None, out)
+
+    def test_a_plain_tensor_is_taken_as_is(self):
+        got = self._unwrap(FakeTensor([[1.0, 2.0]]))
+        np.testing.assert_allclose(got, [[1.0, 2.0]])
+
+    def test_an_output_object_gives_up_its_pooler(self):
+        out = Pooled(FakeTensor([[3.0, 4.0]]), FakeTensor(np.zeros((1, 7, 2))))
+        np.testing.assert_allclose(self._unwrap(out), [[3.0, 4.0]])
+
+    def test_a_tuple_yields_the_two_dimensional_member(self):
+        out = (FakeTensor(np.zeros((1, 7, 2))), FakeTensor([[5.0, 6.0]]))
+        np.testing.assert_allclose(self._unwrap(out), [[5.0, 6.0]])
+
+    def test_anything_else_is_a_clear_error_not_an_attribute_error(self):
+        with self.assertRaises(embed.EmbedError) as caught:
+            self._unwrap({"surprise": 1})
+        self.assertIn("transformers", str(caught.exception))
+
+
+@unittest.skipUnless(embed.available()[0], "torch/transformers not installed")
+class TestAgainstWhateverTransformersIsInstalled(unittest.TestCase):
+    """Built from a config, so it needs no download and no network.
+
+    This is the test that would have caught the `.cpu()` break. It asserts
+    nothing about the quality of a real model — only that the shapes and
+    return types this tool depends on are the ones the installed version of
+    transformers actually produces.
+    """
+
+    def test_image_features_are_shaped_the_way_this_tool_reads_them(self):
+        import torch                                          # noqa: PLC0415
+        from transformers import (SiglipModel, SiglipConfig,   # noqa: PLC0415
+                                  SiglipTextConfig, SiglipVisionConfig)
+        cfg = SiglipConfig(
+            text_config=SiglipTextConfig(
+                hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+                num_attention_heads=2, vocab_size=64,
+                max_position_embeddings=embed.TEXT_TOKENS),
+            vision_config=SiglipVisionConfig(
+                hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+                num_attention_heads=2, image_size=embed.IMAGE_SIZE,
+                patch_size=16))
+        model = SiglipModel(cfg).eval()
+        unwrap = lambda out: embed.SigLIP._vectors(None, out)   # noqa: E731
+
+        with torch.no_grad():
+            px = torch.zeros(2, 3, embed.IMAGE_SIZE, embed.IMAGE_SIZE)
+            vecs = unwrap(model.get_image_features(pixel_values=px))
+            self.assertEqual(vecs.shape[0], 2)
+            self.assertEqual(vecs.ndim, 2)
+
+            ids = torch.zeros(2, embed.TEXT_TOKENS, dtype=torch.long)
+            tvecs = unwrap(model.get_text_features(input_ids=ids))
+            self.assertEqual(tvecs.shape, vecs.shape)
+
+    def test_normalising_leaves_unit_rows_and_survives_a_zero_row(self):
+        got = embed.unit(np.array([[3.0, 4.0], [0.0, 0.0]]))
+        self.assertAlmostEqual(float(np.linalg.norm(got[0])), 1.0, places=5)
+        self.assertTrue(np.all(np.isfinite(got)))
+
+
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
 class TestReadingFramesOutOfRealFootage(unittest.TestCase):
     @classmethod

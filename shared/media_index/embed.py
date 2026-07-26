@@ -136,11 +136,37 @@ class SigLIP(Backend):
                 f"could not load {model_name}: {exc}\n"
                 f"      weights are cached in {cache}") from exc
         self._model.eval()
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model.to(self.device)
-        dim = int(getattr(self._model.config, "projection_dim", 0)
-                  or getattr(self._model.config.text_config, "hidden_size", 768))
-        super().__init__(name=model_name, dim=dim)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model.to(device)
+        # Measured, not read off the config. `projection_dim` exists on some
+        # versions and not others, and a wrong guess here would not raise —
+        # it would silently mis-shape every comparison downstream. Encoding
+        # one word costs nothing and cannot be wrong.
+        super().__init__(name=model_name, dim=1, device=device)
+        self.dim = int(self._encode_texts_raw(["a"]).shape[1])
+
+    def _vectors(self, out):
+        """The embedding, whichever shape this version of transformers used.
+
+        transformers 4 returned a plain tensor from get_*_features.
+        transformers 5 returns a BaseModelOutputWithPooling, whose embedding
+        is `pooler_output` — and the old code's `.cpu()` on that object
+        raises AttributeError. Both are in the wild, this tool cannot pin the
+        version a user's pip resolves, and the failure is at load time on a
+        machine that has just spent twenty minutes downloading, so it is
+        worth handling rather than documenting.
+        """
+        pooled = getattr(out, "pooler_output", None)
+        if pooled is None and isinstance(out, (tuple, list)):
+            pooled = next((x for x in out
+                           if hasattr(x, "ndim") and x.ndim == 2), None)
+        if pooled is None:
+            pooled = out
+        if not hasattr(pooled, "cpu"):
+            raise EmbedError(
+                "the model returned something this tool does not recognise "
+                f"({type(out).__name__}) — transformers may have changed")
+        return pooled.detach().cpu().numpy()
 
     def encode_images(self, pixels: np.ndarray) -> np.ndarray:
         """(N, H, W, 3) uint8 -> (N, dim) unit vectors."""
@@ -156,15 +182,12 @@ class SigLIP(Backend):
                 chunk = pixels[i:i + IMAGE_BATCH].astype(np.float32)
                 chunk = chunk / 127.5 - 1.0             # SigLIP's own recipe
                 t = torch.from_numpy(chunk).permute(0, 3, 1, 2).to(self.device)
-                out.append(self._model.get_image_features(pixel_values=t)
-                           .cpu().numpy())
+                out.append(self._vectors(
+                    self._model.get_image_features(pixel_values=t)))
         return unit(np.concatenate(out, axis=0))
 
-    def encode_texts(self, texts: list) -> np.ndarray:
+    def _encode_texts_raw(self, texts: list) -> np.ndarray:
         torch = self._torch
-        texts = [str(t or "") for t in texts]
-        if not texts:
-            return np.zeros((0, self.dim), dtype=np.float32)
         out = []
         with torch.no_grad():
             for i in range(0, len(texts), TEXT_BATCH):
@@ -172,9 +195,14 @@ class SigLIP(Backend):
                                   padding="max_length", max_length=TEXT_TOKENS,
                                   truncation=True, return_tensors="pt")
                 batch = {k: v.to(self.device) for k, v in batch.items()}
-                out.append(self._model.get_text_features(**batch)
-                           .cpu().numpy())
-        return unit(np.concatenate(out, axis=0))
+                out.append(self._vectors(self._model.get_text_features(**batch)))
+        return np.concatenate(out, axis=0)
+
+    def encode_texts(self, texts: list) -> np.ndarray:
+        texts = [str(t or "") for t in texts]
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        return unit(self._encode_texts_raw(texts))
 
 
 class Deterministic(Backend):

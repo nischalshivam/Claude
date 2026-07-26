@@ -406,6 +406,97 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
     return out
 
 
+@dataclass
+class QuoteReport:
+    """What the script CLAIMED it quoted, against what the subtitles have.
+
+    The prompt asks the model writing a scene breakdown for one verbatim line
+    per ten shots, spread through the run, and it asks it to count them back
+    in a summary block. That summary is the model marking its own homework.
+
+    On the real script it reported fifteen verbatim lines; six of them
+    actually matched anything, and the ones that did not were paraphrases —
+    close enough to read as a quote, not close enough to be one. Nothing in
+    the pipeline said so, and the shortfall only became visible three stages
+    later as a run with a single anchor at its far end.
+
+    So the tool counts them itself, before anything is built, and names the
+    lines that were not found. That is the difference between "the script
+    says it did the right thing" and "the right thing is in the index".
+    """
+    given: int = 0                       # shots carrying a quote
+    matched: int = 0                     # ...that the subtitles confirm
+    misses: list = field(default_factory=list)      # (beat, shot, quote)
+    runs: int = 0
+    runs_without_anchor: list = field(default_factory=list)
+    longest_gap: int = 0                 # most shots in a row with no anchor
+
+    @property
+    def rate(self) -> float:
+        return self.matched / self.given if self.given else 0.0
+
+    def detail(self) -> str:
+        bits = [f"{self.matched}/{self.given} quoted line(s) found"]
+        if self.runs_without_anchor:
+            bits.append(f"{len(self.runs_without_anchor)} of {self.runs} run(s) "
+                        "have none at all")
+        if self.longest_gap:
+            bits.append(f"longest stretch without one: {self.longest_gap} shots")
+        return ", ".join(bits)
+
+    def advice(self) -> list:
+        """What to change in the script, in the words the writer needs."""
+        out = []
+        for beat, shot, quote in self.misses[:8]:
+            out.append(f"beat {beat} shot {shot}: not in the subtitles — "
+                       f'"{quote[:60]}"')
+        if self.misses:
+            out.append("These read like quotes but are not word for word. "
+                       "Copy them from the subtitle file, or drop them.")
+        for label in self.runs_without_anchor[:5]:
+            out.append(f"{label}: no quoted line anywhere in it")
+        return out
+
+
+def quote_report(db_path: str, beats: list, con=None) -> QuoteReport:
+    """Count the quotes that are real, before a single frame is rendered."""
+    own = None
+    if con is None:
+        from .library import connect
+        own = con = connect(db_path)
+    rep = QuoteReport()
+    try:
+        from . import subtitles
+        for run in runs(beats):
+            rep.runs += 1
+            key = subtitles.episode_key(run.season_episode or "")
+            season, episode = key if key else (None, None)
+            hits_here = 0
+            gap = 0
+            for e in run.entries:
+                if not e.query:
+                    gap += 1
+                    rep.longest_gap = max(rep.longest_gap, gap)
+                    continue
+                rep.given += 1
+                hits = find(db_path, e.query, show=run.source or None,
+                            season=season, episode=episode, limit=1, con=con)
+                if hits and hits[0].confidence != "low":
+                    rep.matched += 1
+                    hits_here += 1
+                    gap = 0
+                else:
+                    rep.misses.append((e.beat, e.shot, e.query))
+                    gap += 1
+                    rep.longest_gap = max(rep.longest_gap, gap)
+            if not hits_here and len(run.entries) >= MIN_RUN:
+                rep.runs_without_anchor.append(run.label)
+        return rep
+    finally:
+        if own is not None:
+            own.close()
+
+
 def placeable(db_path: str, beats: list, con=None) -> tuple:
     """(placeable, total) shots, without decoding a single frame.
 

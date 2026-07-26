@@ -14,6 +14,7 @@ script run against a real 62-episode library — not because it sounded sensible
 | 12 shots in runs that quoted nothing anywhere | every run needs a line |
 | planned 47% of the video's length | a duration budget |
 | "real-world press photo" searched for as if it were a film | `type` decides where an image comes from |
+| 274 of 287 assets placed by inference from 13 that were checked | `visual` is now searched against the picture — Rule 0 |
 
 ---
 
@@ -25,17 +26,55 @@ you a CLEAN NARRATION SCRIPT. You will return a VISUAL SCRIPT as JSON.
 
 ## What happens to your answer
 
-A tool takes it and searches the real subtitle files of the real episodes. A
-line you quote word for word becomes an exact millisecond. Every other shot is
-placed by counting outwards from those lines.
+A tool takes it and does two separate searches against the real film.
 
-So the quoted lines are not decoration. They are the only fixed points in the
-whole document. A shot near one is right for the same reason a shot far from
-one is a guess.
+  1. Every line you quote word for word is looked up in the real subtitle
+     file. A match becomes an exact millisecond.
+  2. Every `visual` description is compared against every frame of the
+     episode by an image-text model, and the shot is placed on the frame
+     that matches it best.
+
+The two check each other. A quoted line says WHEN. A visual description says
+WHAT, and it is the only thing that can catch a quote that matched the wrong
+moment.
 
 You have NO access to any video. Never output a URL, a video ID, or a
 timestamp — you would have to invent them, and the tool would cut the wrong
 footage with nothing to reveal the mistake.
+
+## RULE 0 — `visual` is a caption, not a note to yourself
+
+This is the field the picture search reads. Write what a person would see if
+the sound were off and they had never watched the show.
+
+Concrete and visible:
+
+    "a man in a red hazmat suit and apron holding a box cutter"
+    "a bald man in a blue shirt pressed back against a white tiled wall"
+    "two men standing in a bright underground laboratory, one in a suit"
+
+Not visible, and worth nothing to the search:
+
+    "the moment everything changes for Walt"      <- an idea, not a picture
+    "Gus asserting dominance"                     <- a judgement
+    "the scene everyone remembers"                <- a fact about the audience
+
+Rules that follow from that:
+
+  - name what is WORN and what is HELD. Colour, clothing and objects are
+    what an image model actually keys on.
+  - describe the ROOM: bright lab, dark desert at night, a kitchen, a car
+    interior. Two shots of the same face in different rooms are told apart
+    by the room.
+  - one sentence, plain words, present tense. Fifteen words is plenty.
+  - character names may be included, but never INSTEAD of the description.
+    "Gus Fring" tells the search nothing. "a calm man in glasses and a
+    yellow shirt" tells it everything.
+  - if two shots would get the same caption, they are the same shot. Give
+    one of them a different detail or merge them with `count`.
+
+A beat whose narration has no picture still needs a real caption — see Rule
+4. Describe the face, the object or the room you chose, not the idea.
 
 ## RULE 1 — one verbatim line every ten shots
 
@@ -86,9 +125,11 @@ Use the nearest CONCRETE thing the sentence is about, in this order:
   3. the room itself, wide or empty
   4. another shot from the same scene carrying the same feeling
 
-Say which you chose, plainly, in `visual`: "Gus's face, held, while the
-narration argues about his motive." A held face under an argument is what a
-real editor cuts, and it is always available.
+Then describe THAT, as a picture, per Rule 0. Not "Gus's face, held, while
+the narration argues about his motive" — the search cannot see a narration
+argument. Write "a calm man in glasses and a yellow shirt, close on his face,
+saying nothing". A held face under an argument is what a real editor cuts,
+and it is always available.
 
 ## RULE 5 — the duration budget
 
@@ -141,7 +182,7 @@ repeating near-identical entries.
         "nearest_dialogue": "",
         "nearest_dialogue_position": "",
 
-        "visual": "Gus, apron bloodied, delivers the line to Walt and Jesse.",
+        "visual": "a man in a red hazmat suit and a blood-stained white apron standing in a bright underground laboratory, two men against the wall",
         "characters": ["Gus Fring", "Walter White", "Jesse Pinkman"],
         "setting": "underground superlab, fluorescent light",
         "must_not_have": ["talking head commentary", "burned-in subtitles",
@@ -155,7 +196,7 @@ repeating near-identical entries.
         "season_episode": "S04E01",
         "nearest_dialogue": "Well? Get back to work.",
         "nearest_dialogue_position": "before",
-        "visual": "Close on the bloodied apron and the box cutter.",
+        "visual": "close on a blood-stained white apron and a green box cutter held in a gloved hand",
         "duration_target_sec": 5
       }
     ],
@@ -169,6 +210,10 @@ repeating near-identical entries.
 ]
 
 ## Field rules
+
+**visual** — REQUIRED on every shot. The caption the picture search reads.
+See Rule 0. A shot with a vague `visual` is placed by arithmetic alone, which
+is the failure this whole field exists to prevent.
 
 **kind** — "clip" for moving footage, "still" for a held frame. Required.
 
@@ -219,7 +264,9 @@ Append one final JSON object:
     "stills": 0,
     "verbatim_lines": 0,
     "longest_gap_between_verbatim_lines": 0,
-    "runs_without_any_verbatim_line": 0
+    "runs_without_any_verbatim_line": 0,
+    "shots_with_a_visible_caption": 0,
+    "shots_total": 0
   }
 }
 
@@ -227,6 +274,7 @@ Fix and re-answer if any of these is true:
   - coverage_percent below 95
   - longest_gap_between_verbatim_lines above 10
   - runs_without_any_verbatim_line above 0
+  - shots_with_a_visible_caption below shots_total
 
 Now here is my script:
 ````
@@ -240,18 +288,46 @@ mi.bat sources  script.json --db library.db     which titles are needed
 mi.bat align    script.json --db library.db     how many shots can be placed
 ```
 
-Then build it, and read the run lines:
+### The summary above is the model marking its own homework
+
+It reported fifteen verbatim lines once. Six of them existed. The rest were
+paraphrases — close enough to read as quotes, not close enough to be found —
+and nothing said so until three stages later, when a hundred-shot run came
+back hanging off a single anchor at its far end.
+
+So the tool counts them itself. Building one script prints:
+
+```
+  ABOUT THE QUOTED LINES
+  6/15 quoted line(s) found, 1 of 4 run(s) have none at all, longest
+  stretch without one: 34 shots
+
+      beat 12 shot 2: not in the subtitles — "Whatever it is you think..."
+      These read like quotes but are not word for word. Copy them from the
+      subtitle file, or drop them.
+```
+
+Take those lines back to the prompt and fix them there. It is a retry, not a
+rebuild.
+
+### Then read the run lines
 
 ```
 Breaking Bad S04E01: 70 shot(s), 1 anchor(s), span 2010s-2264s
   only one line matched, at shot 62 of 70...
+  Breaking Bad S04E01: 54/70 shot(s) found in the picture, 31 moved
 ```
 
-**The anchor count is the number that matters.** One anchor in a run of
-seventy means every other shot in it is arithmetic, and shot 1 sits 221
-seconds from the only thing actually known. Seven anchors across the same
-seventy shots means no shot is ever more than a few seconds of guesswork from
-a fixed point.
+Two numbers, and they mean different things:
 
-Coverage is not accuracy. 89% placed with one anchor is 89% of the shots
-sharing one guess.
+**Anchors** are lines proven to be spoken at that millisecond. One anchor in
+a run of seventy means the other sixty-nine are arithmetic hanging off it.
+
+**Found in the picture** is how many shots the image model could actually
+locate from their description. This is the number that survives a bad anchor,
+and the one to push on: a run with two anchors and fifty-four confirmed
+pictures is sound; a run with two anchors and four is not, and the fix is
+better `visual` captions, not more quotes.
+
+Coverage is neither. 89% placed with one anchor and no picture index is 89%
+of the shots sharing one guess.

@@ -434,3 +434,82 @@ class TestOneBadAnchorIsWorseThanNone(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestCountingTheQuotesTheScriptClaims(unittest.TestCase):
+    """The script's own summary counts its verbatim lines. This counts the
+    real ones.
+
+    On a real build the script reported fifteen verbatim lines and six of
+    them matched anything; the rest were paraphrases, close enough to read as
+    quotes and not close enough to be found. Nothing said so, and the
+    shortfall surfaced three stages later as a hundred-shot run hanging off a
+    single anchor at its far end. The gap between "the script says it did the
+    right thing" and "the right thing is in the index" has to be measured
+    while the script can still be sent back and rewritten.
+    """
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="quotes_")
+        cls.db = os.path.join(cls.tmp, "library.db")
+        con = library.connect(cls.db)
+        con.execute("INSERT INTO media (id, path, kind, show, show_norm, "
+                    "season, episode) VALUES (1,?,?,?,?,?,?)",
+                    ("/x/Show S01E01.mkv", "episode", "Show", "show", 1, 1))
+        lines = [(1000, "Well? Get back to work."),
+                 (60000, "I have made a decision and there is no going back.")]
+        for i, (at, text) in enumerate(lines):
+            con.execute("INSERT INTO cue (media_id, idx, start_ms, end_ms, "
+                        "text, text_norm) VALUES (1,?,?,?,?,?)",
+                        (i, at, at + 2000, text, library.normalize(text)))
+        con.commit()
+        con.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _beats(self, *quotes, episode="S01E01", filler=0):
+        shots = [{"source": "Show", "season_episode": episode,
+                  "exact_dialogue": q, "visual": "something"} for q in quotes]
+        shots += [{"source": "Show", "season_episode": episode,
+                   "visual": "something"} for _ in range(filler)]
+        return [{"beat": 1, "shots": shots}]
+
+    def test_a_real_quote_is_counted_as_found(self):
+        rep = align.quote_report(self.db, self._beats("Well? Get back to work."))
+        self.assertEqual((rep.given, rep.matched), (1, 1))
+        self.assertEqual(rep.misses, [])
+
+    def test_a_paraphrase_is_named_rather_than_counted(self):
+        rep = align.quote_report(
+            self.db, self._beats("I decided there was no going back at all"))
+        self.assertEqual((rep.given, rep.matched), (1, 0))
+        self.assertEqual(len(rep.misses), 1)
+        self.assertIn("not in the subtitles", " ".join(rep.advice()))
+
+    def test_a_run_with_no_quote_at_all_is_named(self):
+        rep = align.quote_report(self.db, self._beats(filler=6))
+        self.assertEqual(rep.given, 0)
+        self.assertEqual(len(rep.runs_without_anchor), 1)
+        self.assertIn("no quoted line", " ".join(rep.advice()))
+
+    def test_the_longest_unanchored_stretch_is_measured(self):
+        # One quote at the front, then nine silent shots: the prompt asks for
+        # one line per ten shots SPREAD, and a clump at one end satisfies the
+        # count while leaving the far end with nothing to hold it.
+        rep = align.quote_report(
+            self.db, self._beats("Well? Get back to work.", filler=9))
+        self.assertEqual(rep.matched, 1)
+        self.assertEqual(rep.longest_gap, 9)
+
+    def test_the_rate_is_what_a_gate_can_act_on(self):
+        rep = align.quote_report(
+            self.db, self._beats("Well? Get back to work.",
+                                 "this line does not exist anywhere"))
+        self.assertAlmostEqual(rep.rate, 0.5)
+
+    def test_an_empty_script_is_not_a_crash(self):
+        rep = align.quote_report(self.db, [])
+        self.assertEqual((rep.given, rep.matched, rep.runs), (0, 0, 0))
+        self.assertEqual(rep.advice(), [])

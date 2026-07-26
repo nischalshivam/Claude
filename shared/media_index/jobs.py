@@ -128,6 +128,7 @@ class JobReport:
     requirements: list = field(default_factory=list)
     narration_seconds: float = 0.0
     placeable: int = 0
+    quotes: object = None            # align.QuoteReport, once it has been run
 
     @property
     def blocked(self) -> bool:
@@ -272,6 +273,18 @@ def preflight(job: Job, log=lambda *a: None) -> JobReport:
     if weak:
         add(Check("all shots exact", False,
                   f"{len(weak)} shot(s) need a visual check", fatal=False))
+
+    # The script's own summary counts its verbatim lines. This counts the
+    # ones the subtitles actually contain, which is a different number and
+    # the only one worth acting on — and it is worth acting on HERE, while
+    # the script can still be sent back and fixed for the price of a retry.
+    try:
+        rep.quotes = align.quote_report(job.db, rep.beats)
+        good = rep.quotes.rate >= 0.6 and not rep.quotes.runs_without_anchor
+        add(Check("quoted lines are real", good, rep.quotes.detail(),
+                  fatal=False))
+    except Exception as exc:                    # a gate must never crash
+        add(Check("quoted lines are real", False, str(exc)[:160], fatal=False))
 
     # --- output location and disk ---
     try:

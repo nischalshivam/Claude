@@ -332,6 +332,14 @@ def cmd_make(a):
         stills_per_scene=a.stills)
     report = jobs_mod.preflight(job, log=lambda m: print("  " + str(m)))
     print(jobs_mod.format_reports([report]))
+    # Printed in full only here. The queue builds twenty-five videos and this
+    # would bury its summary; a single script is being tested, and the whole
+    # point of testing one is to find out what to change in it.
+    if report.quotes and report.quotes.advice():
+        print("\n  ABOUT THE QUOTED LINES")
+        print(f"  {report.quotes.detail()}\n")
+        for line in report.quotes.advice():
+            print(f"      {line}")
     if report.blocked and not a.force:
         print("\n  blocked — nothing built (use --force to try anyway)")
         return 1
