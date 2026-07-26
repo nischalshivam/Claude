@@ -32,7 +32,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import cutter, jobs as jobs_mod, term
+from . import align, cutter, frames, jobs as jobs_mod, term
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -48,10 +48,23 @@ class SceneResult:
     note: str = ""
     source: str = ""
     confidence: str = ""
+    # How each asset in this scene got its position. An interpolated shot is
+    # a good guess — the scene's own chronology between two anchors — but it
+    # is still a guess, and a manifest that does not distinguish the two
+    # gives an editor no way to know which shots are worth checking.
+    methods: dict = field(default_factory=dict)     # {"clip_01.mp4": "anchor"}
 
     @property
     def ok(self) -> bool:
         return bool(self.clips or self.stills)
+
+    @property
+    def anchored(self) -> int:
+        return sum(1 for m in self.methods.values() if m == "anchor")
+
+    @property
+    def interpolated(self) -> int:
+        return sum(1 for m in self.methods.values() if m == "interpolated")
 
 
 @dataclass
@@ -102,9 +115,32 @@ def _narration_for(beat: dict) -> str:
             or beat.get("script_cue") or "").strip()
 
 
-def build_scene(job, index: int, beat: dict, resolutions: list,
-                log=lambda *a: None) -> SceneResult:
-    """Cut every shot of one beat. Never raises — a bad scene is reported."""
+# How far either side of a placement to look for still frames. A five second
+# clip holds few distinct frames; a little air around it holds several.
+STILL_WINDOW_S = 4.0
+
+
+def _wants_still(shot: dict) -> bool:
+    return str(shot.get("kind") or "").strip().lower() == "still"
+
+
+def _still_count(shot: dict, default: int) -> int:
+    try:
+        return max(1, int(shot.get("count") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def build_scene(job, index: int, beat: dict, placements: list,
+                seen: list | None = None, log=lambda *a: None) -> SceneResult:
+    """Cut every shot of one beat. Never raises — a bad scene is reported.
+
+    Driven by alignment rather than by dialogue matches alone. On a real
+    scene breakdown only 7% of shots quote a line — the famous scenes are
+    the quiet ones — so cutting only what matched dialogue threw away 92% of
+    the script and the queue produced almost nothing. Alignment places the
+    silent shots along the scene between the few that did match.
+    """
     res = SceneResult(index=index, narration=_narration_for(beat))
     scene_dir = _scene_dir(job, index)
     os.makedirs(scene_dir, exist_ok=True)
@@ -117,54 +153,102 @@ def build_scene(job, index: int, beat: dict, resolutions: list,
         return res
 
     beat_no = beat.get("beat", index)
-    mine = [r for r in resolutions if r.beat == beat_no]
+    shots = beat.get("shots") or []
+    mine = [p for p in placements if p.beat == beat_no]
+    unplaced = 0
 
-    for n, r in enumerate(mine, 1):
-        if r.hit is None or r.status in ("not_found", "no_query"):
+    for p in mine:
+        n = p.shot
+        shot = shots[n - 1] if 0 < n <= len(shots) else {}
+        if not p.ok or not p.path:
+            unplaced += 1
             continue
-        if r.hit.confidence == "low":
-            continue
+        start = p.start_ms / 1000.0
+        end = max(start + 1.0, p.end_ms / 1000.0)
+        res.source = res.source or os.path.basename(p.path)
+        # The weakest placement in the scene, not the last one seen: a scene
+        # is only as trustworthy as its least certain shot.
+        rank = {"high": 3, "medium": 2, "low": 1}
+        if not res.confidence or rank.get(p.confidence, 0) < rank.get(res.confidence, 0):
+            res.confidence = p.confidence
+
         try:
-            clip_path = os.path.join(scene_dir, f"clip_{n:02d}.mp4")
-            cut = cutter.clip_for_hit(r.hit, clip_path,
-                                      target_seconds=job.clip_seconds,
-                                      height=job.height)
-            res.clips.append(clip_path)
-            res.source = r.hit.label
-            res.confidence = r.hit.confidence
+            if not _wants_still(shot):
+                clip_path = os.path.join(scene_dir, f"clip_{n:02d}.mp4")
+                cutter.cut_clip(p.path, start, min(end, start + job.clip_seconds),
+                                clip_path, height=job.height)
+                res.clips.append(clip_path)
+                res.methods[os.path.basename(clip_path)] = p.method
 
-            # A still from the same moment. This is the images half of the
-            # pipeline, and it is free once the clip has been located.
-            for k in range(job.stills_per_scene):
-                frac = (k + 1) / (job.stills_per_scene + 1)
-                t = cut.start + cut.duration * frac
-                still = os.path.join(scene_dir, f"image_{n:02d}_{k+1}.jpg")
-                try:
-                    cutter.extract_frame(r.hit.path, t, still, width=1920)
-                    res.stills.append(still)
-                except ProbeError:
-                    pass
+            want = _still_count(shot, job.stills_per_scene)
+            got = _stills_for(p.path, start, end, scene_dir, n, want, seen, log)
+            res.stills += got
+            for g in got:
+                res.methods[os.path.basename(g)] = p.method
         except (ProbeError, ValueError, OSError) as exc:
             log(f"      scene {index}: shot {n} failed — {exc}")
             continue
 
-    if res.clips:
-        res.status = "cut"
-    elif res.stills:
-        res.status = "fallback"
-        res.note = "no usable clip — stills only"
+    if res.clips or res.stills:
+        res.status = "cut" if res.clips else "fallback"
+        if unplaced:
+            res.note = f"{unplaced} shot(s) could not be placed"
+        elif not res.clips:
+            res.note = "stills only"
     else:
         res.status = "empty"
-        weak = [r.status for r in mine]
-        res.note = ("no dialogue match — needs visual search"
-                    if not mine or set(weak) <= {"no_query", "not_found"}
-                    else "matches were too weak to use")
+        res.note = ("nothing in this beat could be placed — no quoted line "
+                    "anywhere near it")
 
     if res.narration:
         with open(os.path.join(scene_dir, "scene.txt"), "w",
                   encoding="utf-8") as f:
             f.write(res.narration)
     return res
+
+
+def _stills_for(path: str, start: float, end: float, scene_dir: str,
+                shot_no: int, want: int, seen: list | None,
+                log=lambda *a: None) -> list:
+    """Sharp, distinct frames from around a placement.
+
+    Sampling at fixed fractions of the clip was cheaper and wrong: it lands on
+    motion blur, on the black frame between two shots, and on five views of
+    one static moment. These are scored and de-duplicated against every still
+    already taken for this video.
+    """
+    lo = max(0.0, start - STILL_WINDOW_S)
+    hi = end + STILL_WINDOW_S
+    try:
+        cands = frames.scan(path, lo, hi)
+    except ProbeError as exc:
+        log(f"      still scan failed — {exc}")
+        return []
+    best = frames.pick(cands, want, exclude=seen)
+    out = []
+    for k, c in enumerate(best, 1):
+        still = os.path.join(scene_dir, f"image_{shot_no:02d}_{k}.jpg")
+        try:
+            cutter.extract_frame(path, c.time, still, width=1920)
+            out.append(still)
+            if seen is not None:
+                seen.append((c.phash, c.colour))
+        except ProbeError:
+            pass
+    return out
+
+
+def _asset_score(scene, path: str, ceiling: float) -> float:
+    """How much an editor should trust this asset.
+
+    A shot anchored on a quoted line is on that line to the millisecond. A
+    shot interpolated along the scene is in the right place to within a shot
+    or two. Flattening both to one number would hide the difference at the
+    only moment it can still be checked cheaply.
+    """
+    method = scene.methods.get(os.path.basename(path), "unknown")
+    base = {"high": 1.0, "medium": 0.7}.get(scene.confidence, 0.5)
+    return round(ceiling * base * (1.0 if method == "anchor" else 0.75), 3)
 
 
 def write_manifest(job, result: JobResult) -> str:
@@ -180,12 +264,16 @@ def write_manifest(job, result: JobResult) -> str:
             "note": s.note,
             "source": s.source,
             "confidence": s.confidence,
+            "anchored": s.anchored,
+            "interpolated": s.interpolated,
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
-                  "score": {"high": 1.0, "medium": 0.7}.get(s.confidence, 0.5)}
+                  "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                  "score": _asset_score(s, p, 1.0)}
                  for p in s.clips]
                 + [{"file": os.path.basename(p), "kind": "image",
-                    "score": {"high": 0.9, "medium": 0.6}.get(s.confidence, 0.4)}
+                    "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                    "score": _asset_score(s, p, 0.9)}
                    for p in s.stills]),
         } for s in result.scenes],
     }
@@ -201,8 +289,14 @@ def run_job(job, report, log=print) -> JobResult:
     result = JobResult(job=job)
     try:
         os.makedirs(job.out, exist_ok=True)
+        # Placed once for the whole script: a run of shots from one episode
+        # is laid along that scene together, which is what lets the silent
+        # ones inherit a position from the few that quote a line.
+        placements = align.align(job.db, report.beats, log=log)
+        log("  " + align.summarise(placements))
+        seen: list = []          # every still already taken, for de-duplication
         for i, beat in enumerate(report.beats, 1):
-            scene = build_scene(job, i, beat, report.resolutions, log)
+            scene = build_scene(job, i, beat, placements, seen, log)
             result.scenes.append(scene)
             mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
             log(f"    scene {i:03d} {mark[scene.status]} "

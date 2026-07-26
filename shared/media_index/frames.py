@@ -169,26 +169,35 @@ def scan(path: str, start: float = 0.0, end: float | None = None,
 def pick(candidates: list[Candidate], n: int,
          min_gap: float = MIN_GAP_S,
          phash_distance: int = PHASH_DISTANCE,
-         colour_distance: float = COLOUR_DISTANCE) -> list[Candidate]:
+         colour_distance: float = COLOUR_DISTANCE,
+         exclude: list | None = None) -> list[Candidate]:
     """The best `n` frames that are neither too close nor too alike.
 
     Greedy by quality: take the sharpest usable frame, then the next one that
     is far enough away in time AND different enough to look like another shot.
     De-duplication is what stops a static scene yielding five identical stills.
+
+    `exclude` carries the frames already used elsewhere in the same video, as
+    (phash, colour) pairs. Without it every scene de-duplicates only against
+    itself, and a face that appears in six scenes is picked six times — which
+    on a twenty-minute timeline reads as the same still recycled, the exact
+    thing the image half of this pipeline exists to avoid.
     """
     ranked = sorted((c for c in candidates if c.usable),
                     key=lambda c: -c.score)
     chosen: list[Candidate] = []
+    taken = list(exclude or [])
     for c in ranked:
         if len(chosen) >= n:
             break
         if any(abs(c.time - k.time) < min_gap for k in chosen):
             continue
-        if any(_hamming(c.phash, k.phash) < phash_distance
-               and _colour_distance(c.colour, k.colour) < colour_distance
-               for k in chosen):
+        if any(_hamming(c.phash, h) < phash_distance
+               and _colour_distance(c.colour, col) < colour_distance
+               for h, col in taken):
             continue
         chosen.append(c)
+        taken.append((c.phash, c.colour))
     return sorted(chosen, key=lambda c: c.time)
 
 

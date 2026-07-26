@@ -55,14 +55,14 @@ echo    6.  Cut that line to a clip   - WATCH IT. this is the real test
 echo    7.  Show what is in the index
 echo.
 echo    8.  Set the media folder
-echo    9.  Run a job queue (jobs.json)
+echo    9.  BUILD A VIDEO from a visual script
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
 REM  Say what to do next, so the list is never a guess.
 set "NEXT=press 8 and point it at your episode folder"
 if defined MEDIA set "NEXT=press 1, then 2, then 4 - in that order"
-if defined MEDIA if exist "!DB!" set "NEXT=press 6 and watch a clip - that is the only proof"
+if defined MEDIA if exist "!DB!" set "NEXT=press 6 to prove a clip, then 9 to build a video"
 echo    NEXT:  !NEXT!
 echo.
 set "CHOICE="
@@ -255,20 +255,34 @@ goto menu
 
 :do_queue
 echo.
-set "JF=jobs.json"
-set /p "JF=  Job file [jobs.json]: "
-if not defined JF set "JF=jobs.json"
-set "JF=!JF:"=!"
-if not defined JF set "JF=jobs.json"
-if not exist "!JF!" (
+echo   Give it the JSON visual script. It finds every shot in your own
+echo   footage, cuts the clips, pulls the stills, and puts one contact
+echo   sheet on screen so you can judge the whole video at a glance.
+echo.
+set "SCRIPT="
+set /p "SCRIPT=  Script file: "
+if not defined SCRIPT goto menu
+set "SCRIPT=!SCRIPT:"=!"
+if not exist "!SCRIPT!" (
     echo.
-    echo   Not found: !JF!
+    echo   Not found: !SCRIPT!
     echo.
     pause
     goto menu
 )
+set "OUTDIR=built"
+set /p "OUTDIR=  Output folder [built]: "
+if not defined OUTDIR set "OUTDIR=built"
+set "OUTDIR=!OUTDIR:"=!"
 echo.
-%PY% -m media_index run "!JF!"
+%PY% -m media_index make "!SCRIPT!" --db "!DB!" --out "!OUTDIR!" --stills 2
+echo.
+echo   Building the contact sheet...
+%PY% -m media_index sheet "!OUTDIR!" --out "!OUTDIR!\contact_sheet.jpg"
+if exist "!OUTDIR!\contact_sheet.jpg" start "" "!OUTDIR!\contact_sheet.jpg"
+echo.
+echo   Look at the sheet. Every still the tool chose is on it, in order.
+echo   Wrong scenes and repeats are obvious side by side.
 echo.
 pause
 goto menu

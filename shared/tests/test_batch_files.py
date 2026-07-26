@@ -169,8 +169,17 @@ class TestBatchFiles(unittest.TestCase):
         # "cut" is on this list because watching the clip is the only step
         # that proves the chain end to end. A search score says the text
         # matched; it says nothing about whether the timing is right.
+        #
+        # "sheet" is here for the same reason one level up: a video's worth of
+        # stills can only be judged side by side, and a build with no review
+        # step is how wrong footage reached finished videos before.
+        #
+        # "run" — the overnight queue — is deliberately not on the menu. It
+        # takes a job file describing many videos, and typing that path is
+        # not the thing to put in front of someone testing one script. It
+        # stays available as `mi.bat run jobs.json`.
         for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
-                    "run"):
+                    "make", "sheet"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 

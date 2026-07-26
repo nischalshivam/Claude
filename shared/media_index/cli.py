@@ -12,9 +12,9 @@ import json
 import os
 import sys
 
-from . import (align, cutter, doctor, frames, jobs as jobs_mod, library, runner,
-               search,
-               sources, subs, subtitles, sync, term, transcribe)
+from . import (align, contact, cutter, doctor, frames, jobs as jobs_mod,
+               library, runner, search, sources, subs, subtitles, sync,
+               term, transcribe)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -282,6 +282,41 @@ def cmd_preflight(a):
     return 1 if any(r.status == "BLOCKED" for r in reports) else 0
 
 
+def cmd_make(a):
+    """Build one video from one script, without writing a job file.
+
+    The queue exists for twenty-five videos overnight. Testing a single
+    script should not require authoring JSON about JSON first.
+    """
+    job = jobs_mod.Job(name=a.name or os.path.splitext(
+        os.path.basename(a.script))[0],
+        script=os.path.abspath(a.script),
+        out=os.path.abspath(a.out), db=os.path.abspath(a.db),
+        clip_seconds=a.seconds, height=a.height,
+        stills_per_scene=a.stills)
+    report = jobs_mod.preflight(job, log=lambda m: print("  " + str(m)))
+    print(jobs_mod.format_reports([report]))
+    if report.blocked and not a.force:
+        print("\n  blocked — nothing built (use --force to try anyway)")
+        return 1
+    result = runner.run_job(job, report, log=print)
+    print(f"\n  {result.clips} clip(s), {result.stills} still(s) "
+          f"in {result.seconds:.0f}s")
+    print(f"  {result.gaps} scene(s) with nothing")
+    print(f"  -> {job.out}")
+    return 0
+
+
+def cmd_sheet(a):
+    """One page of every still, so a hundred can be judged at a glance."""
+    made = contact.build(a.folder, a.out, columns=a.columns, log=print)
+    if not made:
+        print("  no images found under " + a.folder)
+        return 1
+    print(f"  wrote {made}")
+    return 0
+
+
 def cmd_run(a):
     if os.path.isdir(a.jobs):
         print(f"  {a.jobs} is a folder.\n"
@@ -414,6 +449,25 @@ def main(argv=None):
     t.add_argument("--overwrite", action="store_true",
                    help="redo files that already have a subtitle")
     t.set_defaults(func=cmd_transcribe)
+
+    mk = sub.add_parser("make", parents=[common],
+                       help="build one video from one script")
+    mk.add_argument("script")
+    mk.add_argument("--out", required=True, help="output folder")
+    mk.add_argument("--name", default="")
+    mk.add_argument("--seconds", type=float, default=4.0)
+    mk.add_argument("--stills", type=int, default=2,
+                    help="stills to take per shot")
+    mk.add_argument("--height", type=int)
+    mk.add_argument("--force", action="store_true")
+    mk.set_defaults(func=cmd_make)
+
+    sh = sub.add_parser("sheet", parents=[common],
+                        help="contact sheet of every still that was made")
+    sh.add_argument("folder", help="a job output folder")
+    sh.add_argument("--out", default="contact_sheet.jpg")
+    sh.add_argument("--columns", type=int, default=8)
+    sh.set_defaults(func=cmd_sheet)
 
     q = sub.add_parser("preflight", parents=[common],
                        help="check a queue of jobs without building anything")

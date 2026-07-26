@@ -105,6 +105,12 @@ class _QueueCase(unittest.TestCase):
             shot("The Long Winter", "Orange, and it is already too late")])
         write_script(os.path.join(sc, "missing.json"), [
             shot("El Camino", "You never asked me what it cost")])
+        # A title that IS in the library, but not one line of it matches.
+        # With no anchor anywhere in the run there is nothing to interpolate
+        # between, and the honest answer is to build nothing and say so.
+        write_script(os.path.join(sc, "unanchored.json"), [
+            shot("The Long Winter", "qqq zzz not a line in this film"),
+            shot("The Long Winter", "another sentence nobody ever said")])
         write_script(os.path.join(sc, "mostly.json"), [
             shot("Iron Harvest", "I never wanted the harvest"),
             shot("Iron Harvest", "Then we burn the field"),
@@ -184,6 +190,8 @@ class TestQueueRun(_QueueCase):
             {"name": "All good", "script": "scripts/good.json", "out": "run/a"},
             {"name": "One soft scene", "script": "scripts/soft.json", "out": "run/b"},
             {"name": "Title missing", "script": "scripts/missing.json", "out": "run/c"},
+            {"name": "No anchors", "script": "scripts/unanchored.json",
+             "out": "run/d"},
         ], name="run.json")
         cls.results = runner.run_queue(cls.jf, log=lambda *a: None)
 
@@ -196,7 +204,7 @@ class TestQueueRun(_QueueCase):
 
     def test_a_blocked_job_does_not_stop_the_others(self):
         self.assertEqual(self.results[0].status, "done")
-        self.assertEqual(self.results[1].status, "partial")
+        self.assertEqual(self.results[1].status, "done")
 
     def test_healthy_job_cuts_every_scene(self):
         r = self.results[0]
@@ -204,11 +212,58 @@ class TestQueueRun(_QueueCase):
         self.assertEqual(r.clips, 3)
         self.assertEqual(r.gaps, 0)
 
-    def test_gap_scene_is_reported_not_hidden(self):
+    def test_a_silent_shot_is_placed_along_the_scene(self):
+        """The beat with no dialogue at all used to produce nothing.
+
+        On a real scene breakdown that case is not the exception — 92% of
+        shots quote no line, because the best scenes are the quiet ones. It
+        is now placed between the shots that did match, so the beat gets
+        footage instead of a hole.
+        """
         r = self.results[1]
-        self.assertEqual(r.gaps, 1)
-        empty = [s for s in r.scenes if not s.ok]
-        self.assertIn("visual search", empty[0].note)
+        self.assertEqual(r.gaps, 0)
+        self.assertGreater(r.clips, 2)
+
+    def test_an_interpolated_shot_is_labelled_as_one(self):
+        """Placed is not the same as matched, and the manifest has to say so
+        while it can still be checked."""
+        with open(os.path.join(self.tmp, "run", "b", "manifest.json"),
+                  encoding="utf-8") as f:
+            man = json.load(f)
+        placed_by = [a["placed_by"] for s in man["scenes"] for a in s["assets"]]
+        self.assertIn("anchor", placed_by)
+        self.assertIn("interpolated", placed_by)
+        by_method = {a["placed_by"]: a["score"]
+                     for s in man["scenes"] for a in s["assets"]
+                     if a["kind"] == "video"}
+        self.assertLess(by_method["interpolated"], by_method["anchor"])
+
+    def test_a_run_with_no_anchor_never_reaches_rendering(self):
+        """Interpolation needs something to interpolate between.
+
+        A script whose lines match nothing has no anchors, so nothing can be
+        placed from it. The gate catches that during pre-flight, before any
+        encoding — which is the whole point of pre-flighting first.
+        """
+        r = self.results[3]
+        self.assertEqual(r.status, "skipped")
+        self.assertEqual(r.clips, 0)
+        self.assertFalse(os.path.isdir(
+            os.path.join(self.tmp, "run", "d", "scene_001")))
+
+    def test_a_scene_whose_shots_cannot_be_placed_says_so(self):
+        """The same case one layer down, where pre-flight cannot help: a beat
+        reached at build time with no usable placement writes no asset and
+        gives a reason instead of an empty folder."""
+        job = jobs_mod.load_jobs(self.jf)[0]
+        job.out = os.path.join(self.tmp, "unplaceable")
+        beat = {"beat": 1, "narration": "N.", "shots": [{"source": "x"}]}
+        nowhere = [runner.align.Placement(beat=1, shot=1)]
+        scene = runner.build_scene(job, 1, beat, nowhere, [],
+                                   log=lambda *a: None)
+        self.assertFalse(scene.ok)
+        self.assertEqual(scene.status, "empty")
+        self.assertIn("could be placed", scene.note)
 
     def test_output_layout_matches_the_editor_tools(self):
         scene = os.path.join(self.tmp, "run", "a", "scene_001")
@@ -251,24 +306,24 @@ class TestQueueRun(_QueueCase):
 class TestJobIsolation(_QueueCase):
     def test_a_crashing_job_does_not_kill_the_queue(self):
         """Whatever goes wrong inside one job, the next one still runs."""
-        original = cutter.clip_for_hit
+        original = cutter.cut_clip
         calls = {"n": 0}
 
-        def exploding(hit, out, **kw):
+        def exploding(path, start, end, out, **kw):
             calls["n"] += 1
             if "boom" in out:
                 raise RuntimeError("simulated encoder failure")
-            return original(hit, out, **kw)
+            return original(path, start, end, out, **kw)
 
         jf = self.job_file([
             {"name": "Boom", "script": "scripts/good.json", "out": "boom"},
             {"name": "After", "script": "scripts/good.json", "out": "after"},
         ], name="isolate.json")
-        cutter.clip_for_hit = exploding
+        cutter.cut_clip = exploding
         try:
             results = runner.run_queue(jf, log=lambda *a: None)
         finally:
-            cutter.clip_for_hit = original
+            cutter.cut_clip = original
 
         self.assertEqual(results[0].clips, 0)          # every shot failed
         self.assertGreater(results[1].clips, 0)        # the next job still ran
