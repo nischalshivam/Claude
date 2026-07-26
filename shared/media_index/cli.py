@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-from . import (cutter, jobs as jobs_mod, library, runner, search,
+from . import (cutter, doctor, jobs as jobs_mod, library, runner, search,
                sources, subtitles, sync)
 
 
@@ -183,6 +183,15 @@ def cmd_sources(a):
     return 1 if any(r.status == "missing" for r in reqs) else 0
 
 
+def cmd_check(a):
+    """Inspect a media folder and say whether it will work."""
+    reports = doctor.inspect_folder(
+        a.media_dir, log=(lambda m: print(m)) if a.verbose else (lambda *x: None))
+    print(doctor.format_report(reports, a.media_dir))
+    bad = [r for r in reports if r.verdict != doctor.VERDICT_OK]
+    return 1 if bad else 0
+
+
 def cmd_preflight(a):
     """Check every queued job without building anything."""
     queue = jobs_mod.load_jobs(a.jobs)
@@ -267,6 +276,12 @@ def main(argv=None):
     o.add_argument("--fast", action="store_true",
                    help="skip dialogue resolution (titles only, no episodes)")
     o.set_defaults(func=cmd_sources)
+
+    d = sub.add_parser("check", parents=[common],
+                       help="inspect a media folder before indexing it")
+    d.add_argument("media_dir")
+    d.add_argument("-v", "--verbose", action="store_true")
+    d.set_defaults(func=cmd_check)
 
     q = sub.add_parser("preflight", parents=[common],
                        help="check a queue of jobs without building anything")

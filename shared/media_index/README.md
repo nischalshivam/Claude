@@ -16,6 +16,9 @@ cannot know and therefore invents.
 ## Quick start
 
 ```bash
+# 0. FIRST: will this folder even work?  (seconds, no index built)
+python -m media_index check "D:/Breaking Bad Season 2"
+
 # 1. build the index (subtitles only — no video is decoded)
 python -m media_index build "D:/Media" --db library.db
 
@@ -247,6 +250,32 @@ are deliberately **3500 ms out of sync**, and asserts that the drift is
 corrected during indexing, the quote resolves to its *true* position, and the
 resulting clip shows the *correct scene* — verified by sampling the frame
 colour, not by trusting the timestamps.
+
+---
+
+## Checking a download (`doctor.py`)
+
+Run this the moment a download finishes. It opens each file, reads what is
+actually inside, and gives a verdict — plus the exact fix, named.
+
+```
+MEDIA CHECK — 6 file(s)
+
+  ✅ Breaking Bad S02E01   47m  1920x1080  subs: embedded     684
+  ⚠️  Breaking Bad S02E04   47m  1920x1080  subs: embedded     651
+        subtitles are in devanagari script
+        → download an English .srt named 'Breaking Bad Season 2 Episode 4.en.srt'
+  ⚠️  Breaking Bad S02E05   47m  1920x1080  subs: none
+        no subtitles at all
+        → download an English .srt named 'Breaking Bad Season 2 Episode 5.en.srt'
+
+  4 ready · 1 need subtitles · 1 need English subtitles · 0 unreadable
+  → fetch the missing .srt files, then re-run this check
+```
+
+It also catches the identity mistakes that are expensive precisely because
+they are silent: two files resolving to the *same* episode, and files that
+turn out to hold several episodes each.
 
 ---
 
