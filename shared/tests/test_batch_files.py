@@ -66,14 +66,67 @@ class TestBatchFiles(unittest.TestCase):
                 self.assertGreaterEqual(depth, 0, f"{name}:{i} closes too many")
             self.assertEqual(depth, 0, f"{name} leaves {depth} block(s) open")
 
-    def test_no_substring_quote_stripping_at_all(self):
-        """Both !VAR:"=! forms are unreliable — the lone quote unbalances the
-        parser and the assignment silently does nothing, which is exactly how
-        the folder prompt came to accept a path and then do nothing. %~1 is
-        the form that actually works."""
+    def test_quote_stripping_uses_the_quoted_assignment_form(self):
+        """Stripping the quotes a drag-and-drop adds has exactly one safe form.
+
+        `set "DIR=!DIR:"=!"` is safe: delayed expansion happens after the line
+        is parsed, so the substitution never reaches the parser, and the outer
+        quotes stop a trailing space from being kept.
+
+        The bare form, `set DIR=!DIR:"=!`, keeps whatever whitespace `set /p`
+        collected. Passing the value to a helper as `call :unquote DIR !DIR!`
+        is worse still: an unquoted path with spaces arrives as several
+        arguments and only the first word survives.
+        """
+        ok = re.compile(r'(?m)^\s*(?:if\s+defined\s+\w+\s+)?'
+                        r'set\s+"(\w+)=!\1:"=!"\s*$')
         for name in BATS:
-            self.assertNotRegex(read(name), r':"=!',
-                                f'{name} strips quotes with :"=! ; use call :unquote')
+            for i, line in enumerate(read(name).splitlines(), 1):
+                if ':"=!' not in line:
+                    continue
+                self.assertRegex(line, ok,
+                                 f'{name}:{i} strips quotes unsafely')
+
+    def test_no_duplicate_labels(self):
+        """cmd jumps to the FIRST match, so a duplicated label silently runs
+        the wrong code — and a bad edit that pastes a block over a `call` line
+        produces exactly that."""
+        for name in BATS:
+            labels = re.findall(r"(?m)^:(\w+)", read(name))
+            dupes = {l for l in labels if labels.count(l) > 1}
+            self.assertEqual(dupes, set(), f"{name} defines {dupes} twice")
+
+    def test_every_menu_handler_returns_to_the_menu(self):
+        """A handler that ends in `exit /b` closes the whole window.
+
+        `exit /b` only returns from a subroutine when it was reached by
+        `call`. A `:do_*` block is reached by `goto`, so there is nothing to
+        return to and the script ends — the window vanishes mid-session with
+        no message.
+        """
+        text = read("start.bat").replace("\r\n", "\n")
+        blocks = re.split(r"(?m)^:(\w+)\s*$", text)[1:]
+        for label, body in zip(blocks[::2], blocks[1::2]):
+            if not label.startswith("do_"):
+                continue
+            self.assertIn("goto menu", body,
+                          f":{label} never returns to the menu")
+            self.assertNotRegex(body, r"(?im)^\s*exit\s+/b",
+                                f":{label} ends the script instead of "
+                                "returning to the menu")
+
+    def test_subroutines_taking_arguments_are_always_given_them(self):
+        """`call :helper` with no argument makes `set "%~1=%~2"` read as
+        `set "="`, which prints 'The syntax of the command is incorrect.'"""
+        for name in BATS:
+            text = read(name).replace("\r\n", "\n")
+            blocks = re.split(r"(?m)^:(\w+)\s*$", text)[1:]
+            takes_args = {label for label, body in zip(blocks[::2], blocks[1::2])
+                          if re.search(r"%~[1-9]", body)}
+            for label in takes_args:
+                for m in re.finditer(rf"(?im)\bcall\s+:{label}\b(.*)$", text):
+                    self.assertTrue(m.group(1).strip(),
+                                    f"{name} calls :{label} with no argument")
 
     def test_no_trailing_backslash_in_exist_test(self):
         """if exist "%DIR%\\" can be read as an escaped quote; use "%DIR%\\."."""

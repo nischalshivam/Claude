@@ -72,22 +72,17 @@ if "!CHOICE!"=="0" goto bye
 goto menu
 
 REM ------------------------------------------------------------------------
+REM  Dragging a folder into the window wraps the path in quotes; typing it
+REM  does not. Everything below is stored WITHOUT quotes and quoted again at
+REM  the point of use, so a path with spaces survives either way.
+REM ------------------------------------------------------------------------
+
 :need_folder
 if defined MEDIA exit /b 0
 echo.
 echo   No media folder set yet.
-call :unquote
-REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
-set "%~1=%~2"
-exit /b 0
-
-:ask_folder
+call :ask_folder
 if not defined MEDIA exit /b 1
-exit /b 0
-
-:unquote
-REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
-set "%~1=%~2"
 exit /b 0
 
 :ask_folder
@@ -98,26 +93,27 @@ echo.
 set "NEWDIR="
 set /p "NEWDIR=  Folder: "
 if not defined NEWDIR exit /b 0
-call :unquote NEWDIR !NEWDIR!
+set "NEWDIR=!NEWDIR:"=!"
+if not defined NEWDIR exit /b 0
 if not exist "!NEWDIR!\." (
     echo.
     echo   That folder does not exist:  !NEWDIR!
+    echo.
     pause
     exit /b 0
 )
 set "MEDIA=!NEWDIR!"
 > "settings.txt" echo media=!MEDIA!
 >> "settings.txt" echo db=!DB!
+echo.
+echo   Media folder set to  !MEDIA!
+echo.
+pause
 exit /b 0
 
 REM ------------------------------------------------------------------------
 :do_setfolder
-call :unquote
-REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
-set "%~1=%~2"
-exit /b 0
-
-:ask_folder
+call :ask_folder
 goto menu
 
 :do_check
@@ -136,7 +132,7 @@ echo   Leave blank if they are already in the media folder.
 echo.
 set "SUBDIR="
 set /p "SUBDIR=  Subtitle folder: "
-if defined SUBDIR call :unquote SUBDIR !SUBDIR!
+if defined SUBDIR set "SUBDIR=!SUBDIR:"=!"
 echo.
 if defined SUBDIR (
     %PY% -m media_index subs "!MEDIA!" --subs "!SUBDIR!"
@@ -194,10 +190,12 @@ echo.
 set "JF=jobs.json"
 set /p "JF=  Job file [jobs.json]: "
 if not defined JF set "JF=jobs.json"
-call :unquote JF !JF!
+set "JF=!JF:"=!"
+if not defined JF set "JF=jobs.json"
 if not exist "!JF!" (
     echo.
     echo   Not found: !JF!
+    echo.
     pause
     goto menu
 )
