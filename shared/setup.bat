@@ -73,8 +73,13 @@ if /i "!WANTCV!"=="n" (
     echo      pip install torch transformers sentencepiece
 ) else (
     echo     installing torch, transformers, sentencepiece...
-    echo     this is the big one - give it a few minutes.
-    %PY% -m pip install --quiet --disable-pip-version-check torch transformers sentencepiece
+    echo.
+    echo     torch alone is about 2.5 GB. On a normal connection this takes
+    echo     10 to 25 minutes. Progress bars are left ON below on purpose -
+    echo     a silent screen for twenty minutes looks exactly like a freeze,
+    echo     and it is not one. Leave it alone until it finishes.
+    echo.
+    %PY% -m pip install --disable-pip-version-check torch transformers sentencepiece
     if !errorlevel!==0 (
         echo [OK] picture model packages installed
     ) else (
