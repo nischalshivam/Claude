@@ -55,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Write-Host \"  downloaded $mb MB\";" ^
   "if (Test-Path '%TMPDIR%') { Remove-Item -Recurse -Force '%TMPDIR%' };" ^
   "Expand-Archive -Path '%TMPZIP%' -DestinationPath '%TMPDIR%' -Force;" ^
-  "$src = Get-ChildItem -Path '%TMPDIR%' -Directory ^| Select-Object -First 1;" ^
+  "$src = Get-ChildItem -Path '%TMPDIR%' -Directory | Select-Object -First 1;" ^
   "$shared = Join-Path $src.FullName 'shared';" ^
   "Copy-Item -Path (Join-Path $shared '*') -Destination '%TARGET%' -Recurse -Force;" ^
   "Write-Host '  updated'"

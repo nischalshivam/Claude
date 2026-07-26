@@ -128,6 +128,27 @@ class TestBatchFiles(unittest.TestCase):
                     self.assertTrue(m.group(1).strip(),
                                     f"{name} calls :{label} with no argument")
 
+    def test_no_caret_escapes_inside_quoted_strings(self):
+        """A caret escapes the next character OUTSIDE quotes and is a literal
+        INSIDE them, so `"... -Directory ^| Select-Object ..."` hands the
+        caret straight to PowerShell, which is not batch and does not know
+        what to do with it. Get-ChildItem then swallowed `^|` as an argument,
+        returned nothing, and the failure surfaced three statements later as
+
+            Join-Path : Cannot bind argument to parameter 'Path'
+            because it is null.
+
+        Quotes already protect a pipe from cmd. The caret is not just
+        unnecessary there, it is the bug.
+        """
+        bad_escape = re.compile(r'\^[|&<>]')
+        for name in BATS:
+            for i, line in enumerate(read(name).splitlines(), 1):
+                for quoted in re.findall(r'"[^"]*"', line):
+                    self.assertNotRegex(
+                        quoted, bad_escape,
+                        f"{name}:{i} escapes a pipe inside quotes")
+
     def test_the_updater_does_not_overwrite_itself_while_running(self):
         """cmd reads a batch file from disk as it goes, keeping a byte offset
         between lines. update.bat replaces the folder it lives in, itself
