@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from . import naming, subtitles
+from . import naming, subtitles, term
 from .probe import ProbeError, pick_audio, probe
 
 # A file must clear all of these to be usable without further work.
@@ -41,8 +41,10 @@ class FileReport:
 
     @property
     def icon(self) -> str:
-        return {VERDICT_OK: "✅", VERDICT_NEEDS_SUBS: "⚠️ ",
-                VERDICT_NEEDS_ENGLISH: "⚠️ ", VERDICT_UNREADABLE: "❌"}[self.verdict]
+        return {VERDICT_OK: term.sym("ok"),
+                VERDICT_NEEDS_SUBS: term.sym("warn"),
+                VERDICT_NEEDS_ENGLISH: term.sym("warn"),
+                VERDICT_UNREADABLE: term.sym("fail")}[self.verdict]
 
     @property
     def audio_summary(self) -> str:
@@ -150,7 +152,7 @@ def format_report(reports: list[FileReport], root: str = "") -> str:
         if r.problem:
             lines.append(f"        {r.problem}")
         if r.fix:
-            lines.append(f"        → {r.fix}")
+            lines.append(f"        {term.sym('arrow')} {r.fix}")
 
     ok = [r for r in reports if r.verdict == VERDICT_OK]
     need_subs = [r for r in reports if r.verdict == VERDICT_NEEDS_SUBS]
@@ -163,14 +165,15 @@ def format_report(reports: list[FileReport], root: str = "") -> str:
     # identity sanity — silently wrong numbering is the expensive kind of wrong
     eps = sorted((r.label for r in reports if r.kind == "episode"))
     if len(eps) != len(set(eps)):
-        lines.append("  ⚠️  two files were identified as the SAME episode — "
+        lines.append(f"  {term.sym('warn')} two files were identified as the SAME episode - "
                      "check the filenames")
     combined = [r for r in reports if r.kind == "season_pack"]
     if combined:
-        lines.append(f"  ⚠️  {len(combined)} file(s) hold several episodes each")
+        lines.append(f"  {term.sym('warn')} {len(combined)} file(s) hold several episodes each")
 
     if ok and not (need_subs or need_en or broken):
-        lines.append("  ✅ this folder is ready — run 'build' on it")
+        lines.append(f"  {term.sym('ok')} this folder is ready - run 'build' on it")
     elif need_subs or need_en:
-        lines.append("  → fetch the missing .srt files, then re-run this check")
+        lines.append(f"  {term.sym('arrow')} fetch the missing .srt files, "
+                     "then re-run this check")
     return "\n".join(lines)

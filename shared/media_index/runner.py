@@ -32,7 +32,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import cutter, jobs as jobs_mod
+from . import cutter, jobs as jobs_mod, term
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -76,8 +76,9 @@ class JobResult:
 
     @property
     def icon(self) -> str:
-        return {"done": "✅", "partial": "⚠️ ", "skipped": "⏭ ",
-                "failed": "❌", "pending": "…"}[self.status]
+        return {"done": term.sym("ok"), "partial": term.sym("warn"),
+                "skipped": term.sym("skip"), "failed": term.sym("fail"),
+                "pending": term.sym("pending")}[self.status]
 
 
 def _scene_dir(job, index: int) -> str:
@@ -261,16 +262,18 @@ def format_results(results: list[JobResult]) -> str:
                          f"{r.error[:70]}")
             continue
         lines.append(f"  {r.icon} {i:>2}. {r.job.name:<{width}}  "
-                     f"{len(r.scenes)} scenes · {r.clips} clips · "
-                     f"{r.stills} stills · {r.seconds:.0f}s"
-                     + (f" · {r.gaps} gap(s)" if r.gaps else "")
-                     + (f" · {r.error}" if r.error else ""))
+                     f"{len(r.scenes)} scenes {term.sym('dot')} {r.clips} clips "
+                     f"{term.sym('dot')} {r.stills} stills "
+                     f"{term.sym('dot')} {r.seconds:.0f}s"
+                     + (f" {term.sym('dot')} {r.gaps} gap(s)" if r.gaps else "")
+                     + (f" {term.sym('dot')} {r.error}" if r.error else ""))
     done = sum(1 for r in results if r.status == "done")
     partial = sum(1 for r in results if r.status == "partial")
     failed = sum(1 for r in results if r.status == "failed")
     skipped = sum(1 for r in results if r.status == "skipped")
-    lines += ["", f"  {done} complete · {partial} with gaps · "
-                  f"{failed} failed · {skipped} skipped"]
+    d = term.sym("dot")
+    lines += ["", f"  {done} complete {d} {partial} with gaps {d} "
+                  f"{failed} failed {d} {skipped} skipped"]
     return "\n".join(lines)
 
 

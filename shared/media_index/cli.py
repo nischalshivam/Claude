@@ -13,7 +13,7 @@ import os
 import sys
 
 from . import (cutter, doctor, jobs as jobs_mod, library, runner, search,
-               sources, subtitles, sync)
+               sources, subtitles, sync, term)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -69,7 +69,8 @@ def cmd_find(a):
         return 1
     print(f'query: "{a.quote}"\n')
     for i, h in enumerate(hits, 1):
-        mark = {"high": "✓", "medium": "~", "low": "?"}[h.confidence]
+        mark = {"high": term.sym("yes"), "medium": term.sym("maybe"),
+                "low": term.sym("no")}[h.confidence]
         a0, b0 = h.cut_window()
         print(f"{mark} {i}. {h.label}   {h.timecode}   "
               f"score {h.score:.0f}  cov {h.coverage:.0%}  [{h.confidence}]")
@@ -84,8 +85,9 @@ def cmd_resolve(a):
     beats = data if isinstance(data, list) else data.get("beats", [])
     rows = search.resolve_script(a.db, beats)
 
-    icon = {"resolved": "✅", "ambiguous": "⚠️ ", "weak": "⚠️ ",
-            "not_found": "❌", "no_query": "◻️ "}
+    icon = {"resolved": term.sym("ok"), "ambiguous": term.sym("warn"),
+            "weak": term.sym("warn"), "not_found": term.sym("fail"),
+            "no_query": term.sym("blank")}
     counts = {}
     print(f"{'beat':>5} {'':3} {'where':<34} {'time':>12}  detail")
     print("-" * 92)
@@ -208,6 +210,7 @@ def cmd_run(a):
 
 
 def main(argv=None):
+    term.enable_utf8()          # never let a code page raise
     # --db is shared by every subcommand, and works on either side of it
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--db", default="library.db",

@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import term
 from .library import connect, normalize
 from .search import find
 
@@ -70,8 +71,9 @@ class TitleRequirement:
 
     @property
     def icon(self) -> str:
-        return {"present": "✅", "partial": "⚠️ ",
-                "no_text_subs": "⚠️ ", "missing": "❌"}[self.status]
+        return {"present": term.sym("ok"), "partial": term.sym("warn"),
+                "no_text_subs": term.sym("warn"),
+                "missing": term.sym("fail")}[self.status]
 
 
 def _parse_se(value) -> tuple | None:
@@ -228,10 +230,11 @@ def format_report(reqs: list[TitleRequirement]) -> str:
     partial = [r for r in reqs if r.status in ("partial", "no_text_subs")]
     lines.append("")
     if blocked:
-        lines.append(f"  ❌ {len(blocked)} title(s) missing — these shots cannot "
-                     "be cut until they are downloaded")
+        lines.append(f"  {term.sym('fail')} {len(blocked)} title(s) missing - "
+                     "these shots cannot be cut until downloaded")
     if partial:
-        lines.append(f"  ⚠️  {len(partial)} title(s) incomplete")
+        lines.append(f"  {term.sym('warn')} {len(partial)} title(s) incomplete")
     if not blocked and not partial:
-        lines.append("  ✅ every source this script needs is in the library")
+        lines.append(f"  {term.sym('ok')} every source this script needs "
+                     "is in the library")
     return "\n".join(lines)

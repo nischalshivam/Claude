@@ -1,0 +1,104 @@
+@echo off
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
+chcp 65001 >nul 2>&1
+title media_index setup
+
+echo.
+echo ============================================
+echo   media_index - one time setup
+echo ============================================
+echo.
+
+REM ---------------------------------------------------------------- Python
+set "PY="
+where python >nul 2>&1
+if %errorlevel%==0 set "PY=python"
+if not defined PY (
+    where py >nul 2>&1
+    if !errorlevel!==0 set "PY=py -3"
+)
+if not defined PY (
+    echo [X] Python was not found.
+    echo.
+    echo     Install it from https://www.python.org/downloads/
+    echo     IMPORTANT: tick "Add python.exe to PATH" during install.
+    echo.
+    pause
+    exit /b 1
+)
+for /f "tokens=2" %%v in ('%PY% -V 2^>^&1') do set "PYVER=%%v"
+echo [OK] Python !PYVER!  ^(%PY%^)
+
+REM ------------------------------------------------------- optional speedup
+echo.
+echo Installing the optional speed-up (rapidfuzz)...
+%PY% -m pip install --quiet --disable-pip-version-check rapidfuzz >nul 2>&1
+if %errorlevel%==0 (
+    echo [OK] rapidfuzz installed
+) else (
+    echo [--] rapidfuzz could not be installed - not a problem,
+    echo      the tool falls back to Python's own matcher.
+)
+
+REM ------------------------------------------------------------------ ffmpeg
+echo.
+set "FFOK="
+where ffmpeg >nul 2>&1
+if %errorlevel%==0 set "FFOK=1"
+
+if defined FFOK (
+    for /f "tokens=3" %%v in ('ffmpeg -version 2^>^&1 ^| findstr /b "ffmpeg version"') do (
+        echo [OK] ffmpeg %%v
+        goto :ffdone
+    )
+    echo [OK] ffmpeg found
+    goto :ffdone
+)
+
+echo [X] ffmpeg was not found - it is REQUIRED for checking and cutting.
+echo.
+where winget >nul 2>&1
+if %errorlevel%==0 (
+    echo     Trying to install it automatically with winget...
+    echo.
+    winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
+    echo.
+    echo     If that succeeded, CLOSE this window, open a NEW Command Prompt,
+    echo     and run setup.bat again so the new PATH is picked up.
+) else (
+    echo     Install it one of these ways:
+    echo       1^) Open PowerShell and run:   winget install Gyan.FFmpeg
+    echo       2^) Or download from          https://www.gyan.dev/ffmpeg/builds/
+    echo          ^(pick "release essentials", unzip, and add its bin folder to PATH^)
+    echo.
+    echo     Then run setup.bat again.
+)
+echo.
+pause
+exit /b 1
+
+:ffdone
+REM ------------------------------------------------------------- self test
+echo.
+echo Running the self test...
+%PY% -m unittest discover tests >nul 2>&1
+if %errorlevel%==0 (
+    echo [OK] all tests passed
+) else (
+    echo [--] some tests failed - the tool will probably still work,
+    echo      but tell Claude if anything behaves oddly.
+)
+
+echo.
+echo ============================================
+echo   Setup finished.
+echo ============================================
+echo.
+echo Next step - check a downloaded folder:
+echo.
+echo    check.bat "D:\Breaking Bad Season 2"
+echo.
+echo ...or just drag the folder onto check.bat
+echo.
+pause

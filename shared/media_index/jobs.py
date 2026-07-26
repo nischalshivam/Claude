@@ -30,7 +30,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 
-from . import sources
+from . import sources, term
 from .probe import ProbeError, ffmpeg_bin, probe
 from .search import resolve_script
 
@@ -114,7 +114,9 @@ class Check:
 
     @property
     def icon(self) -> str:
-        return "✅" if self.ok else ("❌" if self.fatal else "⚠️ ")
+        if self.ok:
+            return term.sym("ok")
+        return term.sym("fail") if self.fatal else term.sym("warn")
 
 
 @dataclass
@@ -142,7 +144,8 @@ class JobReport:
 
     @property
     def icon(self) -> str:
-        return {"READY": "✅", "GAPS": "⚠️ ", "BLOCKED": "❌"}[self.status]
+        return {"READY": term.sym("ok"), "GAPS": term.sym("warn"),
+                "BLOCKED": term.sym("fail")}[self.status]
 
     @property
     def shots_total(self) -> int:
@@ -298,7 +301,8 @@ def format_reports(reports: list[JobReport]) -> str:
     ready = sum(1 for r in reports if r.status == "READY")
     gaps = sum(1 for r in reports if r.status == "GAPS")
     blocked = sum(1 for r in reports if r.status == "BLOCKED")
-    lines += ["", f"  {ready} ready · {gaps} with gaps · {blocked} blocked"]
+    lines += ["", f"  {ready} ready {term.sym('dot')} {gaps} with gaps "
+            f"{term.sym('dot')} {blocked} blocked"]
     if blocked:
         lines.append("  blocked jobs will be skipped, not attempted")
     return "\n".join(lines)
