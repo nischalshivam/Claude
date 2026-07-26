@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-from . import (cutter, doctor, jobs as jobs_mod, library, runner, search,
+from . import (align, cutter, doctor, jobs as jobs_mod, library, runner, search,
                sources, subtitles, sync, term, transcribe)
 
 
@@ -80,7 +80,7 @@ def cmd_find(a):
 
 
 def cmd_resolve(a):
-    with open(a.script, "r", encoding="utf-8") as f:
+    with open(a.script, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     beats = data if isinstance(data, list) else data.get("beats", [])
     rows = search.resolve_script(a.db, beats)
@@ -164,7 +164,7 @@ def cmd_cut(a):
 
 def cmd_sources(a):
     """Which titles does this script need, and are they in the library?"""
-    with open(a.script, "r", encoding="utf-8") as f:
+    with open(a.script, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     beats = data if isinstance(data, list) else data.get("beats", [])
     reqs = sources.check(a.db, beats, resolve_dialogue=not a.fast)
@@ -183,6 +183,23 @@ def cmd_sources(a):
             json.dump(payload, f, indent=2)
         print(f"\nwrote {a.out}")
     return 1 if any(r.status == "missing" for r in reqs) else 0
+
+
+def cmd_align(a):
+    """Place shots that carry no dialogue, by walking the scene in order."""
+    with open(a.script, "r", encoding="utf-8-sig") as f:
+        data = json.load(f)
+    beats = data if isinstance(data, list) else data.get("beats", [])
+    places = align.align(a.db, beats, log=print)
+    print()
+    print(f"{'beat':>5} {'method':<14} {'time':>13} {'conf':<8} note")
+    print("-" * 92)
+    for p in places:
+        print(f"{p.beat:>5}.{p.shot} {p.method:<13} "
+              f"{(p.timecode if p.ok else '-'):>13} {p.confidence:<8} {p.note}")
+    print("-" * 92)
+    print(align.summarise(places))
+    return 0
 
 
 def cmd_check(a):
@@ -301,6 +318,11 @@ def main(argv=None):
     o.add_argument("--fast", action="store_true",
                    help="skip dialogue resolution (titles only, no episodes)")
     o.set_defaults(func=cmd_sources)
+
+    g = sub.add_parser("align", parents=[common],
+                       help="place shots that have no dialogue, along the scene")
+    g.add_argument("script", help="JSON from the visual-script prompt")
+    g.set_defaults(func=cmd_align)
 
     d = sub.add_parser("check", parents=[common],
                        help="inspect a media folder before indexing it")

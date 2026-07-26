@@ -74,8 +74,18 @@ REM ------------------------------------------------------------------------
 if defined MEDIA exit /b 0
 echo.
 echo   No media folder set yet.
-call :ask_folder
+call :unquote
+REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
+set "%~1=%~2"
+exit /b 0
+
+:ask_folder
 if not defined MEDIA exit /b 1
+exit /b 0
+
+:unquote
+REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
+set "%~1=%~2"
 exit /b 0
 
 :ask_folder
@@ -86,7 +96,7 @@ echo.
 set "NEWDIR="
 set /p "NEWDIR=  Folder: "
 if not defined NEWDIR exit /b 0
-set NEWDIR=!NEWDIR:"=!
+call :unquote NEWDIR !NEWDIR!
 if not exist "!NEWDIR!\." (
     echo.
     echo   That folder does not exist:  !NEWDIR!
@@ -100,7 +110,12 @@ exit /b 0
 
 REM ------------------------------------------------------------------------
 :do_setfolder
-call :ask_folder
+call :unquote
+REM  %1 = variable name, %2 = the value (quotes stripped by %~2)
+set "%~1=%~2"
+exit /b 0
+
+:ask_folder
 goto menu
 
 :do_check
@@ -158,7 +173,7 @@ echo.
 set "JF=jobs.json"
 set /p "JF=  Job file [jobs.json]: "
 if not defined JF set "JF=jobs.json"
-set JF=!JF:"=!
+call :unquote JF !JF!
 if not exist "!JF!" (
     echo.
     echo   Not found: !JF!

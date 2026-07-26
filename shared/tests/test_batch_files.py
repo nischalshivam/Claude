@@ -13,7 +13,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-BATS = ["setup.bat", "start.bat", "check.bat", "mi.bat"]
+BATS = ["setup.bat", "start.bat", "check.bat", "mi.bat", "update.bat"]
 
 
 def read(name: str) -> str:
@@ -66,12 +66,14 @@ class TestBatchFiles(unittest.TestCase):
                 self.assertGreaterEqual(depth, 0, f"{name}:{i} closes too many")
             self.assertEqual(depth, 0, f"{name} leaves {depth} block(s) open")
 
-    def test_no_quote_stripping_trap(self):
-        """set "X=!X:"=!" looks right and does not parse; the unquoted form is
-        the one that actually strips quotes from a dragged-in path."""
+    def test_no_substring_quote_stripping_at_all(self):
+        """Both !VAR:"=! forms are unreliable — the lone quote unbalances the
+        parser and the assignment silently does nothing, which is exactly how
+        the folder prompt came to accept a path and then do nothing. %~1 is
+        the form that actually works."""
         for name in BATS:
-            self.assertNotRegex(read(name), r'set\s+"\w+=![^!]+:"=!"',
-                                f"{name} uses the quoted :\"=! form")
+            self.assertNotRegex(read(name), r':"=!',
+                                f'{name} strips quotes with :"=! ; use call :unquote')
 
     def test_no_trailing_backslash_in_exist_test(self):
         """if exist "%DIR%\\" can be read as an escaped quote; use "%DIR%\\."."""

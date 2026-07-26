@@ -69,7 +69,7 @@ class Job:
 
 def load_jobs(path: str) -> list[Job]:
     """Parse a job file. Defaults apply to every job unless overridden."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     if isinstance(data, list):
         data = {"jobs": data}
@@ -165,7 +165,7 @@ class JobReport:
 
 
 def _read_beats(path: str) -> list:
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
     return data if isinstance(data, list) else (data.get("beats") or [])
 
