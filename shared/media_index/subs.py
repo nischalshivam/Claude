@@ -56,25 +56,15 @@ class Match:
                 "none": term.sym("fail")}[self.status]
 
 
-_EP_PATTERNS = [
-    re.compile(r"(?i)\bs(\d{1,2})\s*[\._\- ]?\s*e(\d{1,3})\b"),
-    re.compile(r"(?i)\b(\d{1,2})\s*x\s*(\d{1,3})\b"),
-    re.compile(r"(?i)\bseason\s*(\d{1,2})\D{0,12}?episode\s*(\d{1,3})\b"),
-]
-
-
 def episode_of(name: str) -> tuple | None:
-    """(season, episode) from any of the shapes both sides actually use.
+    """(season, episode) — one shared implementation, in subtitles.
 
-    The subtitle side writes 1x01, the video side often writes
-    "Season 1 Episode 1" — matching them needs both.
+    This was a second copy of the same logic, and it had drifted ahead of the
+    one in subtitles.py: it knew the "Season 2 Episode 1" spelling and the
+    other did not. Attaching a pack therefore worked while finding the same
+    file as a sidecar did not, for no reason a user could ever see.
     """
-    stem = re.sub(r"[._]", " ", os.path.splitext(os.path.basename(name))[0])
-    for pat in _EP_PATTERNS:
-        m = pat.search(stem)
-        if m:
-            return int(m.group(1)), int(m.group(2))
-    return None
+    return subtitles.episode_key(name)
 
 
 def collect(subs_dir: str) -> dict:

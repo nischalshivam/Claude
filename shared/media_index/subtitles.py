@@ -131,16 +131,36 @@ def parse_file(path: str) -> list[Cue]:
     return parse_srt(text)
 
 
-_EP_MARK = re.compile(r"(?i)\bs(\d{1,2})\s*[\._\- ]?\s*e(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b")
+# The one place that decides which episode a name refers to.
+#
+# There used to be a second, shorter version of this in subs.py, and the two
+# disagreed: this one had never learned the "Season 2 Episode 1" spelling that
+# the video files actually use. So a folder of correctly named subtitles sat
+# beside the videos and matched none of them, and the reason was invisible —
+# the episode was recognised in one half of the tool and not the other.
+_EP_PATTERNS = [
+    re.compile(r"(?i)\bs(\d{1,2})\s*[\._\- ]?\s*e(\d{1,3})\b"),
+    re.compile(r"(?i)\b(\d{1,2})\s*x\s*(\d{1,3})\b"),
+    re.compile(r"(?i)\bseason\s*(\d{1,2})\D{0,12}?episode\s*(\d{1,3})\b"),
+]
 
 
-def _ep_key(name: str) -> tuple | None:
-    m = _EP_MARK.search(name)
-    if not m:
-        return None
-    if m.group(1):
-        return int(m.group(1)), int(m.group(2))
-    return int(m.group(3)), int(m.group(4))
+def episode_key(name: str) -> tuple | None:
+    """(season, episode) from any spelling either side of the tool uses.
+
+    Subtitle packs write 1x01 or S01E01; video files very often write
+    "Season 1 Episode 1". Both have to be understood, because matching them
+    to each other is the entire job.
+    """
+    stem = re.sub(r"[._]", " ", os.path.splitext(os.path.basename(name))[0])
+    for pat in _EP_PATTERNS:
+        m = pat.search(stem)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+_ep_key = episode_key          # name kept for existing callers
 
 
 # Unicode ranges that tell us what script the subtitles are actually in.
@@ -212,8 +232,12 @@ def find_sidecar(video_path: str) -> str | None:
         # named after the video -> always trusted
         candidates += glob.glob(os.path.join(folder, glob.escape(stem) + "*" + ext))
         candidates += glob.glob(os.path.join(folder, glob.escape(stem), "*" + ext))
-        # shared Subs/ folder -> only when it clearly belongs to this episode
-        for p in glob.glob(os.path.join(folder, "[Ss]ubs*", "**", "*" + ext),
+        # A shared folder of subtitles -> only when it clearly belongs to this
+        # episode. The pattern is deliberately loose: "Subs", "Subtitles",
+        # "subtitle" are all the same intention, and a rule that accepted one
+        # spelling while silently ignoring another would leave a folder the
+        # user plainly labelled sitting unused with no explanation.
+        for p in glob.glob(os.path.join(folder, "[Ss]ub*", "**", "*" + ext),
                            recursive=True):
             if shared_ok(p):
                 candidates.append(p)

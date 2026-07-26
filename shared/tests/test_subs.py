@@ -15,7 +15,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from media_index import library, probe, search, subs                # noqa: E402
+from media_index import (library, probe, search, subs,              # noqa: E402
+                         subtitles)
 from media_index.demo import make_demo_video as dv                  # noqa: E402
 from media_index.demo.make_demo_library import srt                  # noqa: E402
 
@@ -199,3 +200,74 @@ class TestLinkPack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSubtitlesFolderBesideTheVideos(unittest.TestCase):
+    """One tidy `Subtitles` folder per season, one file per episode.
+
+    This is what a person does after being burned by duplicate packs, and it
+    failed twice over. The sidecar search only accepted folders spelled
+    `Subs*`, so a folder plainly labelled `Subtitles` was invisible; and the
+    episode parser inside subtitles.py was a second, older copy of the one in
+    subs.py that had never learned "Season 2 Episode 1". Both halves had to
+    agree for the folder to be seen at all, and they did not.
+    """
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.season = os.path.join(self.tmp, "Breaking Bad Season 2")
+        subdir = os.path.join(self.season, "Subtitles")
+        os.makedirs(subdir)
+        for ep in range(1, 14):
+            with open(os.path.join(
+                    self.season,
+                    f"Breaking Bad Season 2 Episode {ep}.mp4"), "wb") as f:
+                f.write(b"\0" * 300_000)
+            with open(os.path.join(
+                    subdir, f"Breaking Bad S1-S5-English-S2E{ep}.srt"),
+                    "w", encoding="utf-8") as f:
+                f.write("1\n00:00:01,000 --> 00:00:03,000\n"
+                        f"this line belongs to episode {ep}\n\n")
+
+    def test_both_spellings_of_the_episode_are_understood(self):
+        """The two sides of the match write it completely differently."""
+        self.assertEqual(
+            subtitles.episode_key("Breaking Bad Season 2 Episode 10.mp4"),
+            (2, 10))
+        self.assertEqual(
+            subtitles.episode_key("Breaking Bad S1-S5-English-S2E10.srt"),
+            (2, 10))
+
+    def test_a_leading_range_does_not_hijack_the_episode(self):
+        """"S1-S5" sits before the real marker in every one of these names."""
+        self.assertEqual(
+            subtitles.episode_key("Breaking Bad S1-S5-English-S4E13.srt"),
+            (4, 13))
+
+    def test_every_episode_finds_its_own_file(self):
+        """Counting thirteen is not the test — thirteen CORRECT is."""
+        for ep in range(1, 14):
+            video = os.path.join(
+                self.season, f"Breaking Bad Season 2 Episode {ep}.mp4")
+            found = subtitles.find_sidecar(video)
+            self.assertIsNotNone(found, f"episode {ep} found nothing")
+            self.assertEqual(os.path.basename(found),
+                             f"Breaking Bad S1-S5-English-S2E{ep}.srt")
+
+    def test_the_text_that_loads_is_the_right_episode(self):
+        _kind, _path, cues = subtitles.load_for_video(os.path.join(
+            self.season, "Breaking Bad Season 2 Episode 7.mp4"))
+        self.assertTrue(cues)
+        self.assertIn("episode 7", cues[0].text)
+
+    def test_the_index_then_holds_thirteen_distinct_episodes(self):
+        db = os.path.join(self.tmp, "library.db")
+        library.build(self.season, db, log=lambda *a: None)
+        con = library.connect(db)
+        rows = con.execute(
+            "SELECT m.episode, c.text FROM media m JOIN cue c ON c.media_id=m.id"
+        ).fetchall()
+        con.close()
+        self.assertEqual(len(rows), 13)
+        for episode, text in rows:
+            self.assertIn(f"episode {episode}", text)
