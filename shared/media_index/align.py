@@ -100,19 +100,35 @@ class Placement:
 # ---------------------------------------------------------------------------
 
 def runs(beats: list) -> list[Run]:
-    """Consecutive shots sharing a source+episode form one run through a scene."""
-    out: list[Run] = []
+    """All shots from one episode form one run through it, in script order.
+
+    Grouping only CONSECUTIVE shots looks more conservative and is much
+    worse. An essay cuts away constantly — main scene, a flashback, back to
+    the main scene — and on a real 106-shot script that produced 36 runs,
+    twenty-three of them a single shot long. A lone silent shot has no anchor
+    and cannot be placed at all, so the cutaways were not merely fragmenting
+    the walk through the scene, they were deleting shots from the video.
+
+    Gathered by episode instead, those same 106 shots form a handful of runs,
+    and the seventy from the box-cutter episode become one walk with seven
+    anchors spread through it. Returning to an episode later is safe: shots
+    are only ever interpolated BETWEEN the anchors either side of them, so a
+    second visit with its own anchor is placed on its own terms.
+    """
+    order: list = []
+    by_key: dict = {}
     for b in beats:
         beat_no = b.get("beat")
         for i, shot in enumerate(b.get("shots") or [], 1):
             src = (shot.get("source") or "").strip()
             se = str(shot.get("season_episode") or "unknown").strip()
-            entry = Entry(beat=beat_no, shot=i, data=shot)
-            if out and out[-1].source == src and out[-1].season_episode == se:
-                out[-1].entries.append(entry)
-            else:
-                out.append(Run(source=src, season_episode=se, entries=[entry]))
-    return out
+            key = (src, se)
+            run = by_key.get(key)
+            if run is None:
+                run = by_key[key] = Run(source=src, season_episode=se)
+                order.append(run)
+            run.entries.append(Entry(beat=beat_no, shot=i, data=shot))
+    return order
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +262,39 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
         p.end_ms = int(p.start_ms + e.target_seconds * 1000)
 
     return out
+
+
+def placeable(db_path: str, beats: list, con=None) -> tuple:
+    """(placeable, total) shots, without decoding a single frame.
+
+    The gate has to answer "can this be built?" before anything renders, and
+    the honest answer changed when alignment arrived. Counting only shots that
+    match dialogue said 7/106 on a real script and blocked it — while the
+    builder, given the chance, places most of those 106, because a run needs
+    one quoted line to carry all the silent shots around it.
+
+    Anchors are database lookups. Shot detection is not, so it is left to the
+    build; the difference it makes is where inside a second a clip starts, not
+    whether the shot can be placed at all.
+    """
+    own = None
+    if con is None:
+        from .library import connect
+        own = con = connect(db_path)
+    try:
+        placed = total = 0
+        for run in runs(beats):
+            n = len(run.entries)
+            total += n
+            anchors = anchors_for(db_path, run, con=con)
+            if not anchors:
+                continue
+            # A run too short to align is only as good as its own anchors.
+            placed += n if n >= MIN_RUN else len(anchors)
+        return placed, total
+    finally:
+        if own is not None:
+            own.close()
 
 
 def align(db_path: str, beats: list, log=lambda *a: None) -> list[Placement]:

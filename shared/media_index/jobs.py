@@ -30,7 +30,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 
-from . import sources, term
+from . import align, sources, term
 from .probe import ProbeError, ffmpeg_bin, probe
 from .search import resolve_script
 
@@ -127,6 +127,7 @@ class JobReport:
     resolutions: list = field(default_factory=list)
     requirements: list = field(default_factory=list)
     narration_seconds: float = 0.0
+    placeable: int = 0
 
     @property
     def blocked(self) -> bool:
@@ -159,6 +160,17 @@ class JobReport:
     @property
     def resolved_fraction(self) -> float:
         return (self.shots_resolved / self.shots_total) if self.shots_total else 0.0
+
+    @property
+    def placeable_fraction(self) -> float:
+        """The share the builder can actually produce footage for.
+
+        Not the same as the share that matched dialogue, and it is this one
+        the gate must judge: a silent shot beside an anchored one is built
+        from the scene's own chronology, and there is nothing provisional
+        about the footage that comes out.
+        """
+        return (self.placeable / self.shots_total) if self.shots_total else 0.0
 
     def failures(self) -> list:
         return [c for c in self.checks if not c.ok]
@@ -237,16 +249,25 @@ def preflight(job: Job, log=lambda *a: None) -> JobReport:
 
     # --- every shot ---
     rep.resolutions = resolve_script(job.db, rep.beats)
-    frac = rep.resolved_fraction
-    detail = (f"{rep.shots_resolved}/{rep.shots_total} ({frac:.0%}, "
+    try:
+        rep.placeable, _total = align.placeable(job.db, rep.beats)
+    except Exception as exc:                    # a gate must never crash
+        rep.placeable = rep.shots_resolved
+        add(Check("alignment", False, str(exc)[:160], fatal=False))
+    frac = rep.placeable_fraction
+    detail = (f"{rep.placeable}/{rep.shots_total} ({frac:.0%}, "
               f"target {job.min_resolved:.0%}, floor {job.hard_floor:.0%})")
     if frac < job.hard_floor:
-        add(Check("shots resolved", False, detail + " — too little to build"))
+        add(Check("shots placeable", False, detail + " — too little to build"))
     elif frac < job.min_resolved:
-        add(Check("shots resolved", False,
+        add(Check("shots placeable", False,
                   detail + " — will build with gaps", fatal=False))
     else:
-        add(Check("shots resolved", True, detail))
+        add(Check("shots placeable", True, detail))
+    if rep.placeable > rep.shots_resolved:
+        add(Check("how they were placed", True,
+                  f"{rep.shots_resolved} on a quoted line, "
+                  f"{rep.placeable - rep.shots_resolved} along the scene"))
     weak = [r for r in rep.resolutions if r.status in ("weak", "no_query")]
     if weak:
         add(Check("all shots exact", False,

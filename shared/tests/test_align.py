@@ -38,10 +38,30 @@ class TestRuns(unittest.TestCase):
         self.assertEqual(len(r), 1)
         self.assertEqual(len(r[0].entries), 3)
 
-    def test_episode_change_starts_a_new_run(self):
+    def test_a_cutaway_does_not_split_the_run(self):
+        """The shots either side of a cutaway are still the same walk.
+
+        Splitting on every interruption used to leave the third S04E01 shot
+        alone in a run of one, and a lone silent shot has no anchor and
+        cannot be placed at all. On the real 106-shot script that produced
+        36 runs, 23 of them single shots — so the cutaways were not just
+        fragmenting the walk, they were deleting shots from the video.
+        """
         r = align.runs(beats_from([shot(se="S04E01"), shot(se="S04E01"),
                                    shot(se="S03E13"), shot(se="S04E01")]))
-        self.assertEqual([len(x.entries) for x in r], [2, 1, 1])
+        self.assertEqual([len(x.entries) for x in r], [3, 1])
+        self.assertEqual(r[0].season_episode, "S04E01")
+        self.assertEqual([e.beat for e in r[0].entries], [1, 2, 4])
+
+    def test_a_different_episode_is_a_different_run(self):
+        r = align.runs(beats_from([shot(se="S04E01"), shot(se="S03E13")]))
+        self.assertEqual(len(r), 2)
+        self.assertEqual({x.season_episode for x in r}, {"S04E01", "S03E13"})
+
+    def test_runs_keep_the_order_they_first_appear_in(self):
+        r = align.runs(beats_from([shot(se="S04E13"), shot(se="S01E01"),
+                                   shot(se="S04E13")]))
+        self.assertEqual([x.season_episode for x in r], ["S04E13", "S01E01"])
 
     def test_source_change_starts_a_new_run(self):
         r = align.runs(beats_from([shot(source="Breaking Bad"),
@@ -146,6 +166,31 @@ class TestAnchorSanity(unittest.TestCase):
             if a:
                 clean.append(a)
         self.assertEqual([c[0] for c in clean], [0, 2])
+
+
+class TestPlaceableGate(unittest.TestCase):
+    """What the pre-flight gate must count.
+
+    The gate blocked a real script at 7/106 because it counted only shots
+    that matched dialogue. The builder, given the chance, places most of
+    those 106 — one quoted line carries every silent shot around it. Blocking
+    on the wrong number meant the tool refused to build a video it could
+    have built.
+    """
+    def test_a_run_with_one_anchor_carries_the_whole_run(self):
+        beats = beats_from([shot(dialogue="a quoted line"),
+                            shot(dialogue=""), shot(dialogue=""),
+                            shot(dialogue="")])
+        r = align.runs(beats)
+        self.assertEqual(len(r), 1)
+        self.assertEqual(len(r[0].entries), 4)
+        quoted = sum(1 for e in r[0].entries if e.query)
+        self.assertEqual(quoted, 1, "one line has to be enough")
+
+    def test_a_run_with_no_quoted_line_anywhere_is_hopeless(self):
+        """Interpolation needs something to interpolate between."""
+        r = align.runs(beats_from([shot(dialogue=""), shot(dialogue="")]))
+        self.assertFalse(any(e.query for e in r[0].entries))
 
 
 if __name__ == "__main__":

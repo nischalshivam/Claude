@@ -100,8 +100,16 @@ def requirements(beats: list) -> list[TitleRequirement]:
             se = _parse_se(shot.get("season_episode"))
             if se:
                 req.episodes_declared.add(se)
-        # images can name a source too
+        # Images can name a source too — but only the ones taken FROM the
+        # film. An actor's press photo or a piece of stock b-roll is fetched
+        # from elsewhere, and the model writes the description in the source
+        # field: "real-world press photo", "stock imagery". Looking those up
+        # in a library of films reports four titles missing on a script that
+        # needs none of them, and enough of that blocks a job outright.
         for img in (b.get("images") or []):
+            kind = (img.get("type") or "from_source").strip().lower()
+            if kind and kind != "from_source":
+                continue
             title = (img.get("source") or "").strip()
             if not title:
                 continue
