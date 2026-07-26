@@ -44,6 +44,70 @@ class TestEpisodeParsing(unittest.TestCase):
         self.assertIsNone(subs.episode_of("random notes.txt"))
 
 
+class TestRealSeasonFolder(unittest.TestCase):
+    """The exact shape of a real D:\\Breaking Bad Season 2 folder.
+
+    Thirteen episodes named one way, thirty-nine subtitles named another,
+    all in a single folder with no subfolders — which is how a season pack
+    and a season download actually land on disk once you stop tidying them
+    by hand. The two sides share no filename text beyond the show, so the
+    episode number is the only thing that can join them.
+    """
+
+    TITLES = {1: "Seven Thirty-Seven", 2: "Grilled", 3: "Bit by a Dead Bee",
+              4: "Down", 5: "Breakage", 6: "Peekaboo", 7: "Negro Y Azul",
+              8: "Better Call Saul", 9: "4 Days Out", 10: "Over",
+              11: "Mandala", 12: "Phoenix", 13: "ABQ"}
+    RELEASES = ["720p HDTV.CTU", "DVDRip.en", "HDTV.0TV"]
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        for ep, title in self.TITLES.items():
+            with open(os.path.join(
+                    self.dir, f"Breaking Bad Season 2 Episode {ep}.mkv"),
+                    "wb") as f:
+                f.write(b"\0" * 300_000)     # over naming.MIN_MEDIA_BYTES
+            for rel in self.RELEASES:
+                name = f"Breaking Bad - 2x{ep:02d} - {title}.{rel}.en.srt"
+                with open(os.path.join(self.dir, name), "w") as f:
+                    f.write("1\n00:00:01,000 --> 00:00:03,000\nline\n\n")
+
+    def test_the_videos_are_understood(self):
+        from media_index import naming
+        seen = {}
+        for path in naming.walk_media(self.dir):
+            m = naming.parse(path)
+            self.assertEqual(m.show, "Breaking Bad", path)
+            self.assertEqual(m.season, 2, path)
+            seen[m.episode] = m.confidence
+        self.assertEqual(sorted(seen), list(range(1, 14)))
+        self.assertEqual(set(seen.values()), {"high"})
+
+    def test_the_pack_covers_every_episode(self):
+        pool = subs.collect(self.dir)
+        self.assertEqual(sorted(pool), [(2, e) for e in range(1, 14)])
+        self.assertEqual({len(v) for v in pool.values()}, {3})
+
+    def test_each_episode_is_linked_to_its_own_subtitle(self):
+        """Not merely 13 links — 13 links to the RIGHT episodes.
+
+        Counting them is not enough. Episode 9 taking episode 1's subtitle
+        would still count as thirteen, and every clip in the finished video
+        would be from the wrong scene.
+        """
+        results = subs.link(self.dir, verify=False, log=lambda *a: None)
+        self.assertEqual(len(results), 13)
+        for m in results:
+            self.assertNotEqual(m.status, "none", m.note)
+            self.assertIn(f"2x{m.episode:02d}", os.path.basename(m.chosen))
+            self.assertIn(self.TITLES[m.episode],
+                          os.path.basename(m.chosen))
+            self.assertTrue(os.path.isfile(m.written))
+            self.assertTrue(m.written.endswith(
+                f"Breaking Bad Season 2 Episode {m.episode}.en.srt"))
+
+
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
 class TestLinkPack(unittest.TestCase):
     """Exactly the shape of the real download: three versions per episode,
