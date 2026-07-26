@@ -31,9 +31,13 @@ from .search import find
 
 # A run shorter than this is not worth aligning — individual search is fine.
 MIN_RUN = 2
-# How far beyond the outermost anchor a scene is assumed to extend, when there
-# is nothing else to go on.
-EDGE_PAD_S = 45.0
+# The axis is built from `duration_target_sec`, which is how long the CLIP
+# should be, not how long the moment lasts on screen — a four second clip is
+# routinely taken from a twenty second beat. So the ratio between script time
+# and film time is genuinely large, and these bounds are here only to catch
+# an absurdity, never to overrule what two anchors actually measured.
+MIN_SCALE = 0.05
+MAX_SCALE = 25.0
 # Two placements closer than this are the same moment; spread them apart.
 MIN_SEPARATION_S = 1.5
 # Snapping to a shot boundary only helps when one is actually nearby. Scene
@@ -147,59 +151,88 @@ def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
         h = hits[0]
         found.append((i, h.start_ms, h.end_ms, h.path, h.confidence))
 
-    # Anchors must increase in time as they increase in index; a pair that
-    # crosses means one of them matched the wrong moment, so drop the weaker.
+    # Anchors must increase in time as they increase in index. Dropping
+    # backwards one at a time cascades: on the real script the famous closing
+    # line was also quoted at beat 1 as an opener, and unwinding from there
+    # took five anchors down to one. Seventy shots then hung off a single
+    # point. Keeping the longest run that IS in order throws out the odd
+    # misplaced line instead of everything after it.
     found.sort(key=lambda a: a[0])
-    clean = []
-    for a in found:
-        while clean and a[1] <= clean[-1][1]:
-            if clean[-1][4] == "high" and a[4] != "high":
-                a = None
-                break
-            clean.pop()
-        if a:
-            clean.append(a)
-    return clean
+    return _longest_increasing(found)
+
+
+def _longest_increasing(anchors: list) -> list:
+    """The largest subset whose times increase with their index.
+
+    Ties in time — the same line quoted at three different beats resolves to
+    the same moment — cannot all be kept, since two shots cannot both be at
+    the same instant and in order. Strictly increasing keeps one of them.
+    """
+    if not anchors:
+        return []
+    n = len(anchors)
+    best = [1] * n
+    prev = [-1] * n
+    for i in range(n):
+        for j in range(i):
+            if anchors[j][1] < anchors[i][1] and best[j] + 1 > best[i]:
+                best[i], prev[i] = best[j] + 1, j
+    end = max(range(n), key=lambda i: (best[i], anchors[i][4] == "high"))
+    out = []
+    while end != -1:
+        out.append(anchors[end])
+        end = prev[end]
+    return out[::-1]
 
 
 # ---------------------------------------------------------------------------
 # 3. lay the described moments along the real shots
 # ---------------------------------------------------------------------------
 
-def _span(run: Run, anchors: list, duration: float) -> tuple:
-    """The stretch of the episode this run is assumed to cover."""
-    first_i, first_t = anchors[0][0], anchors[0][1]
-    last_i, last_t = anchors[-1][0], anchors[-1][2]
-    n = len(run.entries)
+def axis(run: Run) -> list:
+    """Where each shot sits along the scene, in seconds, per the script.
 
-    if len(anchors) >= 2 and last_i > first_i:
-        per_entry = (last_t - first_t) / max(1, (last_i - first_i))
-    else:
-        per_entry = EDGE_PAD_S * 1000 / max(1, n)
+    The script states a duration for every shot. Laid end to end those give
+    the scene's own shape — which shot is a third of the way in, which is near
+    the end — and that is far better information than assuming every shot
+    takes an equal share of some invented window.
 
-    start = first_t - per_entry * first_i
-    end = last_t + per_entry * (n - 1 - last_i)
-    start = max(0.0, start - 2000)
-    end = min(duration * 1000 if duration else end + 2000, end + 2000)
-    return start, end
+    Assuming otherwise was a real failure, not a theoretical one. With one
+    anchor the old code spread the run across a fixed 45 seconds however many
+    shots there were, so seventy shots whose stated durations add to 254
+    seconds were packed into 54 — one shot every 0.77 s. Every one of them
+    landed in the same corner of the episode, and the contact sheet came back
+    as the same red-lit frame over and over.
+    """
+    out, t = [], 0.0
+    for e in run.entries:
+        d = max(0.5, e.target_seconds)
+        out.append(t + d / 2.0)
+        t += d
+    return out
 
 
-def _interpolate(index: int, anchors: list, span: tuple) -> float:
-    """Estimated time for an entry, from the anchors around it."""
-    lo_i, lo_t = -1, span[0]
-    hi_i, hi_t = None, span[1]
-    for i, s, e, _p, _c in anchors:
-        if i <= index:
-            lo_i, lo_t = i, s
-        elif hi_i is None:
-            hi_i, hi_t = i, s
-    if hi_i is None:
-        hi_i = len(anchors) and max(a[0] for a in anchors) + 1 or index + 1
-        hi_i = max(hi_i, index + 1)
-    if hi_i == lo_i:
-        return lo_t
-    frac = (index - lo_i) / (hi_i - lo_i)
-    return lo_t + frac * (hi_t - lo_t)
+def fit(run: Run, anchors: list) -> tuple:
+    """(scale, offset) mapping the script's axis onto real episode time.
+
+    One anchor pins the axis without stretching it — the axis is then the
+    only statement about pacing there is, and it is a far better one than a
+    fixed window. Two or more anchors measure the stretch directly, and that
+    measurement wins: they are real times from the real episode, while the
+    axis is only the shape between them.
+    """
+    ax = axis(run)
+    if len(anchors) < 2:
+        i, start = anchors[0][0], anchors[0][1]
+        return 1.0, start - ax[i] * 1000.0
+
+    first, last = anchors[0], anchors[-1]
+    span_axis = ax[last[0]] - ax[first[0]]
+    span_time = (last[1] - first[1]) / 1000.0
+    scale = span_time / span_axis if span_axis > 0.01 else 1.0
+    if not (MIN_SCALE <= scale <= MAX_SCALE):
+        scale = 1.0
+    return scale, first[1] - ax[first[0]] * scale * 1000.0
 
 
 def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Placement]:
@@ -216,15 +249,30 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
         duration = probe(path).duration
     except ProbeError:
         duration = 0.0
-    span = _span(run, anchors, duration)
+
+    ax = axis(run)
+    scale, offset = fit(run, anchors)
+    times = [(a * scale * 1000.0 + offset) for a in ax]
+    lo = max(0.0, min(times) - 2000)
+    hi = max(times) + 2000
+    if duration:
+        hi = min(hi, duration * 1000)
     log(f"    {run.label}: {len(run.entries)} shot(s), {len(anchors)} anchor(s), "
-        f"span {span[0]/1000:.0f}s-{span[1]/1000:.0f}s")
+        f"span {lo/1000:.0f}s-{hi/1000:.0f}s "
+        f"(script says {ax[-1] + run.entries[-1].target_seconds / 2:.0f}s, "
+        f"x{scale:.2f})")
 
     try:
-        boundaries = cutter.detect_shots(path, span[0] / 1000, span[1] / 1000)
+        boundaries = cutter.detect_shots(path, lo / 1000, hi / 1000)
     except ProbeError as exc:
         boundaries = []
         log(f"      shot detection unavailable ({exc})")
+
+    # Snapping helps only when a boundary is genuinely near. With shots this
+    # close together a distant one belongs to a neighbour, so the reach is
+    # never more than half the gap to the next placement.
+    spacing = (hi - lo) / 1000.0 / max(1, len(run.entries))
+    snap_limit = min(MAX_SNAP_S, max(0.5, spacing / 2.0))
 
     anchor_at = {a[0]: a for a in anchors}
     used: list[float] = []
@@ -240,13 +288,13 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
             used.append(s_ms / 1000)
             continue
 
-        want = _interpolate(i, anchors, span) / 1000.0
+        want = max(0.0, times[i] / 1000.0)
         # snap to the nearest shot boundary that is not already spoken for
         candidates = [b for b in boundaries
                       if all(abs(b - u) > MIN_SEPARATION_S for u in used)]
         p.method = "interpolated"
         nearest = min(candidates, key=lambda b: abs(b - want)) if candidates else None
-        if nearest is not None and abs(nearest - want) <= MAX_SNAP_S:
+        if nearest is not None and abs(nearest - want) <= snap_limit:
             chosen = nearest
             p.confidence = "medium"
             p.note = (f"placed between anchors, snapped to a shot "

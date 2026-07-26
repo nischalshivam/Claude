@@ -36,6 +36,13 @@ BLOWN = 246.0           # mean above this is a white flash
 MIN_GAP_S = 0.8         # two stills this close are the same moment
 PHASH_DISTANCE = 6      # hamming distance below this looks like the same frame
 COLOUR_DISTANCE = 8.0   # ...and it must also agree on colour to be a duplicate
+# A perceptual hash is a comparison of cell brightness against the frame's own
+# average, so on a dark, evenly lit frame the bits are close to noise and two
+# near-identical frames can differ by more than PHASH_DISTANCE. Requiring both
+# tests then lets duplicates through exactly where they are most likely — a
+# dim interior, which is most of this kind of footage. Agreement on colour
+# this close is conclusive on its own.
+SAME_COLOUR = 2.5
 
 
 @dataclass
@@ -192,8 +199,9 @@ def pick(candidates: list[Candidate], n: int,
             break
         if any(abs(c.time - k.time) < min_gap for k in chosen):
             continue
-        if any(_hamming(c.phash, h) < phash_distance
-               and _colour_distance(c.colour, col) < colour_distance
+        if any((_hamming(c.phash, h) < phash_distance
+                and _colour_distance(c.colour, col) < colour_distance)
+               or _colour_distance(c.colour, col) < SAME_COLOUR
                for h, col in taken):
             continue
         chosen.append(c)

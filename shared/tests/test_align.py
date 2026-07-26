@@ -150,22 +150,17 @@ class TestAlignWordlessScene(unittest.TestCase):
 class TestAnchorSanity(unittest.TestCase):
     def test_out_of_order_anchors_are_dropped(self):
         """An anchor that matched the wrong moment would drag everything after
-        it backwards, so a crossing pair keeps the more confident one."""
-        run = align.Run("X", "S01E01", [])
+        it backwards, so a crossing one is left out.
+
+        Asserted against the real function. This used to re-implement the
+        cleaning inline, which meant it went on passing after the cleaning
+        itself was replaced — a test of a copy is a test of nothing.
+        """
         found = [(0, 1000, 2000, "p", "high"),
                  (1, 500, 900, "p", "medium"),      # earlier than its predecessor
                  (2, 5000, 6000, "p", "high")]
-        # replicate the cleaning step
-        clean = []
-        for a in found:
-            while clean and a[1] <= clean[-1][1]:
-                if clean[-1][4] == "high" and a[4] != "high":
-                    a = None
-                    break
-                clean.pop()
-            if a:
-                clean.append(a)
-        self.assertEqual([c[0] for c in clean], [0, 2])
+        self.assertEqual([c[0] for c in align._longest_increasing(found)],
+                         [0, 2])
 
 
 class TestPlaceableGate(unittest.TestCase):
@@ -191,6 +186,94 @@ class TestPlaceableGate(unittest.TestCase):
         """Interpolation needs something to interpolate between."""
         r = align.runs(beats_from([shot(dialogue=""), shot(dialogue="")]))
         self.assertFalse(any(e.query for e in r[0].entries))
+
+
+
+class TestSpanComesFromTheScript(unittest.TestCase):
+    """Measured on the real run: 70 shots, 1 anchor, span 2188s-2242s.
+
+    Fifty-four seconds for a scene the script itself describes as 254 — one
+    shot every 0.77 s. Every placement landed in the same corner of the
+    episode, and the contact sheet came back as the same red-lit frame over
+    and over. The old code spread a one-anchor run across a fixed 45 second
+    window however many shots it held, so the more the script described, the
+    more tightly they were crushed together.
+    """
+    def _run(self, n, each=3.6):
+        return align.Run("Breaking Bad", "S04E01",
+                         [align.Entry(beat=i + 1, shot=1,
+                                      data={"duration_target_sec": each})
+                          for i in range(n)])
+
+    def test_the_axis_is_as_long_as_the_script_says(self):
+        run = self._run(70)
+        ax = align.axis(run)
+        self.assertAlmostEqual(ax[-1] + 1.8, 70 * 3.6, places=3)
+
+    def test_one_anchor_still_spreads_the_whole_scene(self):
+        run = self._run(70)
+        scale, off = align.fit(run, [(50, 2229000, 2232000, "p", "high")])
+        times = [a * scale * 1000 + off for a in align.axis(run)]
+        span = (max(times) - min(times)) / 1000.0
+        self.assertGreater(span, 200, f"70 shots crushed into {span:.0f}s")
+        gaps = [b - a for a, b in zip(sorted(times), sorted(times)[1:])]
+        self.assertGreater(min(gaps) / 1000.0, 2.0, "shots land on top of each other")
+
+    def test_the_anchor_keeps_its_own_time(self):
+        run = self._run(70)
+        scale, off = align.fit(run, [(50, 2229000, 2232000, "p", "high")])
+        self.assertAlmostEqual(align.axis(run)[50] * scale * 1000 + off,
+                               2229000, delta=1)
+
+    def test_two_anchors_measure_the_stretch_rather_than_assume_it(self):
+        run = self._run(70)
+        anchors = [(8, 2100000, 2103000, "p", "high"),
+                   (50, 2229000, 2232000, "p", "high")]
+        scale, off = align.fit(run, anchors)
+        ax = align.axis(run)
+        for i, start, _e, _p, _c in anchors:
+            self.assertAlmostEqual(ax[i] * scale * 1000 + off, start, delta=1)
+
+    def test_a_script_that_misjudges_pacing_is_not_taken_literally(self):
+        """duration_target_sec is the CLIP length, not how long the moment
+        lasts on screen, so a large ratio is normal and must not be clamped
+        away — but an absurd one has to be."""
+        run = self._run(8, each=3.0)
+        scale, _off = align.fit(run, [(0, 5000, 6000, "p", "high"),
+                                      (7, 105000, 106000, "p", "high")])
+        self.assertGreater(scale, 3.0)
+        self.assertLessEqual(scale, align.MAX_SCALE)
+
+
+class TestAnchorsSurviveAMisplacedLine(unittest.TestCase):
+    """The famous closing line was also quoted at beat 1 as an opener.
+
+    Unwinding backwards from that one crossing took five anchors down to one,
+    and seventy shots then hung off a single point. Keeping the longest run
+    that IS in order drops the odd misplaced line instead of everything after
+    it.
+    """
+    def test_a_line_quoted_out_of_order_costs_only_itself(self):
+        found = [(0, 2229000, 2232000, "p", "high"),     # the ending, first
+                 (8, 2100000, 2103000, "p", "high"),
+                 (35, 2205000, 2208000, "p", "high"),
+                 (50, 2229000, 2232000, "p", "high")]
+        kept = align._longest_increasing(found)
+        self.assertEqual([k[0] for k in kept], [8, 35, 50])
+
+    def test_an_already_ordered_set_is_kept_whole(self):
+        found = [(1, 1000, 1500, "p", "high"), (5, 4000, 4500, "p", "high"),
+                 (9, 9000, 9500, "p", "high")]
+        self.assertEqual(len(align._longest_increasing(found)), 3)
+
+    def test_the_same_line_at_three_beats_yields_one_anchor(self):
+        found = [(0, 2229000, 2232000, "p", "high"),
+                 (50, 2229000, 2232000, "p", "high"),
+                 (61, 2229000, 2232000, "p", "high")]
+        self.assertEqual(len(align._longest_increasing(found)), 1)
+
+    def test_nothing_in_means_nothing_out(self):
+        self.assertEqual(align._longest_increasing([]), [])
 
 
 if __name__ == "__main__":

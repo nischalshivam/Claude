@@ -115,9 +115,14 @@ def _narration_for(beat: dict) -> str:
             or beat.get("script_cue") or "").strip()
 
 
-# How far either side of a placement to look for still frames. A five second
-# clip holds few distinct frames; a little air around it holds several.
-STILL_WINDOW_S = 4.0
+# How far either side of a placement to look for still frames.
+#
+# Four seconds was too generous. Shots in an aligned run sit about three and a
+# half seconds apart, so a window of four either side made every scan overlap
+# both its neighbours almost completely — and neighbouring scenes then chose
+# from the same pool of frames. The contact sheet showed the consequence: the
+# same red-lit frame returning again and again down the page.
+STILL_WINDOW_S = 1.5
 
 
 def _wants_still(shot: dict) -> bool:
