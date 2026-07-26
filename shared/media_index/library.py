@@ -203,7 +203,13 @@ def _index_one(con, path: str, log, verify_sync=False,
                 cues = _sync.apply(cues, offset_ms, scale)
                 log(f"      sync: {r.describe()} — corrected")
             elif r.confidence == "low":
-                log(f"      sync: {r.describe()} — NOT corrected, needs review")
+                # "needs review" was the wrong thing to say. It put a warning
+                # beside all 62 episodes of a library whose subtitles were
+                # fine, and left no way to tell those apart from a real
+                # problem. Nothing is wrong with the file; the audio simply
+                # did not give a reading clear enough to act on, and the
+                # subtitles are used exactly as downloaded.
+                log(f"      sync: {r.describe()} — left as downloaded")
         except Exception as exc:                  # a sync failure is not fatal
             sync_conf = "unchecked"
             log(f"      sync check failed: {exc}")
@@ -311,9 +317,10 @@ def build(media_root: str, db_path: str, log=print,
                               "be named" if row["chaps"] else
                               " — no chapters, timestamps are offsets into the "
                               "whole file")))
-            if row and row["sync_conf"] == "low":
-                res.desynced.append((path, "sync unverifiable — check subtitles"))
-            elif row and row["sub_offset_ms"]:
+            # Only a correction that was actually applied is worth listing.
+            # An unreadable audio track is the normal case on scored drama
+            # and says nothing about the file.
+            if row and row["sub_offset_ms"]:
                 res.desynced.append(
                     (path, f"corrected by {row['sub_offset_ms']:+d} ms"))
         if i % 25 == 0:

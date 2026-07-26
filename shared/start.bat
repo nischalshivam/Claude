@@ -214,6 +214,24 @@ echo   Opening !CLIP!
 start "" "!CLIP!"
 :clip_done
 echo.
+set "HEARD="
+set /p "HEARD=  Did you HEAR that line in the clip? [y/N]: "
+if /i "!HEARD!"=="y" (
+    echo.
+    echo   Then this episode is right, end to end.
+    echo.
+    pause
+    goto menu
+)
+echo.
+echo   Then the subtitle for this episode is out by some seconds, and the
+echo   next thing needed is the NUMBER. Cutting 40 seconds around the same
+echo   line - the tool will say where in those 40 seconds it expected it.
+echo.
+set "WCLIP=proof\window.mp4"
+%PY% -m media_index cut "!Q!" --db "!DB!" --out "!WCLIP!" --window 40
+if exist "!WCLIP!" start "" "!WCLIP!"
+echo.
 pause
 goto menu
 

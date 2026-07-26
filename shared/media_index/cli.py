@@ -36,7 +36,7 @@ def cmd_build(a):
         for p, why in res.no_subs[:20]:
             print(f"      {os.path.basename(p)}  —  {why}")
     if res.desynced:
-        print(f"\n  ⚠ {len(res.desynced)} file(s) with subtitle timing issues:")
+        print(f"\n  {len(res.desynced)} file(s) had their subtitles shifted:")
         for p, why in res.desynced[:20]:
             print(f"      {os.path.basename(p)}  —  {why}")
     st = library.stats(a.db)
@@ -152,6 +152,25 @@ def cmd_cut(a):
     if h.confidence == "low" and not a.force:
         print("  refusing to cut a low-confidence match (use --force)")
         return 1
+
+    if a.window:
+        # Measurement mode. A 5-second clip can only answer yes or no, and
+        # when the answer is no it does not say by how much — which is the
+        # one number needed to fix anything. A window puts the claimed
+        # position in the middle and lets the ear read the error off it.
+        half = a.window / 2.0
+        start = max(0.0, h.start_ms / 1000.0 - half)
+        mark = h.start_ms / 1000.0 - start
+        cutter.cut_clip(h.path, start, start + a.window, a.out,
+                        mode=a.mode, height=a.height, with_audio=True)
+        print(f"  wrote {a.out}  ({a.window:.0f}s window)")
+        print()
+        print(f"  The tool thinks this line is at {int(mark // 60)}:"
+              f"{mark % 60:04.1f} into this clip.")
+        print("  Play it. If you hear the line somewhere else, note that")
+        print("  time — the difference is exactly how far out this episode is.")
+        return 0
+
     cut = cutter.clip_for_hit(h, a.out, target_seconds=a.seconds,
                               mode=a.mode, height=a.height,
                               cover_full_line=a.full_line,
@@ -324,6 +343,9 @@ def main(argv=None):
                    help="cover the whole spoken line instead of --seconds")
     c.add_argument("--mode", choices=("accurate", "fast"), default="accurate")
     c.add_argument("--height", type=int, help="scale output to this height")
+    c.add_argument("--window", type=float, default=0.0,
+                   help="cut this many seconds AROUND the line instead of a "
+                        "clip, to measure how far out the subtitles are")
     c.add_argument("--audio", action="store_true",
                    help="keep the original sound (use when you will watch it)")
     c.add_argument("--still", help="also write a still frame here")

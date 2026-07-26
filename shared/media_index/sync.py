@@ -98,6 +98,20 @@ SCALE_SNAP_TOLERANCE = 0.25
 # The widest stretch any real conversion produces, used to size the search.
 MAX_CONVERSION_DRIFT = 0.045
 
+# How far above coincidence a fit must sit before it is allowed to move
+# anything. These are set from measurement, not taste.
+#
+# Across 56 real episodes of Breaking Bad the lift ran 1.2x to 1.7x, averaging
+# 1.36x, while the synthetic fixture — where the answer is known — reads 3.3x.
+# The old bar of 1.3x therefore admitted the entire real library, and eight
+# episodes were "corrected" on that basis, five of them by around 30 seconds.
+# One of those five, S04E05, then returned a clip half a minute from its line.
+#
+# A reading barely above coincidence is not a small measurement. It is no
+# measurement, and acting on it moves subtitles that were already right.
+HIGH_LIFT = 2.2
+MEDIUM_LIFT = 1.8
+
 _RE_SIL_START = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _RE_SIL_END = re.compile(r"silence_end:\s*(-?[\d.]+)")
 
@@ -572,11 +586,11 @@ def detect(video_path: str, cues, search_ms=DEFAULT_RANGE_MS,
         else:
             res.confidence = "low"
             res.note = "no clear fit, and too short to check for stretch"
-    elif residual <= 300 and lift >= 1.6:
+    elif residual <= 300 and lift >= HIGH_LIFT:
         res.confidence = "high"
-    elif residual <= 1000 and lift >= 1.3:
+    elif residual <= 800 and lift >= MEDIUM_LIFT:
         res.confidence = "medium"
-    elif lift < 1.3:
+    elif lift < MEDIUM_LIFT:
         res.confidence = "low"
         res.note = (f"the fit is only {lift:.1f}x better than coincidence — "
                     "these subtitles do not match this audio")
