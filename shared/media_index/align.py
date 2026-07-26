@@ -151,16 +151,36 @@ def runs(beats: list) -> list[Run]:
 # ---------------------------------------------------------------------------
 
 def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
-    """[(index_in_run, start_ms, end_ms, path, confidence)] sorted by time."""
+    """[(index_in_run, start_ms, end_ms, path, confidence)] sorted by time.
+
+    Searched inside the episode the script named. Searching the whole show
+    instead was catastrophic and quiet: a line from a run declared S04E01
+    matched somewhere in S02E07, `align_run` cuts the entire run from the
+    first anchor's file, and 41 of 52 scenes came out of the wrong episode —
+    the finished sheet was full of a mariachi band from the opening of "Negro
+    y Azul". Every number in the report looked healthy while it happened.
+    """
+    from . import subtitles
+    key = subtitles.episode_key(run.season_episode or "")
+    season, episode = key if key else (None, None)
+
     found = []
     for i, e in enumerate(run.entries):
         if not e.query or e.is_hook:
             continue
-        hits = find(db_path, e.query, show=run.source or None, limit=1, con=con)
+        hits = find(db_path, e.query, show=run.source or None,
+                    season=season, episode=episode, limit=1, con=con)
         if not hits or hits[0].confidence == "low":
             continue
         h = hits[0]
         found.append((i, h.start_ms, h.end_ms, h.path, h.confidence))
+
+    # When the episode was not declared, anchors may land in different files.
+    # The run is cut from ONE file, so anchors from any other are not
+    # measurements of this run — they are a different scene entirely.
+    if found and (season is None or episode is None):
+        home = found[0][3]
+        found = [f for f in found if f[3] == home]
 
     # Anchors must increase in time as they increase in index. Dropping
     # backwards one at a time cascades: on the real script the famous closing

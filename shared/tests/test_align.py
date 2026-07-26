@@ -344,5 +344,53 @@ class TestHookQuotes(unittest.TestCase):
         self.assertTrue(e.query)
 
 
+
+@skip_no_ffmpeg
+class TestAnchorsStayInTheDeclaredEpisode(unittest.TestCase):
+    """A run declared S04E01 must not be cut from S02E07.
+
+    The search was filtered by SHOW and not by episode, so a quoted line
+    matched wherever it happened to appear in the series. align_run cuts the
+    whole run from its first anchor's file, so one stray match dragged the
+    entire scene into another episode: 41 of 52 scenes in a real build came
+    out of "Negro y Azul", and every number in the report looked healthy.
+    """
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="ep_")
+        root = os.path.join(cls.tmp, "Iron Harvest", "Season 04")
+        for ep in (1, 7):
+            dv.build(os.path.join(root, f"Iron.Harvest.S04E{ep:02d}.1080p.mkv"),
+                     log=lambda *a: None)
+        cls.db = os.path.join(cls.tmp, "library.db")
+        library.build(root, cls.db, log=lambda *a: None)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _anchors(self, se):
+        run = align.Run("Iron Harvest", se, [
+            align.Entry(beat=1, shot=1, data={
+                "exact_dialogue": "Then we burn the field",
+                "duration_target_sec": 3.0}),
+            align.Entry(beat=2, shot=1, data={"duration_target_sec": 3.0})])
+        return align.anchors_for(self.db, run)
+
+    def test_the_anchor_comes_from_the_named_episode(self):
+        """Both files hold the same line — only the named one may answer."""
+        for ep in ("S04E01", "S04E07"):
+            got = self._anchors(ep)
+            self.assertTrue(got, f"no anchor for {ep}")
+            self.assertIn(f"S04E{ep[-2:]}", got[0][3])
+
+    def test_an_undeclared_episode_still_settles_on_one_file(self):
+        """A run is cut from a single file, so anchors from another are not
+        measurements of it."""
+        got = self._anchors("unknown")
+        self.assertTrue(got)
+        self.assertEqual(len({a[3] for a in got}), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
