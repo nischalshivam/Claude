@@ -95,7 +95,8 @@ def inspect_file(path: str) -> FileReport:
             rep.fix = f"download an English .srt named '{_srt_name(path)}'"
         else:
             rep.problem = "no subtitles at all"
-            rep.fix = f"download an English .srt named '{_srt_name(path)}'"
+            rep.fix = ("run 'transcribe' to make them from the audio, or "
+                       f"download an English .srt named '{_srt_name(path)}'")
         return rep
 
     rep.sub_script = subtitles.detect_script(cues)
@@ -174,6 +175,10 @@ def format_report(reports: list[FileReport], root: str = "") -> str:
     if ok and not (need_subs or need_en or broken):
         lines.append(f"  {term.sym('ok')} this folder is ready - run 'build' on it")
     elif need_subs or need_en:
-        lines.append(f"  {term.sym('arrow')} fetch the missing .srt files, "
-                     "then re-run this check")
+        if need_subs:
+            lines.append(f"  {term.sym('arrow')} run:  mi.bat transcribe "
+                         f'"{root}"' if root else "  run 'transcribe'")
+        if need_en:
+            lines.append(f"  {term.sym('arrow')} for the non-English ones, "
+                         "download an English .srt")
     return "\n".join(lines)

@@ -13,7 +13,7 @@ import os
 import sys
 
 from . import (cutter, doctor, jobs as jobs_mod, library, runner, search,
-               sources, subtitles, sync, term)
+               sources, subtitles, sync, term, transcribe)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -194,6 +194,28 @@ def cmd_check(a):
     return 1 if bad else 0
 
 
+def cmd_transcribe(a):
+    """Make subtitles from the audio when a file has none."""
+    if not transcribe.available():
+        print("faster-whisper is not installed.\n"
+              "  Install it with:  pip install faster-whisper\n"
+              "  The first run then downloads the model (a few hundred MB).")
+        return 1
+    target = a.target
+    try:
+        if os.path.isdir(target):
+            results = transcribe.transcribe_folder(
+                target, model_name=a.model, overwrite=a.overwrite)
+        else:
+            results = [transcribe.transcribe_file(
+                target, model_name=a.model, overwrite=a.overwrite, log=print)]
+    except transcribe.TranscribeUnavailable as exc:
+        print(f"\n  {exc}")
+        return 1
+    print(transcribe.format_results(results))
+    return 1 if any(r.status == "failed" for r in results) else 0
+
+
 def cmd_preflight(a):
     """Check every queued job without building anything."""
     queue = jobs_mod.load_jobs(a.jobs)
@@ -285,6 +307,16 @@ def main(argv=None):
     d.add_argument("media_dir")
     d.add_argument("-v", "--verbose", action="store_true")
     d.set_defaults(func=cmd_check)
+
+    t = sub.add_parser("transcribe", parents=[common],
+                       help="make subtitles from the audio (files with none)")
+    t.add_argument("target", help="a video file, or a folder of them")
+    t.add_argument("--model", default=transcribe.DEFAULT_MODEL,
+                   help=f"whisper model (default {transcribe.DEFAULT_MODEL}; "
+                        "small.en is slower and more accurate)")
+    t.add_argument("--overwrite", action="store_true",
+                   help="redo files that already have a subtitle")
+    t.set_defaults(func=cmd_transcribe)
 
     q = sub.add_parser("preflight", parents=[common],
                        help="check a queue of jobs without building anything")

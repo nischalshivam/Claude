@@ -253,6 +253,39 @@ colour, not by trusting the timestamps.
 
 ---
 
+## When a download has no subtitles (`transcribe.py`)
+
+Some releases ship with none — the season this was written against had none
+across all thirteen episodes. Rather than hunting an `.srt` per episode
+against tight free-API limits, the audio can be transcribed:
+
+```
+mi.bat transcribe "D:\Breaking Bad Season 2"
+```
+
+Needs `faster-whisper` (`setup.bat` offers to install it). The result is
+written as an ordinary `.srt` beside each video, so nothing downstream knows
+it was machine-made: it is cached forever, the index picks it up through the
+normal sidecar path, and you can open and fix a line by hand.
+
+The **English** audio track is chosen explicitly. A dubbed release lists the
+dub first, and transcribing that produces fluent Hindi against an English
+script — a failure that looks like "nothing matches" rather than a mistake.
+
+Built for an overnight run: files that already have subtitles are skipped, so
+an interrupted pass resumes for free and one failure never stops the rest.
+Rough cost at the default `base.en` on CPU: about 5x realtime, so a 48-minute
+episode takes ~10 minutes and a 13-episode season runs in about two hours.
+`--model small.en` is slower and more accurate.
+
+> **Untested on real speech.** The model could not be downloaded in the
+> environment this was written in, so the recognition itself is stubbed in the
+> tests. Everything around it is covered — track selection, the `.srt`
+> round-trip, index integration, resume, failure isolation. Whether Whisper
+> hears the dialogue well enough is a question only a real file answers.
+
+---
+
 ## Checking a download (`doctor.py`)
 
 Run this the moment a download finishes. It opens each file, reads what is
@@ -336,5 +369,6 @@ so an interrupted queue picks up where it stopped rather than starting over.
   That is Ladder 2, a separate module.
 - **Frame quality scoring** — picking the sharpest, best-composed frame within
   a shot rather than the midpoint.
-- **Whisper fallback** — transcribing the English audio track when a file has
-  no readable subtitles at all. The last-resort rung of the ladder.
+- **Frame quality scoring** — picking the sharpest, best-composed frame within
+  a shot rather than the midpoint.
+- **Visual index** — shot embeddings for scenes that have no dialogue at all.

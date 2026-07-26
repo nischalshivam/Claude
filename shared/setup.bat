@@ -41,6 +41,22 @@ if %errorlevel%==0 (
     echo      the tool falls back to Python's own matcher.
 )
 
+echo.
+echo Some downloads arrive with no subtitles at all. The tool can make them
+echo from the audio, which needs one extra package (a few hundred MB).
+set /p "WANTTX=Install it now? [Y/n]: "
+if /i "!WANTTX!"=="n" (
+    echo [--] skipped - install later with:  pip install faster-whisper
+) else (
+    echo     installing faster-whisper...
+    %PY% -m pip install --quiet --disable-pip-version-check faster-whisper
+    if !errorlevel!==0 (
+        echo [OK] faster-whisper installed
+    ) else (
+        echo [--] install failed - you can still use downloaded .srt files
+    )
+)
+
 REM ------------------------------------------------------------------ ffmpeg
 echo.
 set "FFOK="
