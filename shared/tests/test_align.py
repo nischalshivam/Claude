@@ -323,5 +323,26 @@ class TestAQuoteUsedAsAHook(unittest.TestCase):
                          [3, 9])
 
 
+
+class TestHookQuotes(unittest.TestCase):
+    """A line quoted out of sequence must not decide the sequence."""
+
+    def test_a_hook_is_recognised(self):
+        e = align.Entry(beat=1, shot=1,
+                        data={"exact_dialogue": "x", "hook": True})
+        self.assertTrue(e.is_hook)
+
+    def test_an_ordinary_shot_is_not_a_hook(self):
+        e = align.Entry(beat=1, shot=1, data={"exact_dialogue": "x"})
+        self.assertFalse(e.is_hook)
+
+    def test_a_hook_keeps_its_quote(self):
+        """It still names a real moment worth cutting."""
+        e = align.Entry(beat=1, shot=1,
+                        data={"exact_dialogue": "Well? Get back to work.",
+                              "hook": True})
+        self.assertTrue(e.query)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

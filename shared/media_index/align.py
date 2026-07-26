@@ -58,6 +58,17 @@ class Entry:
                 or (self.data.get("nearest_dialogue") or "").strip())
 
     @property
+    def is_hook(self) -> bool:
+        """Quoted before the moment it belongs to, to open the essay.
+
+        The closing line of a scene placed at shot 1 told the tool the scene
+        ends where it begins, and the whole sequence landed four minutes
+        late. A hook still names a real moment, so it is worth cutting; it
+        just says nothing about order.
+        """
+        return bool(self.data.get("hook"))
+
+    @property
     def target_seconds(self) -> float:
         try:
             return float(self.data.get("duration_target_sec") or 4.0)
@@ -143,7 +154,7 @@ def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
     """[(index_in_run, start_ms, end_ms, path, confidence)] sorted by time."""
     found = []
     for i, e in enumerate(run.entries):
-        if not e.query:
+        if not e.query or e.is_hook:
             continue
         hits = find(db_path, e.query, show=run.source or None, limit=1, con=con)
         if not hits or hits[0].confidence == "low":
@@ -310,6 +321,17 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
     for i, e in enumerate(run.entries):
         p = out[i]
         p.path = path
+        if e.is_hook and e.query:
+            # Cut it where the line really is, but it took no part in
+            # deciding where anything else goes.
+            hits = find(db_path, e.query, show=run.source or None,
+                        limit=1, con=con)
+            if hits and hits[0].confidence != "low":
+                h = hits[0]
+                p.start_ms, p.end_ms = h.start_ms, h.end_ms
+                p.method, p.confidence = "anchor", h.confidence
+                p.note = "matched on a hook quote — not used for ordering"
+                continue
         if i in anchor_at:
             _, s_ms, e_ms, _p, conf = anchor_at[i]
             p.start_ms, p.end_ms = s_ms, e_ms
