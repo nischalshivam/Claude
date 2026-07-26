@@ -53,6 +53,10 @@ class SceneResult:
     # is still a guess, and a manifest that does not distinguish the two
     # gives an editor no way to know which shots are worth checking.
     methods: dict = field(default_factory=dict)     # {"clip_01.mp4": "anchor"}
+    # Where in the episode each asset was taken from. An editor asked to
+    # lengthen a clip or replace a still needs to know where to go back to,
+    # and a folder of clip_01.mp4 files says nothing about that.
+    origins: dict = field(default_factory=dict)     # {"clip_01.mp4": 2013.4}
 
     @property
     def ok(self) -> bool:
@@ -189,12 +193,14 @@ def build_scene(job, index: int, beat: dict, placements: list,
                                 clip_path, height=job.height)
                 res.clips.append(clip_path)
                 res.methods[os.path.basename(clip_path)] = p.method
+                res.origins[os.path.basename(clip_path)] = round(start, 2)
 
             want = _still_count(shot, job.stills_per_scene)
             got = _stills_for(p.path, start, end, scene_dir, n, want, seen, log)
-            res.stills += got
-            for g in got:
-                res.methods[os.path.basename(g)] = p.method
+            for still, at in got:
+                res.stills.append(still)
+                res.methods[os.path.basename(still)] = p.method
+                res.origins[os.path.basename(still)] = round(at, 2)
         except (ProbeError, ValueError, OSError) as exc:
             log(f"      scene {index}: shot {n} failed — {exc}")
             continue
@@ -226,6 +232,10 @@ def _stills_for(path: str, start: float, end: float, scene_dir: str,
     motion blur, on the black frame between two shots, and on five views of
     one static moment. These are scored and de-duplicated against every still
     already taken for this video.
+
+    Returns [(path, seconds_into_the_episode)]. The time travels with the
+    file because it cannot be recovered afterwards, and an editor asked to
+    swap one still for a better one has to know where to look.
     """
     lo = max(0.0, start - STILL_WINDOW_S)
     hi = end + STILL_WINDOW_S
@@ -240,7 +250,7 @@ def _stills_for(path: str, start: float, end: float, scene_dir: str,
         still = os.path.join(scene_dir, f"image_{shot_no:02d}_{k}.jpg")
         try:
             cutter.extract_frame(path, c.time, still, width=1920)
-            out.append(still)
+            out.append((still, c.time))
             if seen is not None:
                 seen.append((c.phash, c.colour))
         except ProbeError:
@@ -286,10 +296,12 @@ def write_manifest(job, result: JobResult) -> str:
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
                   "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                  "source_start": s.origins.get(os.path.basename(p)),
                   "score": _asset_score(s, p, 1.0)}
                  for p in s.clips]
                 + [{"file": os.path.basename(p), "kind": "image",
                     "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                    "source_start": s.origins.get(os.path.basename(p)),
                     "score": _asset_score(s, p, 0.9)}
                    for p in s.stills]),
         } for s in result.scenes],

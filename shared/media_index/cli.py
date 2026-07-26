@@ -13,8 +13,9 @@ import os
 import sys
 
 from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
-               library, runner, search, sources, subs, subtitles, sync,
-               term, transcribe, visual)
+               library, probe, runner, search, sources, subs, subtitles, sync,
+               term, timeline, transcribe, visual)
+from .probe import ProbeError
 
 
 def _fmt_bytes(n: int) -> str:
@@ -437,6 +438,48 @@ def cmd_make(a):
     return 0
 
 
+def cmd_timeline(a):
+    """Decide how long every shot holds, and when — then write it down.
+
+    Separate from the build on purpose. Re-timing is seconds and re-cutting
+    is an hour, so the rhythm can be argued with as many times as it takes
+    without touching a frame of footage.
+    """
+    try:
+        manifest = timeline.load_manifest(a.folder)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  No manifest in {a.folder} — build it first.  ({exc})")
+        return 1
+    with open(a.script, "r", encoding="utf-8-sig") as f:
+        data = json.load(f)
+    beats = data if isinstance(data, list) else (data.get("beats") or [])
+
+    total = 0.0
+    if a.audio:
+        try:
+            total = probe.probe(a.audio).duration
+            print(f"  narration is {total / 60:.1f} min — the plan is "
+                  "stretched onto it")
+        except ProbeError as exc:
+            print(f"  could not read {a.audio} — {exc}")
+    else:
+        print("  no narration audio given, so the script's own estimate of "
+              "150 words a minute is used")
+
+    tl = timeline.plan(beats, manifest, total_seconds=total, pace=a.pace,
+                       audio=os.path.abspath(a.audio) if a.audio else "")
+    path = timeline.write(tl, a.folder)
+    print(tl.summary())
+    short = tl.uncovered()
+    if short:
+        print(f"\n  {len(short)} beat(s) have less footage than narration:")
+        for s in short[:10]:
+            print(f"      scene {s.index:>3}  {s.gap:.1f}s short  {s.note}")
+        print("      More shots in those beats is the fix, not longer ones.")
+    print(f"\n  -> {path}")
+    return 0
+
+
 def cmd_sheet(a):
     """One page of every still, so a hundred can be judged at a glance."""
     made = contact.build(a.folder, a.out, columns=a.columns, log=print)
@@ -591,6 +634,17 @@ def main(argv=None):
     mk.add_argument("--height", type=int)
     mk.add_argument("--force", action="store_true")
     mk.set_defaults(func=cmd_make)
+
+    tm = sub.add_parser("timeline", parents=[common],
+                        help="decide how long every shot holds, and when")
+    tm.add_argument("folder", help="a built job output folder")
+    tm.add_argument("script", help="the visual script it was built from")
+    tm.add_argument("--audio", default="",
+                    help="the narration recording, so the plan matches it")
+    tm.add_argument("--pace", default="normal",
+                    choices=sorted(timeline.PACES),
+                    help="how often the picture changes (default normal)")
+    tm.set_defaults(func=cmd_timeline)
 
     sh = sub.add_parser("sheet", parents=[common],
                         help="contact sheet of every still that was made")
