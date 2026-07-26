@@ -38,6 +38,19 @@ MIN_RUN = 2
 # an absurdity, never to overrule what two anchors actually measured.
 MIN_SCALE = 0.05
 MAX_SCALE = 25.0
+# The most of one episode a single run may be spread across.
+#
+# Two anchors measure the stretch between them, which is right when both are
+# right and worse than useless when one is not. On the real script a beat
+# about the AUDIENCE — Bryan Cranston's daughter fainting at a screening —
+# carried a quote that matched somewhere far from the scene, and the pair
+# fitted to x2.14: 103 shots spread over 20:47-37:11 for a sequence that
+# runs 33:00-37:15. The video opened on Hank and Marie at home.
+#
+# A run gathers every shot an essay takes from one episode, which can be a
+# few scenes, but not a sixth of an hour. Past this the anchors are not
+# describing the same stretch of film and only the strongest is kept.
+MAX_RUN_SPAN_S = 600.0
 # Two placements closer than this are the same moment; spread them apart.
 MIN_SEPARATION_S = 1.5
 # Snapping to a shot boundary only helps when one is actually nearby. Scene
@@ -304,6 +317,15 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
     ax = axis(run)
     scale, offset = fit(run, anchors)
     times = [(a * scale * 1000.0 + offset) for a in ax]
+    if len(anchors) > 1 and (max(times) - min(times)) / 1000.0 > MAX_RUN_SPAN_S:
+        keep = max(anchors, key=lambda a: (a[4] == "high", a[0]))
+        log(f"      two lines put this run across "
+            f"{(max(times) - min(times)) / 60000:.0f} minutes of the episode, "
+            "which is more than one sequence — so one of them is wrong and "
+            "only the clearest is used")
+        anchors = [keep]
+        scale, offset = fit(run, anchors)
+        times = [(a * scale * 1000.0 + offset) for a in ax]
     lo = max(0.0, min(times) - 2000)
     hi = max(times) + 2000
     if duration:

@@ -392,5 +392,45 @@ class TestAnchorsStayInTheDeclaredEpisode(unittest.TestCase):
         self.assertEqual(len({a[3] for a in got}), 1)
 
 
+
+class TestOneBadAnchorIsWorseThanNone(unittest.TestCase):
+    """Two anchors measure the stretch between them. That is right when both
+    are right, and worse than one anchor when either is not.
+
+    On the real script a beat about the AUDIENCE — Bryan Cranston's daughter
+    fainting at a screening, which happens nowhere in the episode — carried a
+    quote that matched far from the scene. Fitted against a good anchor it
+    gave x2.14 and spread 103 shots across 20:47-37:11 for a sequence that
+    runs 33:00-37:15, so the video opened on Hank and Marie at home.
+    """
+    def _run(self, n=103, total=462.0):
+        return align.Run("Breaking Bad", "S04E01",
+                         [align.Entry(beat=i + 1, shot=1,
+                                      data={"duration_target_sec": total / n})
+                          for i in range(n)])
+
+    def _span(self, anchors):
+        run = self._run()
+        scale, off = align.fit(run, anchors)
+        times = [a * scale * 1000 + off for a in align.axis(run)]
+        return (max(times) - min(times)) / 1000.0
+
+    def test_a_stray_anchor_stretches_the_run_past_any_sequence(self):
+        wide = self._span([(16, 1247000, 1250000, "p", "medium"),
+                           (94, 2231000, 2234000, "p", "high")])
+        self.assertGreater(wide, align.MAX_RUN_SPAN_S)
+
+    def test_the_strongest_anchor_alone_keeps_it_plausible(self):
+        one = self._span([(94, 2231000, 2234000, "p", "high")])
+        self.assertLess(one, align.MAX_RUN_SPAN_S)
+        self.assertAlmostEqual(one, 462.0, delta=20)
+
+    def test_a_pair_that_agrees_is_left_alone(self):
+        """The guard must not fire on anchors that really do bracket a scene."""
+        near = self._span([(10, 2000000, 2003000, "p", "high"),
+                           (90, 2240000, 2243000, "p", "high")])
+        self.assertLess(near, align.MAX_RUN_SPAN_S)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
