@@ -129,12 +129,19 @@ exit /b 1
 REM ------------------------------------------------------------- self test
 echo.
 echo Running the self test...
-%PY% -m unittest discover tests >nul 2>&1
-if %errorlevel%==0 (
+set "SELFTEST=%TEMP%\mi_selftest.txt"
+%PY% -m unittest discover tests > "!SELFTEST!" 2>&1
+if !errorlevel!==0 (
     echo [OK] all tests passed
 ) else (
-    echo [--] some tests failed - the tool will probably still work,
-    echo      but tell Claude if anything behaves oddly.
+    echo [--] some tests failed. WHICH ones is the whole point, so they are
+    echo      printed here - "some tests failed" on its own tells nobody
+    echo      anything, least of all Claude.
+    echo.
+    findstr /b /c:"FAIL:" /c:"ERROR:" /c:"Ran " /c:"FAILED" "!SELFTEST!"
+    echo.
+    echo      full output saved to: !SELFTEST!
+    echo      send that file to Claude.
 )
 
 echo.

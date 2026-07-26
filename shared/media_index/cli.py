@@ -295,6 +295,76 @@ def cmd_look(a):
     return 0 if not res.failed else 1
 
 
+def cmd_see(a):
+    """Describe a picture; get the real frames back. The eye's own proof.
+
+    The same idea as cutting a clip and listening to it. A build reports
+    numbers, and numbers can be healthy while the footage is wrong — that has
+    happened here more than once. This asks for one picture, in words, and
+    puts the frames on screen. Either the tool can see or it cannot, and it
+    takes ten seconds to find out.
+    """
+    ok, why = embed.available()
+    if not ok:
+        print(f"  The picture model is not installed — {why}")
+        return 1
+    done, total = visual.coverage(a.db)
+    if not done:
+        print("  No footage has been looked at yet — run 'Look at the "
+              "footage' first.")
+        return 1
+
+    backend = embed.load(log=print)
+    vec = backend.encode_texts([a.text])[0]
+
+    con = library.connect(a.db)
+    try:
+        rows = con.execute(
+            "SELECT v.path AS path, m.show AS show, m.season AS season, "
+            "       m.episode AS episode "
+            "  FROM visual v LEFT JOIN media m ON m.path = v.path").fetchall()
+        hits = []
+        for row in rows:
+            index = visual.load(con, a.db, row["path"])
+            if index is None:
+                continue
+            match = visual.best_in(index, vec)
+            if match.searched:
+                hits.append((match, row))
+    finally:
+        con.close()
+
+    if not hits:
+        print("  nothing indexed could be searched")
+        return 1
+    hits.sort(key=lambda h: -h[0].lift)
+
+    print(f'\n  "{a.text}"\n')
+    os.makedirs(a.out, exist_ok=True)
+    written = []
+    for i, (match, row) in enumerate(hits[:a.limit], 1):
+        label = os.path.basename(row["path"])
+        if row["show"] and row["season"] is not None:
+            label = f"{row['show']} S{row['season']:02d}E{row['episode']:02d}"
+        mark = {"high": term.sym("yes"), "medium": term.sym("maybe"),
+                "low": term.sym("no")}[match.confidence]
+        mins, secs = divmod(int(match.time), 60)
+        print(f"  {mark} {i}. {label}   {mins}:{secs:02d}   "
+              f"lift {match.lift:.1f}  [{match.confidence}]")
+        out = os.path.join(a.out, f"see_{i:02d}.jpg")
+        try:
+            cutter.extract_frame(row["path"], match.time, out, width=1920)
+            written.append(out)
+        except Exception as exc:                # one bad file is not the end
+            print(f"        could not extract the frame — {exc}")
+
+    print(f"\n  {len(written)} frame(s) written to {a.out}")
+    print("  Open them. If the top one is not the picture you described,")
+    print("  the model is not seeing this footage and nothing built on it")
+    print("  will be right either.")
+    return 0 if written else 1
+
+
 def cmd_check(a):
     """Inspect a media folder and say whether it will work."""
     reports = doctor.inspect_folder(
@@ -538,6 +608,13 @@ def main(argv=None):
     lk.add_argument("--force", action="store_true",
                     help="redo files that are already done")
     lk.set_defaults(func=cmd_look)
+
+    se = sub.add_parser("see", parents=[common],
+                        help="describe a picture, get the real frames back")
+    se.add_argument("text", help='e.g. "a man in a red hazmat suit"')
+    se.add_argument("--limit", type=int, default=5)
+    se.add_argument("--out", default="proof", help="where to write the frames")
+    se.set_defaults(func=cmd_see)
 
     q = sub.add_parser("preflight", parents=[common],
                        help="check a queue of jobs without building anything")

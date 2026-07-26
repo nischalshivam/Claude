@@ -17,6 +17,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -306,10 +307,17 @@ class TestWhenTheModelIsNotThere(unittest.TestCase):
              "visual": "a doorway", "duration_target_sec": 4}]}]
 
     def test_it_says_what_is_missing_and_changes_nothing(self):
-        places = [align.Placement(beat=1, shot=1, path="/fake/ep.mkv",
-                                  start_ms=1234, end_ms=5234,
-                                  method="interpolated")]
-        rep = verify.apply(self.db, self._beats(), places)
+        # Forced, not inferred from what happens to be installed. On a
+        # machine that HAS torch this test would otherwise load the real
+        # 1 GB model — downloading it on a machine that has not got it yet —
+        # to prove what happens when there is no model. The suite must never
+        # reach for the network, and it must test the same thing everywhere.
+        with mock.patch.object(embed, "available",
+                               return_value=(False, "needs torch")):
+            places = [align.Placement(beat=1, shot=1, path="/fake/ep.mkv",
+                                      start_ms=1234, end_ms=5234,
+                                      method="interpolated")]
+            rep = verify.apply(self.db, self._beats(), places)
         self.assertEqual(places[0].start_ms, 1234)
         self.assertEqual(rep.checked, 0)
         self.assertTrue(rep.reason)

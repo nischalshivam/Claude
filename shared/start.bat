@@ -57,13 +57,14 @@ echo.
 echo    8.  Set the media folder
 echo    9.  BUILD A VIDEO from a visual script
 echo    L.  Look at the footage       - teach it what your episodes LOOK like
+echo    S.  Describe a picture        - PROVE it can see. do this after L
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
 REM  Say what to do next, so the list is never a guess.
 set "NEXT=press 8 and point it at your episode folder"
 if defined MEDIA set "NEXT=press 1, then 2, then 4 - in that order"
-if defined MEDIA if exist "!DB!" set "NEXT=press 6 to prove a clip, then L, then 9"
+if defined MEDIA if exist "!DB!" set "NEXT=6 proves a clip, L looks, S proves it sees, 9 builds"
 echo    NEXT:  !NEXT!
 echo.
 set "CHOICE="
@@ -80,6 +81,7 @@ if "!CHOICE!"=="7" goto do_stats
 if "!CHOICE!"=="8" goto do_setfolder
 if "!CHOICE!"=="9" goto do_queue
 if /i "!CHOICE!"=="L" goto do_look
+if /i "!CHOICE!"=="S" goto do_see
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -286,6 +288,27 @@ if defined LSCRIPT (
 ) else (
     %PY% -m media_index look --db "!DB!"
 )
+echo.
+pause
+goto menu
+
+:do_see
+echo.
+echo   Type what should be ON SCREEN - not what it means. The tool finds
+echo   the closest frame in everything it has looked at and writes it out.
+echo.
+echo   Good:  a man in a red hazmat suit holding a green box cutter
+echo   Bad:   the moment everything changes for Walt
+echo.
+set "PIC="
+set /p "PIC=  Describe a picture: "
+if not defined PIC goto menu
+echo.
+%PY% -m media_index see "!PIC!" --db "!DB!" --out "proof"
+if exist "proof\see_01.jpg" start "" "proof\see_01.jpg"
+echo.
+echo   If the top frame is not what you described, the picture layer is
+echo   not working on this footage and nothing built on it will be right.
 echo.
 pause
 goto menu

@@ -223,8 +223,12 @@ class TestBatchFiles(unittest.TestCase):
         # "look" builds the picture index. Without it every shot is placed by
         # inference alone, which is the failure this whole stage exists to
         # end — so it has to be reachable from the menu, not just the CLI.
+        # "see" is on this list for the same reason "cut" is. A build reports
+        # numbers, and numbers have been healthy here while the footage was
+        # wrong. Describing one picture and looking at the frame that comes
+        # back is the only cheap proof that the picture layer works at all.
         for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
-                    "make", "sheet", "look"):
+                    "make", "sheet", "look", "see"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 
@@ -241,6 +245,20 @@ class TestBatchFiles(unittest.TestCase):
         self.assertTrue(offered, "no menu options found")
         self.assertEqual(offered - routed, set(),
                          f"menu offers {offered - routed} with no handler")
+
+    def test_the_self_test_says_which_tests_failed(self):
+        """"some tests failed" tells nobody anything.
+
+        setup.bat threw the output away and printed a bare "some tests
+        failed - the tool will probably still work". That is not a report,
+        it is a shrug: the person reading it cannot act on it and neither
+        can anyone they forward it to.
+        """
+        text = read("setup.bat").replace("\r\n", "\n")
+        self.assertNotRegex(text, r"unittest discover tests\s*>\s*nul",
+                            "setup.bat discards the self-test output")
+        self.assertIn("FAIL:", text,
+                      "setup.bat never prints which tests failed")
 
     def test_lettered_choices_are_matched_case_insensitively(self):
         """`if "!CHOICE!"=="L"` misses a typed lowercase l, which reads to
