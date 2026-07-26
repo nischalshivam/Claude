@@ -262,11 +262,30 @@ echo.
 echo   The first run downloads the picture model, about 1 GB. After that
 echo   it needs no internet at all.
 echo.
+echo   A whole five-season library is HOURS. One script usually needs three
+echo   episodes, which is minutes. Give it a script here to do only those,
+echo   or leave it blank to do everything you own.
+echo.
+set "LSCRIPT="
+set /p "LSCRIPT=  Script file, or blank for everything: "
+if defined LSCRIPT set "LSCRIPT=!LSCRIPT:"=!"
+if defined LSCRIPT if not exist "!LSCRIPT!" (
+    echo.
+    echo   Not found: !LSCRIPT!
+    echo.
+    pause
+    goto menu
+)
+echo.
 set "GO="
 set /p "GO=  Start? [Y/n]: "
 if /i "!GO!"=="n" goto menu
 echo.
-%PY% -m media_index look --db "!DB!"
+if defined LSCRIPT (
+    %PY% -m media_index look --db "!DB!" --script "!LSCRIPT!"
+) else (
+    %PY% -m media_index look --db "!DB!"
+)
 echo.
 pause
 goto menu

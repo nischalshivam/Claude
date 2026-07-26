@@ -370,6 +370,47 @@ def index_video(con, db_path: str, video_path: str, backend=None,
     return int(len(times))
 
 
+def files_for_script(db_path: str, beats: list) -> list:
+    """The videos one script actually needs, in library order.
+
+    Looking at a whole five-season library takes hours; a script uses three
+    episodes of it. Indexing everything is the right thing to leave running
+    overnight and the wrong thing to demand before someone can test one
+    script, so a script can name its own shortlist.
+
+    Titles are matched the way `sources` matches them — loosely, because a
+    script writes "Breaking Bad" and a file is called "Breaking.Bad.S04E01" —
+    and an episode the script did not declare is left out.
+    """
+    from . import sources
+    from .library import connect
+    con = connect(db_path)
+    try:
+        rows = [dict(r) for r in con.execute(
+            "SELECT path, show, season, episode FROM media ORDER BY path")]
+    finally:
+        con.close()
+
+    wanted: list = []
+    for req in sources.requirements(beats):
+        key = sources.canonical(req.title)
+        if not key:
+            continue
+        episodes = req.episodes_declared
+        for row in rows:
+            lib = sources.canonical(row["show"] or "")
+            if not lib or not (lib == key or key in lib or lib in key):
+                continue
+            se = (row["season"], row["episode"])
+            # A film has no season or episode, so it is always wanted; an
+            # episode is wanted only if the script asked for it by number.
+            if episodes and row["season"] is not None and se not in episodes:
+                continue
+            if row["path"] not in wanted:
+                wanted.append(row["path"])
+    return wanted
+
+
 def build(db_path: str, only: list | None = None, fps: float = DEFAULT_FPS,
           force: bool = False, log=lambda *a: None) -> BuildResult:
     """Index the pictures of every video already in the dialogue index.

@@ -648,3 +648,65 @@ class TestIndexingRealFootageEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIndexingOnlyWhatAScriptNeeds(unittest.TestCase):
+    """A five-season library is hours. One script is three episodes.
+
+    Demanding the whole library before anyone can test one script is the
+    difference between a step you run and a step you put off, so a script can
+    name its own shortlist.
+    """
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="only_")
+        self.db = os.path.join(self.tmp, "library.db")
+        con = library.connect(self.db)
+        self.paths = {}
+        for season, episode in ((4, 1), (4, 10), (2, 7)):
+            p = f"/x/Breaking.Bad.S{season:02d}E{episode:02d}.mkv"
+            self.paths[(season, episode)] = os.path.abspath(p)
+            con.execute("INSERT INTO media (path, kind, show, show_norm, "
+                        "season, episode) VALUES (?,?,?,?,?,?)",
+                        (os.path.abspath(p), "episode", "Breaking Bad",
+                         "breaking bad", season, episode))
+        con.execute("INSERT INTO media (path, kind, show, show_norm) "
+                    "VALUES (?,?,?,?)",
+                    (os.path.abspath("/x/Heat.1995.mkv"), "movie", "Heat",
+                     "heat"))
+        con.commit()
+        con.close()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _beats(self, *declared, title="Breaking Bad"):
+        return [{"beat": 1, "shots": [
+            {"source": title, "season_episode": se, "visual": "a room"}
+            for se in declared]}]
+
+    def test_only_the_declared_episodes_come_back(self):
+        got = visual.files_for_script(self.db, self._beats("S04E01", "S04E10"))
+        self.assertEqual(sorted(got), sorted([self.paths[(4, 1)],
+                                              self.paths[(4, 10)]]))
+
+    def test_a_title_written_loosely_still_matches_the_files(self):
+        got = visual.files_for_script(self.db, self._beats("S04E01"))
+        self.assertEqual(got, [self.paths[(4, 1)]])
+
+    def test_a_film_has_no_episode_to_declare_so_it_is_always_wanted(self):
+        got = visual.files_for_script(self.db, self._beats("", title="Heat"))
+        self.assertEqual(got, [os.path.abspath("/x/Heat.1995.mkv")])
+
+    def test_an_episode_the_script_never_names_is_left_out(self):
+        got = visual.files_for_script(self.db, self._beats("S04E01"))
+        self.assertNotIn(self.paths[(2, 7)], got)
+
+    def test_a_title_that_is_not_owned_yields_nothing_rather_than_everything(self):
+        got = visual.files_for_script(
+            self.db, self._beats("S01E01", title="Some Other Show"))
+        self.assertEqual(got, [])
+
+    def test_the_same_episode_named_twice_is_indexed_once(self):
+        beats = self._beats("S04E01") + self._beats("S04E01")
+        self.assertEqual(visual.files_for_script(self.db, beats),
+                         [self.paths[(4, 1)]])

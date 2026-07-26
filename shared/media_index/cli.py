@@ -259,13 +259,29 @@ def cmd_look(a):
         print("  After that it works with no internet at all.")
         return 1
 
+    only = None
+    if a.script:
+        if not os.path.isfile(a.script):
+            print(f"  No such script: {a.script}")
+            return 1
+        with open(a.script, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        beats = data if isinstance(data, list) else (data.get("beats") or [])
+        only = visual.files_for_script(a.db, beats)
+        if not only:
+            print("  That script names no episode that is in the library.")
+            return 1
+        print(f"  this script needs {len(only)} file(s):")
+        for path in only[:20]:
+            print(f"      {os.path.basename(path)}")
+
     done, total = visual.coverage(a.db)
     print(f"  {done} of {total} file(s) already have their pictures indexed")
-    if done >= total and total and not a.force:
+    if only is None and done >= total and total and not a.force:
         print("  nothing to do — add --force to redo them")
         return 0
 
-    res = visual.build(a.db, fps=a.fps, force=a.force, log=print)
+    res = visual.build(a.db, only=only, fps=a.fps, force=a.force, log=print)
     print("")
     print(f"  looked at {res.indexed} file(s) {term.sym('dot')} "
           f"skipped {res.skipped} {term.sym('dot')} "
@@ -517,6 +533,8 @@ def main(argv=None):
                         help="index what the footage looks like (slow, once)")
     lk.add_argument("--fps", type=float, default=visual.DEFAULT_FPS,
                     help=f"frames sampled per second (default {visual.DEFAULT_FPS})")
+    lk.add_argument("--script",
+                    help="index only the episodes this visual script needs")
     lk.add_argument("--force", action="store_true",
                     help="redo files that are already done")
     lk.set_defaults(func=cmd_look)
