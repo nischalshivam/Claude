@@ -166,7 +166,11 @@ class TestBatchFiles(unittest.TestCase):
 
     def test_menu_offers_every_stage_of_the_workflow(self):
         text = read("start.bat")
-        for cmd in ("check", "transcribe", "build", "find", "stats", "run"):
+        # "cut" is on this list because watching the clip is the only step
+        # that proves the chain end to end. A search score says the text
+        # matched; it says nothing about whether the timing is right.
+        for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
+                    "run"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 

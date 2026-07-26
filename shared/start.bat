@@ -49,18 +49,19 @@ echo    1.  Check a media folder      - is my download usable?
 echo    2.  Attach downloaded subtitles - from a season pack
 echo    3.  Make subtitles from audio - when there are none at all
 echo    4.  Build the library index
-echo    5.  Search for a line         - prove it works
-echo    6.  Show what is in the index
+echo    5.  Search for a line         - where is it?
+echo    6.  Cut that line to a clip   - WATCH IT. this is the real test
+echo    7.  Show what is in the index
 echo.
-echo    7.  Set the media folder
-echo    8.  Run a job queue (jobs.json)
+echo    8.  Set the media folder
+echo    9.  Run a job queue (jobs.json)
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
-REM  Say what to do next, so the list of eight is never a guess.
-set "NEXT=press 7 and point it at your episode folder"
+REM  Say what to do next, so the list is never a guess.
+set "NEXT=press 8 and point it at your episode folder"
 if defined MEDIA set "NEXT=press 1, then 2, then 4 - in that order"
-if defined MEDIA if exist "!DB!" set "NEXT=press 5 and search for a line you remember"
+if defined MEDIA if exist "!DB!" set "NEXT=press 6 and watch a clip - that is the only proof"
 echo    NEXT:  !NEXT!
 echo.
 set "CHOICE="
@@ -72,9 +73,10 @@ if "!CHOICE!"=="2" goto do_subs
 if "!CHOICE!"=="3" goto do_transcribe
 if "!CHOICE!"=="4" goto do_build
 if "!CHOICE!"=="5" goto do_find
-if "!CHOICE!"=="6" goto do_stats
-if "!CHOICE!"=="7" goto do_setfolder
-if "!CHOICE!"=="8" goto do_queue
+if "!CHOICE!"=="6" goto do_clip
+if "!CHOICE!"=="7" goto do_stats
+if "!CHOICE!"=="8" goto do_setfolder
+if "!CHOICE!"=="9" goto do_queue
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -188,6 +190,28 @@ set /p "Q=  Type a line of dialogue you remember: "
 if not defined Q goto menu
 echo.
 %PY% -m media_index find "!Q!" --db "!DB!"
+echo.
+pause
+goto menu
+
+:do_clip
+echo.
+echo   This cuts the real clip and opens it. If the line is spoken in it,
+echo   the whole chain is right: the subtitle, the timing, and the cut.
+echo   Nothing else proves that - a score of 100 only means the TEXT matched.
+echo.
+set "Q="
+set /p "Q=  Type a line of dialogue: "
+if not defined Q goto menu
+if not exist "proof" mkdir "proof"
+set "CLIP=proof\clip.mp4"
+echo.
+%PY% -m media_index cut "!Q!" --db "!DB!" --out "!CLIP!" --seconds 5 --full-line
+if not exist "!CLIP!" goto clip_done
+echo.
+echo   Opening !CLIP!
+start "" "!CLIP!"
+:clip_done
 echo.
 pause
 goto menu

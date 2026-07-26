@@ -8,6 +8,7 @@ so the suite still runs on a machine without it.
 from __future__ import annotations
 
 import os
+import random
 import shutil
 import sys
 import tempfile
@@ -104,20 +105,58 @@ class TestSyncDetector(unittest.TestCase):
         self.assertLessEqual(abs(r.offset_ms - 4500), 150)
         self.assertEqual(r.confidence, "high")
 
-    def test_framerate_stretch_detected(self):
+    def test_stretch_is_refused_when_there_is_too_little_to_measure(self):
+        """Two minutes of sparse audio cannot support a stretch measurement.
+
+        Three lines per window match themselves one exchange over as well as
+        they match the truth. The required answer is a refusal that says so —
+        not a confident stretch, which would be perfect at the start and
+        minutes out by the end.
+        """
         cues = cues_from(dv.CUES, offset_ms=1200, scale=25.0 / 23.976)
         r = sync.detect(self.vid, cues, try_framerates=True)
-        fixed = sync.apply(cues, r.offset_ms, r.scale)
-        self.assertLess(abs(fixed[0].start_ms - dv.CUES[0][0]), 250)
-        self.assertLess(abs(fixed[-1].start_ms - dv.CUES[-1][0]), 250)
+        self.assertEqual(r.scale, 1.0)
+        self.assertEqual(r.confidence, "low")
+        self.assertTrue(r.note)
 
     def test_wrong_subtitles_are_not_trusted(self):
-        """The safety case: subtitles from another film must not be applied."""
+        """The safety case: subtitles from another film must not be applied.
+
+        Asserted on the verdict rather than on prominence. Prominence is
+        still reported, but it was measured at 0.20-0.30 on this synthetic
+        audio and 0.00-0.05 on real film for matches of the same quality, so
+        no threshold over it separates a good fit from a bad one.
+        """
         other = [(t * 1000, t * 1000 + 2500, "unrelated")
                  for t in (3, 17, 29, 44, 58, 71, 88, 99, 111)]
         r = sync.detect(self.vid, cues_from(other), try_framerates=False)
         self.assertEqual(r.confidence, "low")
-        self.assertLess(r.prominence, 0.05)
+        self.assertTrue(r.note, "a refusal has to say why")
+
+    def test_one_season_gets_one_answer(self):
+        """Thirteen copies of a problem must not get four different diagnoses.
+
+        This is the failure that made the rewrite necessary. Searching nine
+        framerate ratios and keeping the highest score gave four different
+        conversions across one season of one download — and `24to25` alone
+        displaces the end of an episode by two minutes.
+        """
+        verdicts = set()
+        for shift in (-2500, -1200, 0, 900, 3000):
+            r = sync.detect(self.vid, cues_from(dv.CUES, offset_ms=shift),
+                            try_framerates=True)
+            verdicts.add(r.scale_name)
+        self.assertEqual(verdicts, {"none"},
+                         f"same source, same framerate, but got {verdicts}")
+
+    def test_a_fit_that_runs_past_the_end_is_refused(self):
+        """A stretch is perfect at the start and minutes out by the end, so
+        the first line anyone tests looks right either way. Running off the
+        end of the file is one thing that can be checked without watching."""
+        long_cues = cues_from(dv.CUES + [(600_000, 604_000, "way past the end")])
+        r = sync.detect(self.vid, long_cues, try_framerates=True)
+        moved = sync.apply(long_cues, r.offset_ms, r.scale)
+        self.assertLess(moved[-1].end_ms, 600_000 + 120_000)
 
     def test_apply_does_not_mutate_input(self):
         cues = cues_from(dv.CUES)
@@ -338,3 +377,105 @@ class TestSubtitleScript(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestDriftMeasurement(unittest.TestCase):
+    """The stretch maths, on an episode-length timeline, without ffmpeg.
+
+    The demo video is two minutes long, which is far too short to say
+    anything about framerate conversion. These build the speech timeline
+    directly, at the length and density of a real episode: ~600 lines of
+    irregularly spaced dialogue across 45 minutes, which is what the real
+    Breaking Bad season looks like.
+    """
+    DURATION_S = 45 * 60
+    BIN = sync.FINE_BIN_MS
+
+    def _timeline(self, seed=7):
+        """[(start_s, end_s)] of speech, irregular on purpose."""
+        rnd = random.Random(seed)
+        out, t = [], 12.0
+        while t < self.DURATION_S - 30:
+            length = rnd.uniform(0.8, 3.4)
+            out.append((t, t + length))
+            t += length + rnd.uniform(0.4, 6.0)
+        return out
+
+    def _cues(self, speech, offset_ms=0, scale=1.0):
+        return [subtitles.Cue(idx=i, start_ms=int(a * 1000 * scale) + offset_ms,
+                    end_ms=int(b * 1000 * scale) + offset_ms, text="line")
+                for i, (a, b) in enumerate(speech, 1)]
+
+    def _measure(self, offset_ms=0, scale=1.0):
+        speech = self._timeline()
+        n_bins = int(self.DURATION_S * 1000) // self.BIN + 2
+        n_coarse = int(self.DURATION_S * 1000) // sync.COARSE_BIN_MS + 2
+        fine = sync._bits_from_intervals(speech, self.BIN, n_bins)
+        coarse = sync._bits_from_intervals(speech, sync.COARSE_BIN_MS, n_coarse)
+        cues = self._cues(speech, offset_ms, scale)
+        return sync.measure_drift(coarse, fine, cues, n_coarse, n_bins,
+                                  float(self.DURATION_S), 0)
+
+    def test_enough_lines_to_measure(self):
+        self.assertGreater(len(self._cues(self._timeline())), 400)
+
+    def test_a_clean_track_is_left_alone(self):
+        scale, offset, residual, _e, _l = self._measure()
+        self.assertEqual(scale, 1.0)
+        self.assertLess(abs(offset), 150)
+        self.assertLess(residual, 150)
+
+    def test_a_constant_offset_is_not_mistaken_for_stretch(self):
+        """The failure that corrupted the real index: a plain shift being
+        read as a framerate conversion, which then bends the whole episode."""
+        for shift in (-8000, -2500, 1500, 6000):
+            scale, offset, residual, _e, _l = self._measure(offset_ms=shift)
+            self.assertEqual(scale, 1.0, f"{shift} ms read as {scale}")
+            # the detector reports the correction, i.e. the negative of the drift
+            self.assertLess(abs(offset + shift), 200, shift)
+            self.assertLess(residual, 200, shift)
+
+    def test_pal_speedup_is_measured(self):
+        """24->25 displaces the end of an episode by two minutes.
+
+        The reported scale is the CORRECTION, so a track running fast comes
+        back as its reciprocal — that is what gets multiplied into the cues.
+        """
+        true_scale = 25.0 / 24.0
+        scale, offset, residual, _e, _l = self._measure(
+            offset_ms=1200, scale=true_scale)
+        self.assertAlmostEqual(scale, 1.0 / true_scale, places=4)
+        # the correction undoes the planted shift after undoing the stretch
+        self.assertLess(abs(offset + 1200 / true_scale), 300)
+        self.assertLess(residual, 300)
+
+    def test_ntsc_pulldown_is_measured(self):
+        """23.976->24 is a thousandth — only a long lever arm reaches it."""
+        true_scale = 24.0 / 23.976
+        scale, offset, residual, _e, _l = self._measure(scale=true_scale)
+        self.assertAlmostEqual(scale, 1.0 / true_scale, places=5)
+        self.assertLess(residual, 300)
+
+    def test_a_wrong_stretch_is_never_preferred_to_no_stretch(self):
+        """Nine ratios are tried; eight of them must lose to leaving it be."""
+        for shift in (-30_000, -5000, 0, 4000, 22_000):
+            scale, _o, _r, _e, _l = self._measure(offset_ms=shift)
+            self.assertEqual(scale, 1.0, f"{shift} ms bent the episode")
+
+    def test_correcting_a_measured_stretch_lands_the_last_line(self):
+        """The end of the episode is where a wrong stretch shows up."""
+        speech = self._timeline()
+        true = self._cues(speech)
+        bent = self._cues(speech, offset_ms=1200, scale=25.0 / 24.0)
+        scale, offset, _r, _e, _l = self._measure(
+            offset_ms=1200, scale=25.0 / 24.0)
+        fixed = sync.apply(bent, offset, scale)
+        self.assertLess(abs(fixed[-1].start_ms - true[-1].start_ms), 500)
+        self.assertLess(abs(fixed[0].start_ms - true[0].start_ms), 500)
+
+    def test_an_unexplained_drift_is_not_snapped_to_a_framerate(self):
+        """A different edit drifts too, but not by a framerate ratio. Bending
+        the episode to the nearest conversion would invent a correction."""
+        scale, _o, residual, _e, _l = self._measure(scale=1.0 + 0.012)
+        self.assertEqual(scale, 1.0)
+        self.assertGreater(residual, 1000, "the disagreement must be reported")

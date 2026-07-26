@@ -16,7 +16,24 @@ one candidate offset is a single shift + AND + popcount. That makes a full
 search fast enough in pure Python — no numpy needed.
 
 Framerate conversion (23.976 vs 25 fps) shows up as *stretch* rather than
-shift, so a handful of standard ratios are searched alongside the offset.
+shift. It is **measured**, not searched: the offset is found separately near
+the start and near the end of the episode, and the difference between those
+two answers over the time between them is the stretch.
+
+That distinction is not academic. Trying nine standard ratios and keeping
+whichever scores highest sounds equivalent and is not, because over 47 minutes
+of speech the scores of all nine land within noise of each other — so the
+winner is decided by chance. Measured on a real Breaking Bad season it chose
+four *different* framerate conversions across thirteen episodes of one
+download, which cannot happen, and `24→25` alone displaces the end of an
+episode by two minutes. A wrong stretch is far worse than no stretch: a
+constant offset puts every clip equally close, while a stretch is perfect at
+the start and minutes out by the end, so the index looks healthy on the first
+line anyone tests.
+
+Two windows can disagree with each other, and that disagreement is the honest
+confidence signal — much better than asking how far a correlation peak stands
+above its neighbours, which depends entirely on how talkative the content is.
 """
 from __future__ import annotations
 
@@ -44,6 +61,31 @@ SCALES = {
 COARSE_BIN_MS = 500
 FINE_BIN_MS = 50
 DEFAULT_RANGE_MS = 120_000        # subtitles are rarely more than 2 min out
+
+# Measuring stretch needs a lever arm between the two windows. How long an
+# arm is set by the snapping tolerance rather than by this number: a stretch
+# is only believed when it lands within a share of a real conversion, and the
+# resolution of the measurement is one bin over the lever, so a short file
+# simply fails to reach the tiny NTSC ratios and says so. This only rules out
+# files with no usable arm at all.
+DRIFT_MIN_SPAN_S = 60.0
+WINDOW_FRACTION = 0.30            # how much of each end to measure in
+DRIFT_SEARCH_MS = 10_000          # how far a window may sit from the global fit
+# A window needs enough lines in it to have one clear answer. With only a few,
+# regularly spaced dialogue matches itself one exchange over just as well, and
+# the window locks onto a neighbouring peak — which reads as drift that is not
+# there. A feature-length episode puts a couple of hundred lines in each
+# window; a two-minute clip puts three, and gets an honest refusal instead.
+MIN_CUES_PER_WINDOW = 12
+# Below this the stretch is not worth applying: a quarter of a second across a
+# whole episode is far inside the length of the shortest line of dialogue.
+MIN_MEANINGFUL_DRIFT_MS = 250
+# A measured stretch is only believed when it lands on a real conversion. The
+# tolerance is a share of how far that conversion is from 1.0, so the tiny
+# NTSC ratios are held to a proportionally tighter standard than the PAL ones.
+SCALE_SNAP_TOLERANCE = 0.25
+# The widest stretch any real conversion produces, used to size the search.
+MAX_CONVERSION_DRIFT = 0.045
 
 _RE_SIL_START = re.compile(r"silence_start:\s*(-?[\d.]+)")
 _RE_SIL_END = re.compile(r"silence_end:\s*(-?[\d.]+)")
@@ -160,29 +202,174 @@ def _agreement(a_bits: int, b_bits: int, a_pop: int, b_pop: int) -> float:
 GUARD_MS = 2000        # a rival peak this close to the winner is the same peak
 
 
-def _scan(a_bits, a_pop, cues, bin_ms, n_bins, scale, lo_ms, hi_ms, step_ms):
-    """Best (score, offset_ms, prominence) over a range.
+@dataclass
+class Peak:
+    score: float = 0.0
+    offset_ms: int = 0
+    prominence: float = 0.0
+    at_limit: bool = False        # the best offset was the edge of the search
 
-    `prominence` is the gap between the winning offset and the best rival
-    that is not simply the shoulder of the same peak. It answers the question
-    that actually matters — "is this offset clearly better than every other
-    one?" — which a z-score over the whole range does not, because almost
-    every offset is equally bad and that inflates the spread.
+    @property
+    def real(self) -> bool:
+        """A peak found against the wall is not a peak, it is a wall.
+
+        When nothing inside the search range fits, the best score drifts to
+        whichever end of the range happens to be least bad, and the answer
+        comes back as a confident-looking ±120000 ms. Treating that as a
+        measurement is how a subtitle for a different release gets accepted.
+        """
+        return self.score > 0.0 and not self.at_limit
+
+
+def _scan(a_bits, cues, bin_ms, n_bins, scale, lo_ms, hi_ms, step_ms,
+          mask=None) -> Peak:
+    """Best offset over a range, optionally within one window of the episode.
+
+    `prominence` is the gap between the winning offset and the best rival that
+    is not simply the shoulder of the same peak. It is reported, but it is no
+    longer trusted as a confidence signal: on sparse synthetic audio it runs
+    0.20-0.30 and on real film — where people talk more or less continuously —
+    it runs 0.00-0.05 for the very same quality of match.
     """
-    base = _bits_from_cues(cues, bin_ms, n_bins + 2 * (abs(lo_ms) // bin_ms + 2),
-                           scale=scale)
-    b_pop = base.bit_count()
+    pad = n_bins + 2 * (max(abs(lo_ms), abs(hi_ms)) // bin_ms + 2)
+    base = _bits_from_cues(cues, bin_ms, pad, scale=scale)
+    if mask is not None:
+        a_bits = a_bits & mask
+    a_pop = a_bits.bit_count()
+    if not a_pop:
+        return Peak()
+
     scores = []
     for off_ms in range(lo_ms, hi_ms + 1, step_ms):
         shift = off_ms // bin_ms
         moved = (base << shift) if shift >= 0 else (base >> -shift)
-        scores.append((_agreement(a_bits, moved, a_pop, b_pop), off_ms))
+        if mask is not None:
+            moved &= mask
+        scores.append((_agreement(a_bits, moved, a_pop, moved.bit_count()),
+                       off_ms))
     if not scores:
-        return 0.0, 0, 0.0
+        return Peak()
     best_score, best_off = max(scores)
     rivals = [s for s, o in scores if abs(o - best_off) > GUARD_MS]
     runner_up = max(rivals) if rivals else 0.0
-    return best_score, best_off, best_score - runner_up
+    return Peak(score=best_score, offset_ms=best_off,
+                prominence=best_score - runner_up,
+                at_limit=best_off in (lo_ms, hi_ms) and lo_ms != hi_ms)
+
+
+def _nearest_conversion(scale: float) -> tuple:
+    """Snap a measured stretch to a real framerate conversion, or to 1.0.
+
+    An arbitrary ratio is almost always measurement noise; a ratio that lands
+    on one of the standard conversions is a claim worth making.
+    """
+    best, best_err = 1.0, abs(scale - 1.0)
+    for cand in SCALES:
+        if cand == 1.0:
+            continue
+        err = abs(scale - cand)
+        if err < best_err and err <= SCALE_SNAP_TOLERANCE * abs(cand - 1.0):
+            best, best_err = cand, err
+    return best, SCALES.get(best, "none")
+
+
+def measure_drift(a_coarse, a_fine, cues, n_coarse, n_fine, analysed_s,
+                  centre_ms, log=lambda *a: None) -> tuple:
+    """Measure stretch by fitting each end of the episode separately.
+
+    Returns (scale, offset_ms, residual_ms, early, late) where `scale` is the
+    CORRECTION — multiply cue times by it — so a track running fast comes back
+    as a number below 1.0. `residual_ms` is how far the two ends still
+    disagree once the stretch is taken out, and it is the number that decides
+    whether any of this can be believed. `None` there means not measured.
+    """
+    span = analysed_s * WINDOW_FRACTION
+    early_mid, late_mid = span / 2.0, analysed_s - span / 2.0
+    lever_ms = (late_mid - early_mid) * 1000.0
+
+    def population(a_s, b_s) -> int:
+        return sum(1 for c in cues
+                   if a_s * 1000 <= c.start_ms + centre_ms <= b_s * 1000)
+
+    thin = min(population(0.0, span), population(analysed_s - span, analysed_s))
+    if thin < MIN_CUES_PER_WINDOW:
+        log(f"  only {thin} line(s) at one end — not enough to measure stretch")
+        return 1.0, centre_ms, None, None, None
+
+    # A conversion displaces a point by the ratio times its distance from the
+    # start, so the far window can sit two minutes from the global fit on a
+    # 45-minute episode. Sizing this from the lever instead of the whole
+    # running time leaves the late window searching against the wall, which
+    # reads as no measurement at all. Searching that span at 50 ms would be
+    # wasteful, so each window is found coarsely and then refined.
+    reach = int(analysed_s * 1000 * MAX_CONVERSION_DRIFT) + DRIFT_SEARCH_MS
+
+    def window(lo_s: float, hi_s: float, scale: float = 1.0) -> Peak:
+        coarse = _scan(a_coarse, cues, COARSE_BIN_MS, n_coarse, scale,
+                       centre_ms - reach, centre_ms + reach, COARSE_BIN_MS,
+                       mask=_bits_from_intervals([(lo_s, hi_s)],
+                                                 COARSE_BIN_MS, n_coarse))
+        if not coarse.real:
+            return coarse
+        fine = _scan(a_fine, cues, FINE_BIN_MS, n_fine, scale,
+                     coarse.offset_ms - COARSE_BIN_MS,
+                     coarse.offset_ms + COARSE_BIN_MS, FINE_BIN_MS,
+                     mask=_bits_from_intervals([(lo_s, hi_s)],
+                                               FINE_BIN_MS, n_fine))
+        # at_limit belongs to the wide search; the refinement's own edges are
+        # half a second away and mean nothing.
+        return Peak(score=max(fine.score, coarse.score),
+                    offset_ms=fine.offset_ms if fine.score >= coarse.score * 0.9
+                    else coarse.offset_ms,
+                    prominence=coarse.prominence, at_limit=False)
+
+    # Each candidate stretch is judged by a question it cannot fake: with this
+    # stretch applied, do the two ends of the episode ask for the SAME shift?
+    #
+    # Deriving the stretch arithmetically from two offset-only fits does not
+    # work for the large ratios. A 4% conversion spreads the cues inside a
+    # thirteen-minute window by half a minute, so no single shift shifts that
+    # window into place and the fit lands on noise. Applying the stretch first
+    # removes exactly that spread, which is why the right ratio is the one
+    # that makes the disagreement collapse.
+    trials = []
+    for cand in SCALES:
+        early = window(0.0, span, cand)
+        late = window(analysed_s - span, analysed_s, cand)
+        if not (early.real and late.real):
+            continue
+        residual = abs(late.offset_ms - early.offset_ms)
+        quality = min(early.score, late.score)
+        trials.append((cand, residual, quality, early, late))
+        log(f"  {SCALES[cand]:<14} ends differ by {residual:6d} ms "
+            f"(worst end scores {quality:.2f})")
+
+    if not trials:
+        return 1.0, centre_ms, None, None, None
+
+    flat = next((t for t in trials if t[0] == 1.0), None)
+    best = min(trials, key=lambda t: (t[1], -t[2]))
+    cand, residual, quality, early, late = best
+    offset = (early.offset_ms + late.offset_ms) // 2
+
+    if cand != 1.0:
+        # A stretch has to earn its place. It is only better than leaving the
+        # track alone if it makes the ends agree decisively better AND fits at
+        # least as well — otherwise this is the noise-picking that produced
+        # four different conversions for one season.
+        # The floor is below the drift the smallest real conversion produces
+        # (23.976->24 moves the ends about 1.9 s apart across an episode),
+        # since holding out for more would rule that conversion out entirely.
+        clearly_better = (flat is not None
+                          and residual < MIN_MEANINGFUL_DRIFT_MS
+                          and flat[1] > max(4 * residual, 750)
+                          and quality >= flat[2] * 0.95)
+        if not clearly_better:
+            cand, residual, quality, early, late = flat or best
+            offset = (early.offset_ms + late.offset_ms) // 2
+            cand = 1.0
+
+    return cand, int(offset), float(residual), early, late
 
 
 # ---------------------------------------------------------------------------
@@ -204,43 +391,59 @@ def detect(video_path: str, cues, search_ms=DEFAULT_RANGE_MS,
 
     n_coarse = int(analysed * 1000) // COARSE_BIN_MS + 2
     a_coarse = _bits_from_intervals(speech, COARSE_BIN_MS, n_coarse)
-    a_pop = a_coarse.bit_count()
-    if a_pop == 0:
+    if a_coarse.bit_count() == 0:
         return SyncResult(confidence="unknown", note="audio is entirely silent")
 
-    # coarse pass, optionally over several framerate ratios
-    candidates = SCALES if try_framerates else {1.0: "none"}
-    best = (0.0, 0, 0.0, 1.0)
-    for scale in candidates:
-        score, off, prom = _scan(a_coarse, a_pop, cues, COARSE_BIN_MS, n_coarse,
-                                 scale, -search_ms, search_ms, COARSE_BIN_MS)
-        log(f"  scale {scale:.5f}: score {score:.3f} @ {off:+d} ms")
-        if score > best[0]:
-            best = (score, off, prom, scale)
-    score, off, prom, scale = best
+    # 1. one shift, no stretch — where does the whole track sit?
+    coarse = _scan(a_coarse, cues, COARSE_BIN_MS, n_coarse, 1.0,
+                   -search_ms, search_ms, COARSE_BIN_MS)
+    if not coarse.real:
+        return SyncResult(score=round(coarse.score, 4), confidence="low",
+                          note="no alignment found anywhere in range — "
+                               "these subtitles are for another release")
 
-    # fine pass around the coarse winner
     n_fine = int(analysed * 1000) // FINE_BIN_MS + 2
     a_fine = _bits_from_intervals(speech, FINE_BIN_MS, n_fine)
-    a_pop_f = a_fine.bit_count()
-    f_score, f_off, _ = _scan(a_fine, a_pop_f, cues, FINE_BIN_MS, n_fine,
-                              scale, off - COARSE_BIN_MS, off + COARSE_BIN_MS,
-                              FINE_BIN_MS)
-    if f_score >= score * 0.9:
-        score, off = f_score, f_off
+    fine = _scan(a_fine, cues, FINE_BIN_MS, n_fine, 1.0,
+                 coarse.offset_ms - COARSE_BIN_MS,
+                 coarse.offset_ms + COARSE_BIN_MS, FINE_BIN_MS)
+    best = fine if fine.score >= coarse.score * 0.9 else coarse
+
+    # 2. does the end of the episode want a different shift from the start?
+    scale, off, residual = 1.0, best.offset_ms, None
+    early = late = None
+    if try_framerates and analysed >= DRIFT_MIN_SPAN_S:
+        scale, off, residual, early, late = measure_drift(
+            a_coarse, a_fine, cues, n_coarse, n_fine, analysed,
+            best.offset_ms, log)
 
     res = SyncResult(offset_ms=int(off), scale=scale,
                      scale_name=SCALES.get(scale, "none"),
-                     score=round(score, 4), prominence=round(prom, 4))
-    # Trust the answer when the winning offset clearly beats every rival, or
-    # when the raw agreement is so high it cannot be coincidence.
-    if (score >= 0.50 and prom >= 0.12) or score >= 0.80:
+                     score=round(best.score, 4),
+                     prominence=round(best.prominence, 4))
+
+    # 3. a correction that walks the subtitles off the end of the file is not
+    #    a correction, however well it scored.
+    moved = apply(cues, res.offset_ms, res.scale)
+    span_ms = (probe(video_path).duration or analysed) * 1000.0
+    if moved and (moved[0].start_ms < -2000 or moved[-1].end_ms > span_ms + 5000):
+        return SyncResult(score=res.score, confidence="low",
+                          note="the fit pushes the subtitles outside the "
+                               "running time — not applied")
+
+    # 4. confidence is how well the two ends agree, not how spiky the peak is
+    if residual is None:
+        res.confidence = "high" if best.score >= 0.80 else "low"
+        if res.confidence == "low":
+            res.note = "too short to check for stretch — offset only"
+    elif residual <= 300 and best.score >= 0.45:
         res.confidence = "high"
-    elif score >= 0.35 and prom >= 0.05:
+    elif residual <= 1000 and best.score >= 0.35:
         res.confidence = "medium"
     else:
         res.confidence = "low"
-        res.note = "no clear peak — subtitles may belong to another release"
+        res.note = (f"the start and the end disagree by {residual:.0f} ms — "
+                    "this subtitle is probably for a different cut")
     return res
 
 

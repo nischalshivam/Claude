@@ -90,11 +90,23 @@ def collect(subs_dir: str) -> dict:
     return found
 
 
+TIERS = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
+
+
 def _rank(video: str, candidates: list, verify: bool,
           log=lambda *a: None) -> tuple:
-    """(best_path, score, offset_ms). Plays each candidate against the audio."""
+    """(best_path, score, offset_ms, confidence) for the version that fits.
+
+    Ranked on the detector's own verdict rather than on how small the offset
+    is. Distance from zero looked like a sensible tie-breaker and was not: a
+    version that cannot be aligned at all comes back pinned to the end of the
+    search range, so it read as an enormous offset, every candidate hit the
+    same ceiling, and the penalty stopped separating anything. What matters is
+    whether the two ends of the sample agree — which is exactly what the
+    confidence now means.
+    """
     if len(candidates) == 1 and not verify:
-        return candidates[0], 0.0, 0
+        return candidates[0], 0.0, 0, "unknown"
 
     scored = []
     for path in candidates:
@@ -102,25 +114,26 @@ def _rank(video: str, candidates: list, verify: bool,
         if not cues:
             continue
         if not verify:
-            scored.append((0.0, 0, path))
+            scored.append((0, 0.0, 0, "unknown", path))
             continue
         try:
-            r = sync.detect(video, cues, try_framerates=False,
-                            max_seconds=VERIFY_SECONDS)
+            r = sync.detect(video, cues, max_seconds=VERIFY_SECONDS)
         except Exception as exc:
             log(f"        {os.path.basename(path)}: could not test ({exc})")
             continue
+        verdict = (f"{r.offset_ms:+d} ms" if r.confidence != "low"
+                   else "does not line up")
         log(f"        {os.path.basename(path)[:52]:<52} "
-            f"score {r.score:.2f}  offset {r.offset_ms:+6d} ms")
-        # The right version is the one that agrees best AND needs least shifting
-        penalty = min(1.0, abs(r.offset_ms) / MAX_SANE_OFFSET_MS)
-        scored.append((r.score - 0.25 * penalty, r.offset_ms, path))
+            f"score {r.score:.2f}  {r.confidence:<6} {verdict}")
+        scored.append((TIERS[r.confidence], r.score, r.offset_ms,
+                       r.confidence, path))
 
     if not scored:
-        return "", 0.0, 0
-    scored.sort(key=lambda t: -t[0])
-    best = scored[0]
-    return best[2], best[0], best[1]
+        return "", 0.0, 0, "unknown"
+    scored.sort(key=lambda t: (-t[0], -t[1], abs(t[2])))
+    tier, score, offset, confidence, path = scored[0]
+    # An offset nothing could confirm is not a measurement to pass downstream.
+    return path, score, (offset if tier > TIERS["low"] else 0), confidence
 
 
 def link(video_dir: str, subs_dir: str | None = None, verify: bool = True,
@@ -153,7 +166,8 @@ def link(video_dir: str, subs_dir: str | None = None, verify: bool = True,
             continue
 
         log(f"  {mid.label}: {len(m.candidates)} candidate(s)")
-        chosen, score, offset = _rank(video, m.candidates, verify, log)
+        chosen, score, offset, confidence = _rank(
+            video, m.candidates, verify, log)
         if not chosen:
             m.note = "none of the candidates could be read"
             out.append(m)
@@ -165,6 +179,14 @@ def link(video_dir: str, subs_dir: str | None = None, verify: bool = True,
         m.note = os.path.basename(chosen)
         if verify and abs(offset) > 1000:
             m.note += f"  (runs {offset:+d} ms out — build will correct it)"
+        elif verify and confidence == "low":
+            # Nothing here lined up. The best of a bad set is still linked, so
+            # the episode is not silently dropped, but calling that "linked"
+            # without saying so would be the quiet failure this tool exists to
+            # stop. An offset of zero because a track is already in sync is a
+            # different thing entirely, and still counts as linked.
+            m.status = "unverified"
+            m.note += "  (could not confirm against the audio — check this one)"
         out.append(m)
     return out
 
