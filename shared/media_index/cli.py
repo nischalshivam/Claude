@@ -12,7 +12,8 @@ import json
 import os
 import sys
 
-from . import (align, cutter, doctor, jobs as jobs_mod, library, runner, search,
+from . import (align, cutter, doctor, frames, jobs as jobs_mod, library, runner,
+               search,
                sources, subtitles, sync, term, transcribe)
 
 
@@ -202,6 +203,18 @@ def cmd_align(a):
     return 0
 
 
+def cmd_stills(a):
+    """Pull many distinct, good-quality stills out of a file or a range."""
+    cands = frames.scan(a.video, a.start, a.end)
+    best = frames.pick(cands, a.count)
+    print(f"  {frames.describe(cands, best)}")
+    out = a.out or os.path.join(os.path.dirname(a.video) or ".", "stills")
+    written = frames.extract_stills(a.video, out, a.count, a.start, a.end,
+                                    width=a.width, log=print)
+    print(f"  wrote {len(written)} image(s) to {out}")
+    return 0 if written else 1
+
+
 def cmd_check(a):
     """Inspect a media folder and say whether it will work."""
     reports = doctor.inspect_folder(
@@ -318,6 +331,16 @@ def main(argv=None):
     o.add_argument("--fast", action="store_true",
                    help="skip dialogue resolution (titles only, no episodes)")
     o.set_defaults(func=cmd_sources)
+
+    i = sub.add_parser("stills", parents=[common],
+                       help="pull many distinct stills out of a video")
+    i.add_argument("video")
+    i.add_argument("--count", type=int, default=20)
+    i.add_argument("--start", type=float, default=0.0)
+    i.add_argument("--end", type=float)
+    i.add_argument("--width", type=int, default=1920)
+    i.add_argument("--out", help="output folder (default <video folder>/stills)")
+    i.set_defaults(func=cmd_stills)
 
     g = sub.add_parser("align", parents=[common],
                        help="place shots that have no dialogue, along the scene")
