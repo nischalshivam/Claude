@@ -14,7 +14,7 @@ import sys
 
 from . import (align, cutter, doctor, frames, jobs as jobs_mod, library, runner,
                search,
-               sources, subtitles, sync, term, transcribe)
+               sources, subs, subtitles, sync, term, transcribe)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -203,6 +203,14 @@ def cmd_align(a):
     return 0
 
 
+def cmd_subs(a):
+    """Attach a downloaded subtitle pack to the right videos."""
+    matches = subs.link(a.media_dir, a.subs, verify=not a.no_verify,
+                        overwrite=a.overwrite, log=print)
+    print(subs.format_results(matches))
+    return 1 if any(m.status == "none" for m in matches) else 0
+
+
 def cmd_stills(a):
     """Pull many distinct, good-quality stills out of a file or a range."""
     cands = frames.scan(a.video, a.start, a.end)
@@ -331,6 +339,16 @@ def main(argv=None):
     o.add_argument("--fast", action="store_true",
                    help="skip dialogue resolution (titles only, no episodes)")
     o.set_defaults(func=cmd_sources)
+
+    u = sub.add_parser("subs", parents=[common],
+                       help="attach a downloaded subtitle pack to the videos")
+    u.add_argument("media_dir")
+    u.add_argument("--subs", help="folder holding the .srt files "
+                                  "(default: the media folder itself)")
+    u.add_argument("--no-verify", action="store_true",
+                   help="skip playing each version against the audio")
+    u.add_argument("--overwrite", action="store_true")
+    u.set_defaults(func=cmd_subs)
 
     i = sub.add_parser("stills", parents=[common],
                        help="pull many distinct stills out of a video")

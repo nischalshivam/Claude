@@ -46,13 +46,14 @@ echo    index file   : !DB!
 echo.
 echo  ----------------------------------------------------------
 echo    1.  Check a media folder      - is my download usable?
-echo    2.  Make subtitles from audio - when a folder has none
-echo    3.  Build the library index
-echo    4.  Search for a line         - prove it works
-echo    5.  Show what is in the index
+echo    2.  Attach downloaded subtitles - from a season pack
+echo    3.  Make subtitles from audio - when there are none at all
+echo    4.  Build the library index
+echo    5.  Search for a line         - prove it works
+echo    6.  Show what is in the index
 echo.
-echo    6.  Set the media folder
-echo    7.  Run a job queue (jobs.json)
+echo    7.  Set the media folder
+echo    8.  Run a job queue (jobs.json)
 echo    0.  Exit
 echo  ----------------------------------------------------------
 echo.
@@ -60,12 +61,13 @@ set "CHOICE="
 set /p "CHOICE=  Pick a number: "
 
 if "!CHOICE!"=="1" goto do_check
-if "!CHOICE!"=="2" goto do_transcribe
-if "!CHOICE!"=="3" goto do_build
-if "!CHOICE!"=="4" goto do_find
-if "!CHOICE!"=="5" goto do_stats
-if "!CHOICE!"=="6" goto do_setfolder
-if "!CHOICE!"=="7" goto do_queue
+if "!CHOICE!"=="2" goto do_subs
+if "!CHOICE!"=="3" goto do_transcribe
+if "!CHOICE!"=="4" goto do_build
+if "!CHOICE!"=="5" goto do_find
+if "!CHOICE!"=="6" goto do_stats
+if "!CHOICE!"=="7" goto do_setfolder
+if "!CHOICE!"=="8" goto do_queue
 if "!CHOICE!"=="0" goto bye
 goto menu
 
@@ -122,6 +124,25 @@ goto menu
 call :need_folder || goto menu
 echo.
 %PY% -m media_index check "!MEDIA!"
+echo.
+pause
+goto menu
+
+:do_subs
+call :need_folder || goto menu
+echo.
+echo   Where are the downloaded .srt files?
+echo   Leave blank if they are already in the media folder.
+echo.
+set "SUBDIR="
+set /p "SUBDIR=  Subtitle folder: "
+if defined SUBDIR call :unquote SUBDIR !SUBDIR!
+echo.
+if defined SUBDIR (
+    %PY% -m media_index subs "!MEDIA!" --subs "!SUBDIR!"
+) else (
+    %PY% -m media_index subs "!MEDIA!"
+)
 echo.
 pause
 goto menu

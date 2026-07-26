@@ -1,0 +1,192 @@
+"""Attach a folder of downloaded .srt files to the right videos.
+
+A season subtitle pack does not arrive named the way your videos are named,
+and it usually contains several versions of each episode:
+
+    Breaking Bad - 1x01 - Pilot.DVDRip.ORPHEUS.en.srt
+    Breaking Bad - 1x01 - Pilot.DSR.0TV.en.srt
+    Breaking Bad - 1x01 - Pilot.DVDRip.en.srt
+
+Three files, one episode, and they are timed for three different releases.
+Renaming thirteen episodes by hand is tedious; picking the wrong version of
+each is worse, because the result looks fine and every clip lands beside its
+line.
+
+So this matches by episode NUMBER rather than by filename, and when several
+versions exist it plays each one against the video's own audio and keeps the
+one that actually fits. That is the same measurement the sync detector makes,
+used here to answer a different question: not "how far out is this?" but
+"which of these belongs to my copy?"
+"""
+from __future__ import annotations
+
+import os
+import re
+import shutil
+from dataclasses import dataclass, field
+
+from . import naming, subtitles, sync
+
+SUB_EXT = (".srt", ".vtt", ".ass", ".ssa")
+# Enough audio to tell two releases apart without decoding a whole episode.
+VERIFY_SECONDS = 420.0
+# A version this far out is a different cut, not a small drift.
+MAX_SANE_OFFSET_MS = 60_000
+
+
+@dataclass
+class Match:
+    video: str
+    label: str = ""
+    season: int | None = None
+    episode: int | None = None
+    candidates: list = field(default_factory=list)
+    chosen: str = ""
+    written: str = ""
+    score: float = 0.0
+    offset_ms: int = 0
+    status: str = "none"      # linked | already | none | unverified
+    note: str = ""
+
+    @property
+    def icon(self) -> str:
+        from . import term
+        return {"linked": term.sym("ok"), "already": term.sym("ok"),
+                "unverified": term.sym("warn"),
+                "none": term.sym("fail")}[self.status]
+
+
+_EP_PATTERNS = [
+    re.compile(r"(?i)\bs(\d{1,2})\s*[\._\- ]?\s*e(\d{1,3})\b"),
+    re.compile(r"(?i)\b(\d{1,2})\s*x\s*(\d{1,3})\b"),
+    re.compile(r"(?i)\bseason\s*(\d{1,2})\D{0,12}?episode\s*(\d{1,3})\b"),
+]
+
+
+def episode_of(name: str) -> tuple | None:
+    """(season, episode) from any of the shapes both sides actually use.
+
+    The subtitle side writes 1x01, the video side often writes
+    "Season 1 Episode 1" — matching them needs both.
+    """
+    stem = re.sub(r"[._]", " ", os.path.splitext(os.path.basename(name))[0])
+    for pat in _EP_PATTERNS:
+        m = pat.search(stem)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def collect(subs_dir: str) -> dict:
+    """{(season, episode): [paths]} for every subtitle under a folder."""
+    found: dict = {}
+    for dirpath, _dirs, files in os.walk(subs_dir):
+        for fn in sorted(files):
+            if not fn.lower().endswith(SUB_EXT):
+                continue
+            key = episode_of(fn)
+            if key:
+                found.setdefault(key, []).append(os.path.join(dirpath, fn))
+    return found
+
+
+def _rank(video: str, candidates: list, verify: bool,
+          log=lambda *a: None) -> tuple:
+    """(best_path, score, offset_ms). Plays each candidate against the audio."""
+    if len(candidates) == 1 and not verify:
+        return candidates[0], 0.0, 0
+
+    scored = []
+    for path in candidates:
+        cues = subtitles.parse_file(path)
+        if not cues:
+            continue
+        if not verify:
+            scored.append((0.0, 0, path))
+            continue
+        try:
+            r = sync.detect(video, cues, try_framerates=False,
+                            max_seconds=VERIFY_SECONDS)
+        except Exception as exc:
+            log(f"        {os.path.basename(path)}: could not test ({exc})")
+            continue
+        log(f"        {os.path.basename(path)[:52]:<52} "
+            f"score {r.score:.2f}  offset {r.offset_ms:+6d} ms")
+        # The right version is the one that agrees best AND needs least shifting
+        penalty = min(1.0, abs(r.offset_ms) / MAX_SANE_OFFSET_MS)
+        scored.append((r.score - 0.25 * penalty, r.offset_ms, path))
+
+    if not scored:
+        return "", 0.0, 0
+    scored.sort(key=lambda t: -t[0])
+    best = scored[0]
+    return best[2], best[0], best[1]
+
+
+def link(video_dir: str, subs_dir: str | None = None, verify: bool = True,
+         overwrite: bool = False, log=print) -> list[Match]:
+    """Give every video in `video_dir` the subtitle that belongs to it."""
+    subs_dir = subs_dir or video_dir
+    pool = collect(subs_dir)
+    log(f"{sum(len(v) for v in pool.values())} subtitle file(s) covering "
+        f"{len(pool)} episode(s) found under {subs_dir}")
+
+    out = []
+    for video in naming.walk_media(video_dir):
+        mid = naming.parse(video)
+        m = Match(video=video, label=mid.label,
+                  season=mid.season, episode=mid.episode)
+        target = os.path.splitext(video)[0] + ".en.srt"
+
+        if os.path.isfile(target) and not overwrite:
+            m.status, m.chosen, m.written = "already", target, target
+            m.note = "already has a subtitle"
+            out.append(m)
+            continue
+
+        key = (mid.season, mid.episode) if mid.season is not None else None
+        m.candidates = pool.get(key, []) if key else []
+        if not m.candidates:
+            m.note = ("no subtitle for this episode in the pack"
+                      if key else "could not tell which episode this file is")
+            out.append(m)
+            continue
+
+        log(f"  {mid.label}: {len(m.candidates)} candidate(s)")
+        chosen, score, offset = _rank(video, m.candidates, verify, log)
+        if not chosen:
+            m.note = "none of the candidates could be read"
+            out.append(m)
+            continue
+
+        shutil.copyfile(chosen, target)
+        m.chosen, m.written, m.score, m.offset_ms = chosen, target, score, offset
+        m.status = "linked" if verify else "unverified"
+        m.note = os.path.basename(chosen)
+        if verify and abs(offset) > 1000:
+            m.note += f"  (runs {offset:+d} ms out — build will correct it)"
+        out.append(m)
+    return out
+
+
+def format_results(matches: list[Match]) -> str:
+    from . import term
+    if not matches:
+        return "  no videos found"
+    lines = ["", "SUBTITLES", ""]
+    width = max(len(m.label or os.path.basename(m.video)) for m in matches)
+    for m in matches:
+        name = m.label or os.path.basename(m.video)
+        lines.append(f"  {m.icon} {name:<{width}}  {m.note}")
+    linked = sum(1 for m in matches if m.status == "linked")
+    already = sum(1 for m in matches if m.status == "already")
+    missing = sum(1 for m in matches if m.status == "none")
+    lines += ["", f"  {linked} linked {term.sym('dot')} {already} already had one "
+                  f"{term.sym('dot')} {missing} still missing"]
+    if missing:
+        lines.append(f"  {term.sym('arrow')} those episodes need a subtitle "
+                     "downloading separately")
+    else:
+        lines.append(f"  {term.sym('ok')} every episode has a subtitle — "
+                     "run 'check' to confirm, then 'build'")
+    return "\n".join(lines)
