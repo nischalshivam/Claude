@@ -12,7 +12,8 @@ import json
 import os
 import sys
 
-from . import cutter, library, search, sources, subtitles, sync
+from . import (cutter, jobs as jobs_mod, library, runner, search,
+               sources, subtitles, sync)
 
 
 def _fmt_bytes(n: int) -> str:
@@ -182,6 +183,21 @@ def cmd_sources(a):
     return 1 if any(r.status == "missing" for r in reqs) else 0
 
 
+def cmd_preflight(a):
+    """Check every queued job without building anything."""
+    queue = jobs_mod.load_jobs(a.jobs)
+    reports = jobs_mod.preflight_all(queue, log=lambda m: print("  " + str(m)))
+    print(jobs_mod.format_reports(reports))
+    return 1 if any(r.status == "BLOCKED" for r in reports) else 0
+
+
+def cmd_run(a):
+    """Pre-flight the whole queue, then build what passed."""
+    results = runner.run_queue(a.jobs, dry_run=a.dry_run,
+                               allow_gaps=not a.strict)
+    return 1 if any(r.status in ("failed", "skipped") for r in results) else 0
+
+
 def main(argv=None):
     # --db is shared by every subcommand, and works on either side of it
     common = argparse.ArgumentParser(add_help=False)
@@ -251,6 +267,20 @@ def main(argv=None):
     o.add_argument("--fast", action="store_true",
                    help="skip dialogue resolution (titles only, no episodes)")
     o.set_defaults(func=cmd_sources)
+
+    q = sub.add_parser("preflight", parents=[common],
+                       help="check a queue of jobs without building anything")
+    q.add_argument("jobs", help="job file (JSON)")
+    q.set_defaults(func=cmd_preflight)
+
+    n = sub.add_parser("run", parents=[common],
+                       help="pre-flight a queue, then build every job that passed")
+    n.add_argument("jobs", help="job file (JSON)")
+    n.add_argument("--dry-run", action="store_true",
+                   help="pre-flight only, build nothing")
+    n.add_argument("--strict", action="store_true",
+                   help="build only jobs with no gaps at all")
+    n.set_defaults(func=cmd_run)
 
     a = p.parse_args(argv)
     return a.func(a)

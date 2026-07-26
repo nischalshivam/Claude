@@ -32,6 +32,13 @@ python -m media_index cut "I never wanted the harvest" --db library.db \
 # 4. pre-flight a whole script before rendering anything
 python -m media_index resolve script.json --db library.db --out report.json
 
+# 5. what titles does this script need, and what is still missing?
+python -m media_index sources script.json --db library.db
+
+# 6. queue 25 videos: check them all, then build the ones that passed
+python -m media_index preflight jobs.json          # check only
+python -m media_index run jobs.json                # check, then build
+
 # check one file's subtitle timing;  what is in the library
 python -m media_index sync "D:/Media/Movie/Movie.mkv"
 python -m media_index stats --db library.db
@@ -241,11 +248,64 @@ corrected during indexing, the quote resolves to its *true* position, and the
 resulting clip shows the *correct scene* — verified by sampling the frame
 colour, not by trusting the timestamps.
 
+---
+
+## The queue (`jobs.py`, `runner.py`)
+
+```json
+{
+  "defaults": {"db": "library.db", "clip_seconds": 4.0, "height": 1080},
+  "jobs": [
+    {"name": "Why Walter Broke Bad", "script": "scripts/walter.json",
+     "audio": "audio/walter.mp3", "out": "output/walter"},
+    {"name": "The Red Wedding",     "script": "scripts/rw.json",
+     "audio": "audio/rw.mp3",     "out": "output/rw"}
+  ]
+}
+```
+
+`run` does its checking **for every job first**, then builds. The failure that
+must never happen — "job 8 died at 3 a.m., so jobs 9-25 never ran" — is
+designed out: a job that cannot be built is named up front and skipped, and
+every job is isolated, so a crash inside one leaves the rest untouched.
+
+### Three outcomes, not two
+
+| Status | Meaning | What happens |
+|---|---|---|
+| `READY` | every check passed | builds |
+| `GAPS` | builds, but some scenes need attention | **builds anyway**, gaps reported |
+| `BLOCKED` | cannot produce anything useful | skipped, reason printed |
+
+The middle tier is the one that matters. A 50-scene video with two soft scenes
+is still a video; refusing to build it is the wrong answer for someone queueing
+twenty-five overnight. So resolution has a **target** (80%, below which the job
+is a GAPS build) and a separate **floor** (50%, below which it is genuinely not
+worth an hour of rendering). A missing title blocks only when it costs 30%+ of
+the shots — one missing title out of five is a gap, not a blocker.
+
+### Output layout
+
+Written in the shape the existing editor tools already read:
+
+```
+out/
+  scene_001/
+    clip_01.mp4        cut on shot boundaries
+    image_01_1.jpg     a still from the same moment
+    scene.txt          the narration for this beat
+  scene_002/
+  manifest.json        every asset with its score and provenance
+```
+
+Re-running resumes: a scene whose folder already holds its assets is skipped,
+so an interrupted queue picks up where it stopped rather than starting over.
+
 ## Not in scope (yet)
 
 - **Visual index** — shot detection + embeddings for shots with no dialogue.
   That is Ladder 2, a separate module.
 - **Frame quality scoring** — picking the sharpest, best-composed frame within
   a shot rather than the midpoint.
-- **Queue runner** — per-video isolation and the pre-flight gate that stops a
-  render from starting when a scene cannot be resolved.
+- **Whisper fallback** — transcribing the English audio track when a file has
+  no readable subtitles at all. The last-resort rung of the ladder.
