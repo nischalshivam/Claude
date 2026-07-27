@@ -332,3 +332,55 @@ class TestJobIsolation(_QueueCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestTwoStillsFromOneShotAreTwoPictures(unittest.TestCase):
+    """A shot asking for two stills must not return one image twice.
+
+    On a real build 75 of 103 still-shots produced a pair, and side by side
+    on the contact sheet many of those pairs are plainly the same picture.
+    The de-duplicator was not at fault: asked for the two best frames in a
+    1.5-second window of a static two-hander, it correctly returned the two
+    best, and in 1.5 seconds of that shot nothing moves.
+
+    So the window widens with the number of stills wanted, and so does the
+    minimum distance between them.
+    """
+
+    def test_the_window_grows_with_the_number_of_stills(self):
+        one = runner.STILL_WINDOW_S * 1
+        four = runner.STILL_WINDOW_S * 4
+        self.assertGreater(four, one)
+        self.assertGreaterEqual(four, 4.0,
+                                "four stills need seconds of footage to differ")
+
+    @unittest.skipUnless(probe.ffmpeg_bin(), "ffmpeg not installed")
+    def test_two_stills_of_one_moment_land_seconds_apart(self):
+        # 25-35s spans a cut in the demo video, so two genuinely different
+        # pictures exist. They must be found, and they must not be adjacent
+        # frames of the same instant.
+        tmp = tempfile.mkdtemp(prefix="stills_")
+        try:
+            vid = dv.build(os.path.join(tmp, "v.mkv"), log=lambda *a: None)
+            got = runner._stills_for(vid, 25.0, 35.0, tmp, 1, 2, [],
+                                     log=lambda *a: None)
+            self.assertEqual(len(got), 2, "expected two distinct stills")
+            (_p1, t1), (_p2, t2) = got
+            self.assertGreater(abs(t2 - t1), 1.5,
+                               f"{t1:.1f}s and {t2:.1f}s is the same moment")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @unittest.skipUnless(probe.ffmpeg_bin(), "ffmpeg not installed")
+    def test_a_genuinely_static_moment_yields_one_still_not_two_alike(self):
+        # Asked for two stills of a stretch where nothing moves, the honest
+        # answer is one. Returning two would return the same image twice,
+        # which is what the contact sheet has been full of.
+        tmp = tempfile.mkdtemp(prefix="stills_")
+        try:
+            vid = dv.build(os.path.join(tmp, "v.mkv"), log=lambda *a: None)
+            got = runner._stills_for(vid, 18.0, 22.0, tmp, 1, 2, [],
+                                     log=lambda *a: None)
+            self.assertEqual(len(got), 1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)

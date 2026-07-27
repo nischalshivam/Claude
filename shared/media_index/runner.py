@@ -237,14 +237,24 @@ def _stills_for(path: str, start: float, end: float, scene_dir: str,
     file because it cannot be recovered afterwards, and an editor asked to
     swap one still for a better one has to know where to look.
     """
-    lo = max(0.0, start - STILL_WINDOW_S)
-    hi = end + STILL_WINDOW_S
+    # The window widens with the number of stills wanted, and so does the
+    # minimum gap between them. A fixed 1.5s window asked for two frames out
+    # of eight seconds of a static two-hander, and the de-duplicator quite
+    # correctly found the two best — which were the same picture, because in
+    # eight seconds of that shot nothing moves. On the last build 75 of 103
+    # still-shots produced a pair, and side by side on the contact sheet many
+    # of those pairs are plainly one image printed twice.
+    reach = STILL_WINDOW_S * max(1, want)
+    lo = max(0.0, start - reach)
+    hi = end + reach
     try:
         cands = frames.scan(path, lo, hi)
     except ProbeError as exc:
         log(f"      still scan failed — {exc}")
         return []
-    best = frames.pick(cands, want, exclude=seen)
+    gap = max(frames.MIN_GAP_S, (hi - lo) / (want * 2.0)) if want > 1 else \
+        frames.MIN_GAP_S
+    best = frames.pick(cands, want, min_gap=gap, exclude=seen)
     out = []
     for k, c in enumerate(best, 1):
         still = os.path.join(scene_dir, f"image_{shot_no:02d}_{k}.jpg")
