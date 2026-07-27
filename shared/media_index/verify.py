@@ -81,6 +81,14 @@ ANCHOR_TOLERANCE_S = 2.5
 # confined to eighteen seconds, which is fewer sampled frames than it has
 # shots — a window so tight it is a pin by another name.
 MIN_REACH_S = 120.0
+# The least source time two shots of the same run may be placed apart.
+#
+# Below this they are not two shots, they are one picture used twice: the
+# footage is sampled every two seconds, so nothing in this tool can even tell
+# two moments a second apart from each other. It is the smallest number that
+# means anything, which is what makes it safe as a structural constraint
+# rather than a taste one.
+MIN_APART_S = 2.0
 # Only shots that HAVE a match anywhere get to choose a frame. The rest are
 # interpolated between them.
 #
@@ -282,7 +290,8 @@ def lift_matrix(index: visual.VisualIndex, texts: list, backend) -> np.ndarray:
     return out.astype(np.float32)
 
 
-def interpolate(times: list, axis: list, placed: dict) -> list:
+def interpolate(times: list, axis: list, placed: dict,
+                apart: float = 0.0) -> list:
     """Fill the shots nobody could place, between the ones somebody could.
 
     `placed` maps a shot's index to its chosen time. Everything else lands in
@@ -291,12 +300,22 @@ def interpolate(times: list, axis: list, placed: dict) -> list:
     found rather than one quoted line at the far end of the run.
 
     Outside the placed range there is nothing to interpolate between, so the
-    shots there hold the nearest placed time rather than being flung to an
-    end of the episode by an extrapolation nobody checked.
+    shots there keep the spacing ALIGNMENT gave them, hung off the nearest
+    placed shot. Alignment is a good guess about pacing and a bad one about
+    absolute position, so its shape is worth keeping even when its position
+    is not. Two earlier versions did worse: extrapolating a rate flung shots
+    to the end of the episode, and holding them all ON the nearest placed
+    time is one picture shown five times.
+
+    `apart` is the least two shots may be placed apart. Nothing here can
+    invent room that is not there, but the solver has already guaranteed it:
+    two chosen shots are kept far enough apart to hold everything between
+    them.
     """
     if not placed:
         return list(times)
     keys = sorted(placed)
+    first, last = keys[0], keys[-1]
     out = list(times)
     for i in range(len(times)):
         if i in placed:
@@ -305,14 +324,34 @@ def interpolate(times: list, axis: list, placed: dict) -> list:
         before = [k for k in keys if k < i]
         after = [k for k in keys if k > i]
         if not before:
-            out[i] = placed[after[0]]
+            out[i] = placed[first] - max(0.0, times[first] - times[i])
         elif not after:
-            out[i] = placed[before[-1]]
+            out[i] = placed[last] + max(0.0, times[i] - times[last])
         else:
             a, b = before[-1], after[0]
             span = axis[b] - axis[a]
             frac = (axis[i] - axis[a]) / span if span > 0.01 else 0.5
             out[i] = placed[a] + frac * (placed[b] - placed[a])
+    if apart <= 0:
+        return out
+    # The proportional pass follows the script's shape, which is uneven: two
+    # short shots side by side can still land on the same second even when
+    # the stretch as a whole has room. Walk it forward and hold everything
+    # `apart`, without moving a shot that was actually found and without
+    # crowding out the ones still to come.
+    for j in range(len(keys) - 1):
+        a, b = keys[j], keys[j + 1]
+        for i in range(a + 1, b):
+            lo = out[i - 1] + apart
+            hi = placed[b] - (b - i) * apart
+            if hi < lo:                       # no room: share it out evenly
+                out[i] = placed[a] + (i - a) * (placed[b] - placed[a]) / (b - a)
+            else:
+                out[i] = min(max(out[i], lo), hi)
+    for i in range(first - 1, -1, -1):        # before the first one found
+        out[i] = max(0.0, min(out[i], out[i + 1] - apart))
+    for i in range(last + 1, len(out)):       # after the last one found
+        out[i] = max(out[i], out[i - 1] + apart)
     return out
 
 
@@ -322,11 +361,28 @@ def prior_matrix(times: np.ndarray, wanted_s: np.ndarray) -> np.ndarray:
     return (-PRIOR_WEIGHT * np.minimum(d * d, 9.0)).astype(np.float32)
 
 
-def solve(score: np.ndarray, bounds: list) -> list:
-    """Pick one frame per shot, strictly increasing in time, best total score.
+def solve(score: np.ndarray, bounds: list, gaps: list | None = None,
+          tail: int = 0) -> list:
+    """Pick one frame per shot, in increasing time, best total score.
 
     `bounds[i]` is None, or an inclusive (lo, hi) range of frame indices that
     shot i is pinned inside. Returns one frame index per shot.
+
+    `gaps[i]` is how many frames shot i must sit after shot i-1, and it is
+    what stops a run collapsing. `gaps[0]` is how many frames must come
+    before the first shot and `tail` how many must follow the last: the
+    shots interpolated at either end need room too, and without it the first
+    chosen shot can land on second zero of the episode with two shots still
+    to fit before it.
+
+    Only some shots choose; the rest are
+    interpolated between them, so two chosen shots with sixty interpolated
+    shots between them have to be far enough apart to HOLD sixty shots. When
+    they were merely required to be in order, six near-chance matches landed
+    within forty seconds of each other and the sixty shots between them were
+    spread across those forty seconds — thirty-one of the first sixty-six
+    pictures in a real build came out of one six-second stretch of episode,
+    which on screen is the same shot over and over.
 
     O(shots x frames): the prefix maximum of the previous row is accumulated
     rather than re-searched, so a 147-shot script against a 1,400-frame
@@ -335,6 +391,14 @@ def solve(score: np.ndarray, bounds: list) -> list:
     n, N = score.shape
     if n == 0 or N == 0 or n > N:
         return []
+    steps = [0] + [1] * (n - 1)
+    if gaps:
+        steps[0] = max(0, int(gaps[0]))
+        for i in range(1, min(n, len(gaps))):
+            steps[i] = max(1, int(gaps[i]))
+    tail = max(0, int(tail))
+    if sum(steps) + tail >= N:
+        return []                   # the run cannot fit here at all
 
     def masked(i):
         row = score[i].astype(np.float64).copy()
@@ -350,7 +414,11 @@ def solve(score: np.ndarray, bounds: list) -> list:
 
     back = np.zeros((n, N), dtype=np.int32)
     prev = masked(0)
+    room = steps[0]
+    if room:
+        prev[:room] = NEG
     for i in range(1, n):
+        g = steps[i]
         run_max = np.maximum.accumulate(prev)
         fresh = np.empty(N, dtype=bool)
         fresh[0] = True
@@ -359,12 +427,15 @@ def solve(score: np.ndarray, bounds: list) -> list:
         arg = np.maximum.accumulate(arg)
 
         shifted = np.full(N, NEG)
-        shifted[1:] = run_max[:-1]
-        back[i, 1:] = arg[:-1]
+        shifted[g:] = run_max[:N - g]
+        back[i, g:] = arg[:N - g]
+        room += g
         cur = masked(i) + shifted
-        cur[:i] = NEG                   # no room for i predecessors before this
+        cur[:room] = NEG            # no room for the shots that come first
         prev = cur
 
+    if tail:
+        prev[N - tail:] = NEG
     end = int(np.argmax(prev))
     if prev[end] <= NEG / 2:
         return []                       # no legal assignment exists
@@ -567,26 +638,57 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     # and keeps its pin either way — but it does not vouch for the lucky
     # frames around it, and a run held by two anchors can still be pulled two
     # minutes out of shape by one of them.
+    #
+    # And a shot that IS convincing vouches only for itself. Letting one
+    # vouch for the whole run was the difference between a usable build and
+    # an unusable one: 91 shots, 6 above a floor of 2.5, one of them at 3.6 —
+    # so all six were kept, and the five that were chance decided where 85
+    # shots went.
     picks = [k for k in choosers if not held[k]]
-    if picks and not any(reachable[k] >= strong for k in picks) \
-            and len(picks) <= len(ordered) / 4.0:
-        log(f"      {run.label}: only {len(picks)} of {len(ordered)} shot(s) "
-            "beat what an unrelated caption scores here — that is chance, not "
-            "a match")
-        choosers = [k for k in choosers if held[k]]
+    if picks and len(picks) <= len(ordered) / 4.0:
+        sure = [k for k in picks if reachable[k] >= strong]
+        if not sure:
+            log(f"      {run.label}: only {len(picks)} of {len(ordered)} "
+                "shot(s) beat what an unrelated caption scores here — that is "
+                "chance, not a match")
+        elif len(sure) < len(picks):
+            log(f"      {run.label}: {len(sure)} shot(s) found outright; the "
+                f"other {len(picks) - len(sure)} are level with what an "
+                "unrelated caption scores here and do not get a vote")
+        keep = set(sure)
+        choosers = [k for k in choosers if held[k] or k in keep]
 
-    path = solve(total[choosers], [bounds[k] for k in choosers]) if choosers else []
+    # How far apart two choosers must be: far enough to hold the shots that
+    # will be interpolated between them, at MIN_APART_S each. Without this a
+    # run does not spread, it stacks.
+    dt = float(np.median(np.diff(index.times))) if len(index.times) > 1 else 2.0
+    per_shot = max(1, int(round(MIN_APART_S / max(dt, 0.1))))
+    gaps, tail = [], 0
+    if choosers:
+        # The shots at either end need room as much as the ones in between.
+        gaps = [choosers[0] * per_shot] + [
+            max(1, (choosers[j] - choosers[j - 1]) * per_shot)
+            for j in range(1, len(choosers))]
+        tail = (len(ordered) - 1 - choosers[-1]) * per_shot
+
+    path = solve(total[choosers], [bounds[k] for k in choosers],
+                 gaps, tail) if choosers else []
     if not path and any(held[k] for k in choosers):
         # The pins themselves are out of order, which no assignment can
         # satisfy. That is worth knowing: it means two quoted lines disagree
         # about which way this run runs. Solve it on the pictures alone.
         log(f"      {run.label}: the quoted lines contradict each other on "
             "order — deciding on the pictures alone")
-        path = solve(total[choosers], [inside] * len(choosers))
-        held = [False] * len(ordered)
+        path = solve(total[choosers], [inside] * len(choosers), gaps, tail)
+        if path:
+            held = [False] * len(ordered)
     if not path:
+        # Either nothing matched, or what matched is packed too tightly to
+        # hold this many shots without stacking them on one another.
+        # Alignment's spread is the better answer to both.
         log(f"      {run.label}: nothing in these {len(ordered)} shot(s) could "
-            "be found in the picture — left as aligned")
+            "be found in the picture far enough apart to hold them — left as "
+            "aligned")
         for k, i in enumerate(ordered):
             out[i] = Verdict(beat=placements[i].beat, shot=placements[i].shot,
                              bar=bar, best=float(reachable[k]),
@@ -598,7 +700,7 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     lifts = {k: float(score[k, path[j]]) for j, k in enumerate(choosers)}
     axis = align.axis(run)
     settled = interpolate([placements[i].start_ms / 1000.0 for i in ordered],
-                          [axis[i] for i in ordered], chosen)
+                          [axis[i] for i in ordered], chosen, MIN_APART_S)
     if len(choosers) < len(ordered):
         log(f"      {run.label}: {len(choosers)} shot(s) found in the picture, "
             f"{len(ordered) - len(choosers)} placed between them")

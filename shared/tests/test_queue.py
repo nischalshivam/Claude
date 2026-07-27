@@ -384,3 +384,47 @@ class TestTwoStillsFromOneShotAreTwoPictures(unittest.TestCase):
             self.assertEqual(len(got), 1)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestOneMomentGetsOnScreenOnce(unittest.TestCase):
+    """The visible half of the placement failure, and its last net.
+
+    Thirty-one of the first sixty-six pictures of a finished video came out
+    of one six-second stretch of episode. Nothing objected, because each
+    frame was technically a different frame — a hand moving through a shot
+    makes every frame slightly different, which is exactly where a
+    perceptual comparison is weakest. Time cannot be argued with that way.
+    """
+
+    def _job(self, tmp):
+        return jobs_mod.Job(name="j", script="s.json", out=tmp)
+
+    def test_a_shot_landing_where_one_already_played_is_skipped(self):
+        tmp = tempfile.mkdtemp(prefix="repeat_")
+        try:
+            used = {"/ep.mkv": [1930.0]}
+            beat = {"beat": 1, "narration": "N.", "shots": [{"source": "x"}]}
+            p = runner.align.Placement(beat=1, shot=1, path="/ep.mkv",
+                                       start_ms=1930_400, end_ms=1934_400,
+                                       method="interpolated")
+            scene = runner.build_scene(self._job(tmp), 1, beat, [p], [],
+                                       log=lambda *a: None, used=used)
+            self.assertEqual(scene.status, "empty")
+            self.assertIn("already on screen", scene.note)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_far_enough_away_is_a_different_shot(self):
+        self.assertFalse(runner._repeated({"/ep.mkv": [1930.0]}, "/ep.mkv",
+                                          1930.0 + runner.REPEAT_APART_S))
+        self.assertTrue(runner._repeated({"/ep.mkv": [1930.0]}, "/ep.mkv",
+                                         1930.0 + runner.REPEAT_APART_S / 2))
+
+    def test_the_same_second_of_a_different_episode_is_fine(self):
+        self.assertFalse(runner._repeated({"/a.mkv": [1930.0]}, "/b.mkv",
+                                          1930.0))
+
+    def test_without_a_record_nothing_is_refused(self):
+        # build_scene is called directly by tests and by tools that do not
+        # track a whole video; no record means no de-duplication, not a crash.
+        self.assertFalse(runner._repeated(None, "/ep.mkv", 1930.0))

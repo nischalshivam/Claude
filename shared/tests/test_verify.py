@@ -1097,16 +1097,18 @@ class TestOnlyAShotThatWasFoundGetsToChooseWhereItGoes(unittest.TestCase):
         self.assertEqual([p.start_ms for p in places],
                          [100000, 1200000, 2200000])
 
-    def test_an_unmatched_shot_before_every_match_holds_the_first_one(self):
-        # There is nothing to interpolate between, and extrapolating would
-        # fling it to an end of the episode nobody checked.
+    def test_an_unmatched_shot_before_every_match_sits_just_before_it(self):
+        # There is nothing to interpolate between, and extrapolating a rate
+        # would fling it to an end of the episode nobody checked. Holding it
+        # ON the first match is worse still — that is the same picture twice.
         caps = [f"filler{i}" for i in range(400)]
         caps[100], caps[200] = "doorway", "apron"
         index = fake_index(caps, backend=self.backend)
         run = self._run(["nothinglikethis", "doorway", "apron"])
         places = self._places(run, 50.0)
         verify.verify_run(index, run, places, self.backend)
-        self.assertEqual(places[0].start_ms, places[1].start_ms)
+        self.assertEqual(places[0].start_ms,
+                         places[1].start_ms - int(verify.MIN_APART_S * 1000))
 
     def test_two_lucky_shots_do_not_get_to_drag_the_other_ten(self):
         """The per-shot bar cannot be clean, so the run is asked as well.
@@ -1135,7 +1137,12 @@ class TestOnlyAShotThatWasFoundGetsToChooseWhereItGoes(unittest.TestCase):
         places = self._places(run, 1000.0)
         places[0].method, places[0].confidence = "anchor", "high"
         verify.verify_run(index, run, places, self.backend)
-        self.assertEqual({p.start_ms for p in places}, {1_000_000})
+        self.assertEqual(places[0].start_ms, 1_000_000)   # the pin holds
+        # ...and the eleven the pictures could not find sit in order behind
+        # it rather than on top of it.
+        times = sorted(p.start_ms / 1000.0 for p in places)
+        self.assertTrue(all(b - a >= verify.MIN_APART_S - 1e-6
+                            for a, b in zip(times, times[1:])), times)
 
     def test_one_certain_match_in_a_long_run_still_counts(self):
         """The other half of that rule. A single shot far above the floor is
@@ -1148,6 +1155,43 @@ class TestOnlyAShotThatWasFoundGetsToChooseWhereItGoes(unittest.TestCase):
         places = self._places(run, 100.0)
         verify.verify_run(index, run, places, self.backend)
         self.assertEqual(places[0].start_ms, 1_200_000)
+
+    def test_a_run_may_not_stack_its_shots_on_one_moment(self):
+        """The build this was written for: 91 shots, six matches, and the six
+        landed within forty seconds of each other. Sixty shots were then
+        interpolated across those forty seconds — 31 of the first 66 pictures
+        in the finished video came out of one six-second stretch of episode,
+        which on screen is the same shot over and over.
+
+        Two chosen shots with sixty shots between them have to be far enough
+        apart to hold sixty shots.
+        """
+        caps = [f"filler{i}" for i in range(1200)]
+        for j, at in enumerate((900, 902, 904, 906)):     # all within 12s
+            caps[at] = f"boxcutter{j}"
+        index = fake_index(caps, backend=self.backend)
+        visuals = [f"nothinglikethis{i}" for i in range(60)]
+        for j, shot in enumerate((5, 20, 40, 55)):
+            visuals[shot] = f"boxcutter{j}"
+        run = self._run(visuals)
+        places = self._places(run, 1800.0)
+        said = []
+        verify.verify_run(index, run, places, self.backend, log=said.append)
+        times = sorted(p.start_ms / 1000.0 for p in places)
+        tight = sum(1 for a, b in zip(times, times[1:])
+                    if b - a < verify.MIN_APART_S)
+        self.assertEqual(tight, 0, f"{tight} shot(s) landed on top of another")
+
+    def test_a_scene_that_really_is_tight_is_still_allowed(self):
+        """The constraint is about what the tool can tell apart, not about
+        taste: four shots need six seconds, and six seconds is fine."""
+        caps = [f"filler{i}" for i in range(400)]
+        caps[100], caps[102], caps[104] = "doorway", "apron", "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["doorway", "apron", "boxcutter"])
+        places = self._places(run, 100.0)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual([p.start_ms for p in places], [200000, 204000, 208000])
 
     def test_interpolation_follows_the_scripts_own_shape(self):
         placed = {0: 100.0, 3: 400.0}

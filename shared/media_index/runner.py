@@ -138,6 +138,18 @@ STILL_WINDOW_S = 1.5
 # than timeline.MAX_CLIP_S; a test asserts that they agree.
 CLIP_HEADROOM_S = 6.0
 
+# Two assets taken from within this much of the same moment of the same
+# episode are the same picture, whatever the placement says.
+#
+# The last net, not the fix — placement is where the spreading is decided.
+# But when placement went wrong it went wrong invisibly: 31 of the first 66
+# pictures of a finished video came out of one six-second stretch, and
+# nothing in the pipeline objected because each frame was, technically, a
+# different frame. The perceptual de-duplicator missed them precisely
+# because a hand moving through a shot makes every frame slightly different.
+# Time cannot be argued with in the same way.
+REPEAT_APART_S = 2.0
+
 
 def _wants_still(shot: dict) -> bool:
     return str(shot.get("kind") or "").strip().lower() == "still"
@@ -150,8 +162,22 @@ def _still_count(shot: dict, default: int) -> int:
         return default
 
 
+def _repeated(used: dict | None, path: str, at: float,
+              apart: float = REPEAT_APART_S) -> bool:
+    """Has this moment of this episode already been used in the video?"""
+    if used is None:
+        return False
+    return any(abs(at - t) < apart for t in used.get(path, ()))
+
+
+def _mark_used(used: dict | None, path: str, at: float) -> None:
+    if used is not None:
+        used.setdefault(path, []).append(at)
+
+
 def build_scene(job, index: int, beat: dict, placements: list,
-                seen: list | None = None, log=lambda *a: None) -> SceneResult:
+                seen: list | None = None, log=lambda *a: None,
+                used: dict | None = None) -> SceneResult:
     """Cut every shot of one beat. Never raises — a bad scene is reported.
 
     Driven by alignment rather than by dialogue matches alone. On a real
@@ -175,12 +201,18 @@ def build_scene(job, index: int, beat: dict, placements: list,
     shots = beat.get("shots") or []
     mine = [p for p in placements if p.beat == beat_no]
     unplaced = 0
+    repeats = 0
 
     for p in mine:
         n = p.shot
         shot = shots[n - 1] if 0 < n <= len(shots) else {}
         if not p.ok or not p.path:
             unplaced += 1
+            continue
+        if _repeated(used, p.path, p.start_ms / 1000.0):
+            # Somewhere earlier in this video the same moment is already on
+            # screen. Cutting it again does not add a shot, it repeats one.
+            repeats += 1
             continue
         start = p.start_ms / 1000.0
         end = max(start + 1.0, p.end_ms / 1000.0)
@@ -212,13 +244,16 @@ def build_scene(job, index: int, beat: dict, placements: list,
                 res.clips.append(clip_path)
                 res.methods[os.path.basename(clip_path)] = p.method
                 res.origins[os.path.basename(clip_path)] = round(start, 2)
+                _mark_used(used, p.path, start)
 
             want = _still_count(shot, job.stills_per_scene)
-            got = _stills_for(p.path, start, end, scene_dir, n, want, seen, log)
+            got = _stills_for(p.path, start, end, scene_dir, n, want, seen, log,
+                              used)
             for still, at in got:
                 res.stills.append(still)
                 res.methods[os.path.basename(still)] = p.method
                 res.origins[os.path.basename(still)] = round(at, 2)
+                _mark_used(used, p.path, at)
         except (ProbeError, ValueError, OSError) as exc:
             log(f"      scene {index}: shot {n} failed — {exc}")
             continue
@@ -227,8 +262,15 @@ def build_scene(job, index: int, beat: dict, placements: list,
         res.status = "cut" if res.clips else "fallback"
         if unplaced:
             res.note = f"{unplaced} shot(s) could not be placed"
+        elif repeats:
+            res.note = (f"{repeats} shot(s) skipped — already on screen "
+                        "earlier in this video")
         elif not res.clips:
             res.note = "stills only"
+    elif repeats:
+        res.status = "empty"
+        res.note = (f"every shot here ({repeats}) was already on screen "
+                    "earlier in this video")
     else:
         res.status = "empty"
         res.note = ("nothing in this beat could be placed — no quoted line "
@@ -243,7 +285,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
 
 def _stills_for(path: str, start: float, end: float, scene_dir: str,
                 shot_no: int, want: int, seen: list | None,
-                log=lambda *a: None) -> list:
+                log=lambda *a: None, used: dict | None = None) -> list:
     """Sharp, distinct frames from around a placement.
 
     Sampling at fixed fractions of the clip was cheaper and wrong: it lands on
@@ -272,6 +314,12 @@ def _stills_for(path: str, start: float, end: float, scene_dir: str,
         return []
     gap = max(frames.MIN_GAP_S, (hi - lo) / (want * 2.0)) if want > 1 else \
         frames.MIN_GAP_S
+    # A frame from a moment already on screen is the same picture however
+    # different its pixels happen to be — and in a moving shot they always
+    # are, which is why the perceptual test alone let a six-second stretch
+    # supply thirty-one pictures.
+    cands = [c for c in cands
+             if not _repeated(used, path, c.time)]
     best = frames.pick(cands, want, min_gap=gap, exclude=seen)
     out = []
     for k, c in enumerate(best, 1):
@@ -358,8 +406,9 @@ def run_job(job, report, log=print) -> JobResult:
         checked = verify.apply(job.db, report.beats, placements, log=log)
         log(checked.summary())
         seen: list = []          # every still already taken, for de-duplication
+        used: dict = {}          # and every moment of every episode used
         for i, beat in enumerate(report.beats, 1):
-            scene = build_scene(job, i, beat, placements, seen, log)
+            scene = build_scene(job, i, beat, placements, seen, log, used)
             result.scenes.append(scene)
             mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
             log(f"    scene {i:03d} {mark[scene.status]} "
