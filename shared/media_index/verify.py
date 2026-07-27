@@ -60,6 +60,11 @@ PRIOR_TAU_S = 90.0
 # An anchored shot may be nudged this far to land on a sampled frame, and no
 # further: the subtitle timing is the ground truth it is standing on.
 ANCHOR_TOLERANCE_S = 2.5
+# The least a run may wander either side of where alignment put it, whatever
+# its own length. A four-shot run claiming eighteen seconds would otherwise be
+# confined to eighteen seconds, which is fewer sampled frames than it has
+# shots — a window so tight it is a pin by another name.
+MIN_REACH_S = 120.0
 NEG = -1e9
 
 
@@ -272,6 +277,17 @@ def _distinct_at_best(score: np.ndarray) -> np.ndarray:
     return mine >= best_any - 1e-6
 
 
+def _bounds_for_window(times: np.ndarray, window) -> tuple:
+    """Frame indices covering a stretch of the episode, or None for all of it."""
+    if not window:
+        return None
+    lo = int(np.searchsorted(times, window[0], side="left"))
+    hi = int(np.searchsorted(times, window[1], side="right")) - 1
+    if hi < lo:
+        return None                 # the window fell outside the footage
+    return lo, hi
+
+
 def _bounds_for_anchor(times: np.ndarray, at_s: float) -> tuple:
     lo = int(np.searchsorted(times, at_s - ANCHOR_TOLERANCE_S, side="left"))
     hi = int(np.searchsorted(times, at_s + ANCHOR_TOLERANCE_S, side="right")) - 1
@@ -308,45 +324,56 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     score = lift_matrix(index, texts, backend)
     wanted = np.array([placements[i].start_ms / 1000.0 for i in ordered],
                       dtype=np.float32)
-    # The prior is only worth what alignment actually measured, and with one
-    # anchor it measured nothing about pacing — the axis is an assumption
-    # extrapolated from a single point. The build that proved it: the three
-    # runs with NO anchor, placed on the pictures alone, came back 24/24,
-    # 15/15 and 7/7 verified. The runs pinned to one anchor and pulled
-    # towards its extrapolation came back 65/219 and 1/9 — and S04E10 was
-    # four shots, so density is no excuse: three of its four had a match
-    # somewhere and the prior kept them from it.
+    # An anchor answers WHICH STRETCH of the episode. The pictures answer
+    # WHICH FRAME inside it. Neither is allowed to do the other's job, and
+    # two builds went wrong by letting one of them try.
     #
-    # Two anchors measure a real stretch between two real times, and that is
-    # worth following where the pictures are quiet. One anchor fixes a point
-    # and nothing else, so it stays pinned and stops voting on everything
-    # around it.
+    # A soft prior let the anchor decide frames: 19 of 91 shots kept a match
+    # they had found, because the pull towards one extrapolated point beat
+    # the picture that actually matched. Removing it entirely was worse. With
+    # 91 shots that must fall in increasing time order and a weak per-shot
+    # signal, the best path is simply to spread them evenly over everything
+    # available — so a run belonging to a six-minute scene at 30 minutes was
+    # laid across the whole 47-minute episode, starting at 56 seconds.
+    #
+    # So the anchor gives a hard window and no vote inside it. A run may
+    # wander by at most its own planned length from where alignment put it,
+    # which cannot reach another sequence and cannot pin a single frame.
     grounded = sum(1 for i in ordered if placements[i].method == "anchor")
-    if grounded >= 2:
-        total = score + prior_matrix(index.times, wanted)
-    else:
-        total = score
-        if grounded == 1:
-            log(f"      {run.label}: one anchor only — it is held where its "
-                "line is, but the pictures decide the rest")
+    total = score
+    window = None
+    if grounded:
+        lo = min(wanted) if len(wanted) else 0.0
+        hi = max(wanted) if len(wanted) else 0.0
+        reach = max(hi - lo, MIN_REACH_S)
+        window = (lo - reach, hi + reach)
+        log(f"      {run.label}: held inside {window[0]:.0f}s-{window[1]:.0f}s "
+            "by its quoted line; the pictures choose the frames within it")
 
-    pinned = []
+    inside = _bounds_for_window(index.times, window) if window else None
+    # Two different things, and conflating them cost a whole build: `bounds`
+    # is where the solver may look, `held` is whether the shot is standing on
+    # a quoted line. Once the window started filling `bounds` for every shot,
+    # "has bounds" stopped meaning "is an anchor" — and every shot in the run
+    # was treated as pinned and never moved at all.
+    bounds, held = [], []
     for i in ordered:
         p = placements[i]
-        if p.method == "anchor" and p.confidence in ("high", "medium"):
-            pinned.append(_bounds_for_anchor(index.times, p.start_ms / 1000.0))
-        else:
-            pinned.append(None)
+        anchor = p.method == "anchor" and p.confidence in ("high", "medium")
+        held.append(anchor)
+        # An anchor's pin is tighter than the window and wins.
+        bounds.append(_bounds_for_anchor(index.times, p.start_ms / 1000.0)
+                      if anchor else inside)
 
-    path = solve(total, pinned)
-    if not path and any(b is not None for b in pinned):
+    path = solve(total, bounds)
+    if not path and any(held):
         # The pins themselves are out of order, which no assignment can
         # satisfy. That is worth knowing: it means two quoted lines disagree
         # about which way this run runs. Solve it on the pictures alone.
         log(f"      {run.label}: the quoted lines contradict each other on "
             "order — deciding on the pictures alone")
-        path = solve(total, [None] * len(ordered))
-        pinned = [None] * len(ordered)
+        path = solve(total, [inside] * len(ordered))
+        held = [False] * len(ordered)
     if not path:
         log(f"      {run.label}: too few frames indexed to re-place "
             f"{len(ordered)} shot(s) — left as aligned")
@@ -368,7 +395,7 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
         after = int(index.times[f] * 1000)
         duration = max(500, p.end_ms - p.start_ms)
 
-        if pinned[k] is not None:
+        if held[k]:
             v = Verdict(beat=p.beat, shot=p.shot, action="pinned",
                         before_ms=before, after_ms=before, lift=lift,
                         best=best, distinct=bool(own_best[k]))

@@ -914,15 +914,20 @@ class TestSayingWhichFixIsNeeded(unittest.TestCase):
         self.assertIn("2 matched nothing anywhere", text)
 
 
-class TestThePriorIsWorthWhatAlignmentMeasured(unittest.TestCase):
-    """One anchor fixes a point. It does not measure a pace.
+class TestAnAnchorPicksTheStretchAndThePicturesPickTheFrame(unittest.TestCase):
+    """Neither is allowed to do the other's job. Two builds proved it.
 
-    The build that settled this: three runs with no anchor at all, placed on
-    the pictures alone, came back 24/24, 15/15 and 7/7 verified. The runs
-    pinned to a single anchor and pulled towards its extrapolation came back
-    65/219 and 1/9 — and one of those was four shots long, so scene density
-    is no excuse. Three of its four had a match somewhere in the episode and
-    the prior kept them from it.
+    A soft prior let the anchor decide frames: 19 of 91 shots kept a match
+    they had found, because the pull towards one extrapolated point beat the
+    picture that actually matched.
+
+    Removing it entirely was worse. With 91 shots that must fall in
+    increasing order and a weak per-shot signal, the best path is simply to
+    spread them evenly over everything available — so a run belonging to a
+    six-minute scene at 30 minutes was laid across the whole 47-minute
+    episode, opening at 56 seconds.
+
+    So the anchor gives a hard window and no vote inside it.
     """
 
     def setUp(self):
@@ -949,28 +954,59 @@ class TestThePriorIsWorthWhatAlignmentMeasured(unittest.TestCase):
             out.append(p)
         return out
 
-    def test_one_anchor_does_not_drag_the_rest_away_from_the_pictures(self):
-        # The anchor is real and stays put. Everything else is 100 seconds
-        # from where the pictures say it is, and the pictures must win.
-        places = self._places([2.0, 4.0, 72.0], anchors={2})
+    def test_the_pictures_win_inside_the_window(self):
+        # The anchor is real and stays put. The other two are seconds from
+        # where the pictures say they are, well within reach, and the
+        # pictures must win.
+        places = self._places([56.0, 62.0, 72.0], anchors={2})
         verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
                           places, self.backend)
         self.assertEqual(places[0].start_ms, 60000)
         self.assertEqual(places[1].start_ms, 66000)
         self.assertEqual(places[2].start_ms, 72000)
 
-    def test_it_says_so_in_the_log(self):
+    def test_a_run_cannot_leave_the_stretch_its_anchor_identified(self):
+        """The failure that made a real video open on the wrong scene.
+
+        The captions match frames at 60-72s. The anchor puts the run at
+        1500s, four minutes of episode away. Whatever the pictures think,
+        a run cannot cross the episode to reach them — that is not a better
+        frame, it is a different sequence.
+        """
+        caps = [f"filler{i}" for i in range(800)]     # a long episode
+        caps[30], caps[33], caps[36] = "doorway", "apron", "cutter"
+        index = fake_index(caps, backend=self.backend)
+        places = self._places([1500.0, 1506.0, 1512.0], anchors={2})
+        verify.verify_run(index, self._run(["doorway", "apron", "cutter"]),
+                          places, self.backend)
+        for p in places:
+            self.assertGreater(p.start_ms, 1_300_000,
+                               "the run escaped its own sequence")
+
+    def test_the_window_is_never_narrower_than_the_frames_it_needs(self):
+        # A four-shot run claiming eighteen seconds must not be confined to
+        # eighteen seconds; that is a pin by another name.
+        caps = [f"filler{i}" for i in range(400)]
+        caps[100] = "doorway"
+        index = fake_index(caps, backend=self.backend)
+        places = self._places([200.0, 203.0, 206.0], anchors={0})
+        verify.verify_run(index, self._run(["doorway", "apron", "cutter"]),
+                          places, self.backend)
+        # 200s +/- MIN_REACH_S covers frame 100 (at 200s) and much more
+        self.assertLess(places[1].start_ms, 340_000)
+
+    def test_it_says_which_stretch_it_is_working_in(self):
         said = []
         verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
-                          self._places([2.0, 4.0, 72.0], anchors={2}),
+                          self._places([56.0, 62.0, 72.0], anchors={2}),
                           self.backend, log=said.append)
-        self.assertTrue(any("one anchor only" in s for s in said), said)
+        self.assertTrue(any("held inside" in s for s in said), said)
 
-    def test_two_anchors_do_measure_a_pace_and_are_still_followed(self):
-        # Both ends pinned: the run is held between two real times, which is
-        # a measurement rather than an extrapolation.
-        places = self._places([60.0, 66.0, 72.0], anchors={0, 2})
-        verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
+    def test_a_run_with_no_anchor_has_no_window_and_roams_freely(self):
+        caps = [f"filler{i}" for i in range(800)]
+        caps[600], caps[610], caps[620] = "doorway", "apron", "cutter"
+        index = fake_index(caps, backend=self.backend)
+        places = self._places([10.0, 20.0, 30.0])          # no anchors
+        verify.verify_run(index, self._run(["doorway", "apron", "cutter"]),
                           places, self.backend)
-        self.assertEqual(places[0].start_ms, 60000)
-        self.assertEqual(places[2].start_ms, 72000)
+        self.assertEqual(places[0].start_ms, 1_200_000)
