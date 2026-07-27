@@ -317,6 +317,20 @@ class TestQueueRun(_QueueCase):
                             for n in names))
         self.assertIn("scene.txt", names)
 
+    def test_every_asset_names_its_own_episode(self):
+        """A beat routinely draws from two episodes — the scene, and the
+        flashback it refers to. Labelling every asset with whichever one the
+        FIRST shot came from reported six shots as Season 4 Episode 1 while
+        they were sitting in Season 3 Episode 13, which is exactly the kind
+        of wrong label that sends an investigation into the wrong file."""
+        with open(os.path.join(self.tmp, "run", "a", "manifest.json"),
+                  encoding="utf-8") as f:
+            man = json.load(f)
+        for scene in man["scenes"]:
+            for asset in scene["assets"]:
+                self.assertIn("source", asset)
+                self.assertTrue(asset["source"], asset["file"])
+
     def test_manifest_carries_scores_and_provenance(self):
         with open(os.path.join(self.tmp, "run", "a", "manifest.json"),
                   encoding="utf-8") as f:

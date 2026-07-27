@@ -57,6 +57,15 @@ class SceneResult:
     # lengthen a clip or replace a still needs to know where to go back to,
     # and a folder of clip_01.mp4 files says nothing about that.
     origins: dict = field(default_factory=dict)     # {"clip_01.mp4": 2013.4}
+    # And WHICH episode it came from, per asset.
+    #
+    # A beat routinely draws from two episodes — the scene, and a flashback
+    # it refers to — and the manifest used to label every asset in a scene
+    # with whichever episode the FIRST one happened to come from. Six shots
+    # of a real build were reported as Season 4 Episode 1 while sitting in
+    # Season 3 Episode 13, which is exactly the kind of wrong label that
+    # sends an investigation into the wrong file.
+    sources: dict = field(default_factory=dict)     # {"clip_01.mp4": "S03E13.mp4"}
 
     @property
     def ok(self) -> bool:
@@ -371,6 +380,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
                 res.clips.append(clip_path)
                 res.methods[os.path.basename(clip_path)] = p.method
                 res.origins[os.path.basename(clip_path)] = round(start, 2)
+                res.sources[os.path.basename(clip_path)] = os.path.basename(p.path)
                 _mark_used(used, p.path, start)
 
             want = _still_count(shot, job.stills_per_scene)
@@ -380,6 +390,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
                 res.stills.append(still)
                 res.methods[os.path.basename(still)] = p.method
                 res.origins[os.path.basename(still)] = round(at, 2)
+                res.sources[os.path.basename(still)] = os.path.basename(p.path)
                 _mark_used(used, p.path, at)
         except (ProbeError, ValueError, OSError) as exc:
             log(f"      scene {index}: shot {n} failed — {exc}")
@@ -504,11 +515,13 @@ def write_manifest(job, result: JobResult) -> str:
                 [{"file": os.path.basename(p), "kind": "video",
                   "placed_by": s.methods.get(os.path.basename(p), "unknown"),
                   "source_start": s.origins.get(os.path.basename(p)),
+                  "source": s.sources.get(os.path.basename(p), s.source),
                   "score": _asset_score(s, p, 1.0)}
                  for p in s.clips]
                 + [{"file": os.path.basename(p), "kind": "image",
                     "placed_by": s.methods.get(os.path.basename(p), "unknown"),
                     "source_start": s.origins.get(os.path.basename(p)),
+                    "source": s.sources.get(os.path.basename(p), s.source),
                     "score": _asset_score(s, p, 0.9)}
                    for p in s.stills]),
         } for s in result.scenes],
