@@ -93,11 +93,40 @@ class Verdict:
     before_ms: int = 0
     after_ms: int = 0
     lift: float = 0.0
+    # The best this description scored ANYWHERE in the episode, ignoring
+    # order and ignoring where alignment expected it. Without this, a low
+    # `lift` has two completely different meanings that look identical:
+    # the model could not find the picture at all, or it found it and the
+    # ordering constraint gave that frame to a neighbour. Those need
+    # opposite fixes — better captions versus a looser solver — so a build
+    # that cannot tell them apart cannot be acted on.
+    best: float = 0.0
+    # Whether, at that best frame, this description beats every OTHER
+    # description in the run. `best` alone cannot answer that: the highest
+    # of 1,400 scores is high even for a caption about nothing in the
+    # episode, simply because it is the highest of 1,400. Asking instead
+    # "does any other caption explain this frame better than mine does"
+    # removes the chance entirely — it compares captions, not frames, so
+    # the number of frames searched drops out of it.
+    distinct: bool = False
     note: str = ""
 
     @property
     def moved_seconds(self) -> float:
         return abs(self.after_ms - self.before_ms) / 1000.0
+
+    @property
+    def lost_to_ordering(self) -> bool:
+        """It could have been found, and the ordering took it away.
+
+        Both halves are needed. `best` alone counts a caption that merely
+        won a lottery over 1,400 frames; `distinct` alone counts a caption
+        that beat its rivals at a frame none of them actually matched.
+        Together they mean: there was a real frame for this shot, it was
+        unambiguously this shot's, and something else got it.
+        """
+        return (self.distinct and self.best >= visual.LIFT_OK
+                and self.lift < visual.LIFT_OK)
 
 
 @dataclass
@@ -106,6 +135,8 @@ class Report:
     checked: int = 0
     moved: int = 0
     unmatched: int = 0
+    findable: int = 0            # had a match somewhere in the episode
+    lost_to_ordering: int = 0    # ...and did not keep it
     runs_without_index: list = field(default_factory=list)
     reason: str = ""             # why nothing was checked, if nothing was
 
@@ -116,9 +147,18 @@ class Report:
             return f"  pictures not checked — {self.reason}"
         big = sum(1 for v in self.verdicts if v.action == "moved"
                   and v.moved_seconds >= 5.0)
-        return (f"  {self.checked} shot(s) checked against the picture {d} "
-                f"{self.moved} moved ({big} by 5s or more) {d} "
-                f"{self.unmatched} with no matching frame")
+        lines = [f"  {self.checked} shot(s) checked against the picture {d} "
+                 f"{self.moved} moved ({big} by 5s or more) {d} "
+                 f"{self.unmatched} with no matching frame"]
+        if self.unmatched:
+            # The one number that says WHICH fix is needed.
+            lines.append(
+                f"  of those {self.unmatched}, {self.lost_to_ordering} did "
+                "have a match elsewhere in the episode and lost it to the "
+                "ordering; " f"{self.unmatched - self.lost_to_ordering} "
+                "matched nothing anywhere — those need better descriptions, "
+                "not a looser solver")
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +251,27 @@ def solve(score: np.ndarray, bounds: list) -> list:
 # applying it to a build
 # ---------------------------------------------------------------------------
 
+def _distinct_at_best(score: np.ndarray) -> np.ndarray:
+    """Per shot: at its own best frame, does it beat every other caption?
+
+    Rows are already z-like — each is measured against its own episode-wide
+    spread — so a column compares captions fairly. A shot that wins its own
+    best frame is one the model can genuinely tell apart from the rest of
+    the script; a shot that loses it was never distinguishable, however high
+    its raw score happened to be.
+
+    A run of one or two shots has nothing to compare against, so nothing is
+    claimed for it.
+    """
+    n = score.shape[0] if score.size else 0
+    if n < 3:
+        return np.zeros(n, dtype=bool)
+    peak = score.argmax(axis=1)
+    mine = score[np.arange(n), peak]
+    best_any = score[:, peak].max(axis=0)
+    return mine >= best_any - 1e-6
+
+
 def _bounds_for_anchor(times: np.ndarray, at_s: float) -> tuple:
     lo = int(np.searchsorted(times, at_s - ANCHOR_TOLERANCE_S, side="left"))
     hi = int(np.searchsorted(times, at_s + ANCHOR_TOLERANCE_S, side="right")) - 1
@@ -247,7 +308,11 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     score = lift_matrix(index, texts, backend)
     wanted = np.array([placements[i].start_ms / 1000.0 for i in ordered],
                       dtype=np.float32)
-    total = score + prior_matrix(index.times, wanted)
+    # A run with no anchor has no prior worth having — the "expected" times
+    # are an even spread invented so the run had somewhere to start. Pulling
+    # towards that would drag every shot to a position nobody chose.
+    grounded = any(placements[i].method == "anchor" for i in ordered)
+    total = score + (prior_matrix(index.times, wanted) if grounded else 0.0)
 
     pinned = []
     for i in ordered:
@@ -274,17 +339,23 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
                              note="not enough indexed frames")
         return out
 
+    reachable = score.max(axis=1) if score.size else np.zeros(len(ordered))
+    own_best = _distinct_at_best(score)
+    solid = any(float(score[k, path[k]]) >= visual.LIFT_STRONG
+                for k in range(len(ordered)))
     for k, i in enumerate(ordered):
         p = placements[i]
         f = path[k]
         lift = float(score[k, f])
+        best = float(reachable[k])
         before = p.start_ms
         after = int(index.times[f] * 1000)
         duration = max(500, p.end_ms - p.start_ms)
 
         if pinned[k] is not None:
             v = Verdict(beat=p.beat, shot=p.shot, action="pinned",
-                        before_ms=before, after_ms=before, lift=lift)
+                        before_ms=before, after_ms=before, lift=lift,
+                        best=best, distinct=bool(own_best[k]))
             v.note = ("held on its quoted line; the picture "
                       + ("agrees" if lift >= visual.LIFT_OK else "says little"))
             out[i] = v
@@ -292,11 +363,22 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
 
         p.start_ms = after
         p.end_ms = after + duration
-        p.method = "verified" if lift >= visual.LIFT_OK else "interpolated"
+        if lift >= visual.LIFT_OK:
+            p.method = "verified"
+        elif grounded or solid:
+            # Something in this run IS fixed — a quoted line, or a picture
+            # that matched outright — so the shots between are positioned by
+            # it, which is what interpolation has always meant.
+            p.method = "interpolated"
+        else:
+            # Nothing in this run is fixed by anything. Cutting here would
+            # be inventing a position, so it stays unplaced and is reported.
+            p.method = "none"
         p.confidence = ("high" if lift >= visual.LIFT_STRONG
                         else "medium" if lift >= visual.LIFT_OK else "low")
         v = Verdict(beat=p.beat, shot=p.shot, before_ms=before,
-                    after_ms=after, lift=lift)
+                    after_ms=after, lift=lift, best=best,
+                    distinct=bool(own_best[k]))
         if lift >= visual.LIFT_OK:
             v.action = "moved" if abs(after - before) >= 1000 else "kept"
             p.note = f"the picture matches this description (lift {lift:.1f})"
@@ -366,6 +448,10 @@ def apply(db_path: str, beats: list, placements: list,
                     report.moved += 1
                 if v.action == "drifted":
                     report.unmatched += 1
+                    if v.lost_to_ordering:
+                        report.lost_to_ordering += 1
+                if v.distinct:
+                    report.findable += 1
             _log_run(run, verdicts, log)
         if report.runs_without_index and not report.checked:
             report.reason = ("no picture index yet for "
@@ -378,9 +464,13 @@ def apply(db_path: str, beats: list, placements: list,
 
 def _log_run(run, verdicts: list, log) -> None:
     matched = sum(1 for v in verdicts if v.lift >= visual.LIFT_OK)
+    findable = sum(1 for v in verdicts if v.distinct)
     moved = [v for v in verdicts if v.action == "moved"]
     log(f"      {run.label}: {matched}/{len(verdicts)} shot(s) found in the "
-        f"picture, {len(moved)} moved")
+        f"picture, {len(moved)} moved"
+        + (f" ({findable} had a match somewhere, so "
+           f"{findable - matched} lost theirs to the ordering)"
+           if findable > matched else ""))
     for v in sorted(moved, key=lambda x: -x.moved_seconds)[:3]:
         log(f"        shot {v.shot}: {v.before_ms/1000:.0f}s -> "
             f"{v.after_ms/1000:.0f}s (lift {v.lift:.1f})")

@@ -130,11 +130,28 @@ class TestAlignWordlessScene(unittest.TestCase):
         for a, b in zip(times, times[1:]):
             self.assertGreater(b - a, align.MIN_SEPARATION_S * 1000 - 1)
 
-    def test_a_run_with_no_dialogue_at_all_is_reported(self):
+    def test_a_run_with_no_dialogue_is_handed_on_for_the_pictures(self):
+        """Not placed, but not thrown away either.
+
+        Three runs of a real script quoted nothing anywhere, and all 28 of
+        their shots were dropped whole — while the episode was named in the
+        script and sitting in the library. So the file is resolved and the
+        run is handed on with it, and stays unplaced until something has
+        actually looked at the footage.
+        """
         places = align.align(self.db, beats_from([shot(), shot(), shot()]),
                              log=lambda *a: None)
         self.assertTrue(all(not p.ok for p in places))
-        self.assertIn("anchor", places[0].note)
+        self.assertTrue(all(p.path for p in places),
+                        "the episode is named; its file should be resolved")
+        self.assertIn("picture only", places[0].note)
+
+    def test_a_run_naming_no_episode_cannot_even_be_handed_on(self):
+        beats = beats_from([shot(se="unknown"), shot(se="unknown"),
+                            shot(se="unknown")])
+        places = align.align(self.db, beats, log=lambda *a: None)
+        self.assertTrue(all(not p.ok and not p.path for p in places))
+        self.assertIn("cannot place it", places[0].note)
 
     def test_a_single_shot_run_is_left_to_ordinary_search(self):
         places = align.align(self.db, beats_from([shot(dialogue="x")]),

@@ -284,14 +284,30 @@ class TestRepositoryStaysSmall(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        """Skipped where there is no git, which is most installs.
+
+        This guards the developer against committing a rendered video. It
+        cannot guard anything on a machine that received the tool as a zip —
+        update.bat downloads a zip precisely so that git is not required —
+        and there it has no repository to measure and no commit to prevent.
+
+        It used to raise FileNotFoundError there instead, which turned a
+        test that does not apply into `ERROR: setUpClass` at the end of every
+        setup run, and made a clean install look broken.
+        """
         import subprocess
         repo = os.path.dirname(ROOT)
-        out = subprocess.run(["git", "ls-files", "-z"], cwd=repo,
-                             capture_output=True)
+        if not os.path.isdir(os.path.join(repo, ".git")):
+            raise unittest.SkipTest("not a git checkout — nothing to measure")
+        try:
+            out = subprocess.run(["git", "ls-files", "-z"], cwd=repo,
+                                 capture_output=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise unittest.SkipTest(f"git is not available here ({exc})")
         cls.repo = repo
         cls.files = [f for f in out.stdout.decode().split("\0") if f]
 
-    def test_git_is_available_so_this_test_means_something(self):
+    def test_git_listed_the_tracked_files(self):
         self.assertTrue(self.files, "could not list tracked files")
 
     def test_no_single_tracked_file_is_huge(self):

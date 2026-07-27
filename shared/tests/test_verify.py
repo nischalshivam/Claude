@@ -718,3 +718,197 @@ class TestIndexingOnlyWhatAScriptNeeds(unittest.TestCase):
         beats = self._beats("S04E01") + self._beats("S04E01")
         self.assertEqual(visual.files_for_script(self.db, beats),
                          [self.paths[(4, 1)]])
+
+
+class TestARunWithNoQuotedLineAtAll(unittest.TestCase):
+    """Three runs of a real script had no quoted line anywhere in them, and
+    all 28 of their shots were dropped whole — while the episode was named
+    in the script, sitting in the library, with its pictures already
+    indexed. The dialogue was never the only evidence available.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="noquote_")
+        self.db = os.path.join(self.tmp, "library.db")
+        self.video = os.path.join(self.tmp, "Breaking Bad S04E08.mkv")
+        with open(self.video, "wb") as f:
+            f.write(b"stand-in for a real episode")
+        con = library.connect(self.db)
+        con.execute("INSERT INTO media (path, kind, show, show_norm, season, "
+                    "episode) VALUES (?,?,?,?,?,?)",
+                    (os.path.abspath(self.video), "episode", "Breaking Bad",
+                     "breaking bad", 4, 8))
+        con.commit()
+        self.con = con
+        self.backend = embed.Deterministic(dim=64)
+
+    def tearDown(self):
+        self.con.close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, visuals):
+        return align.Run(source="Breaking Bad", season_episode="S04E08",
+                         entries=[align.Entry(beat=1, shot=i + 1, data={
+                             "visual": v, "duration_target_sec": 4})
+                             for i, v in enumerate(visuals)])
+
+    def test_the_episode_is_found_without_a_line_from_it(self):
+        got = align.episode_file(self.db, self._run(["a"]), con=self.con)
+        self.assertEqual(got, os.path.abspath(self.video))
+
+    def test_an_episode_that_is_not_owned_resolves_to_nothing(self):
+        run = align.Run(source="Breaking Bad", season_episode="S09E99",
+                        entries=[])
+        self.assertEqual(align.episode_file(self.db, run, con=self.con), "")
+
+    def test_a_run_with_no_episode_named_resolves_to_nothing(self):
+        run = align.Run(source="Breaking Bad", season_episode="unknown",
+                        entries=[])
+        self.assertEqual(align.episode_file(self.db, run, con=self.con), "")
+
+    def test_it_is_handed_on_unplaced_rather_than_dropped(self):
+        placements = align.align_run(self.db, self._run(["doorway", "apron"]),
+                                     con=self.con)
+        self.assertEqual(len(placements), 2)
+        for p in placements:
+            self.assertEqual(p.path, os.path.abspath(self.video))
+            # Still "none": nothing has looked yet, and cutting from a
+            # position nobody checked is the failure this all exists to end.
+            self.assertEqual(p.method, "none")
+            self.assertIn("picture only", p.note)
+
+    def test_the_pictures_then_place_it(self):
+        caps = [f"filler{i}" for i in range(20)]
+        caps[4], caps[12] = "doorway", "apron"
+        index = fake_index(caps, backend=self.backend,
+                           path=os.path.abspath(self.video))
+        run = self._run(["doorway", "apron"])
+        places = align.align_run(self.db, run, con=self.con)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual([p.start_ms for p in places], [8000, 24000])
+        self.assertTrue(all(p.method == "verified" for p in places))
+
+    def test_an_even_spread_is_not_mistaken_for_a_prior(self):
+        # The invented starting positions must not pull anything. If they
+        # did, a run with no anchor would settle wherever the spread put it
+        # rather than wherever the pictures are.
+        caps = [f"filler{i}" for i in range(40)]
+        caps[35], caps[37] = "doorway", "apron"
+        index = fake_index(caps, backend=self.backend,
+                           path=os.path.abspath(self.video))
+        run = self._run(["doorway", "apron"])
+        places = align.align_run(self.db, run, con=self.con)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual([p.start_ms for p in places], [70000, 74000])
+
+    def test_a_run_the_pictures_cannot_place_either_stays_unplaced(self):
+        # No dialogue AND no picture is not "somewhere in the middle". It is
+        # not known, and cutting anyway would be inventing a position.
+        index = fake_index([f"filler{i}" for i in range(20)],
+                           backend=self.backend,
+                           path=os.path.abspath(self.video))
+        run = self._run(["nothinglikethis", "norlikethat"])
+        places = align.align_run(self.db, run, con=self.con)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertTrue(all(p.method == "none" for p in places))
+
+    def test_the_gate_counts_it_once_the_pictures_exist(self):
+        beats = [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": "S04E08",
+             "visual": "a doorway", "duration_target_sec": 4},
+            {"source": "Breaking Bad", "season_episode": "S04E08",
+             "visual": "an apron", "duration_target_sec": 4}]}]
+        self.assertEqual(align.placeable(self.db, beats), (0, 2))
+
+        index = fake_index([f"w{i}" for i in range(20)], backend=self.backend,
+                           path=os.path.abspath(self.video))
+        os.makedirs(visual.store_dir(self.db), exist_ok=True)
+        out = visual._vector_file(self.db, self.video)
+        np.savez_compressed(out, times=index.times,
+                            vecs=index.vecs.astype(np.float16))
+        size, mtime = visual._stamp(self.video)
+        self.con.execute(
+            "INSERT OR REPLACE INTO visual VALUES (?,?,?,?,?,?,?,?,?)",
+            (os.path.abspath(self.video), size, mtime, self.backend.name,
+             visual.DEFAULT_FPS, len(index), index.vecs.shape[1], out, 0))
+        self.con.commit()
+        self.assertEqual(align.placeable(self.db, beats), (2, 2))
+
+
+class TestSayingWhichFixIsNeeded(unittest.TestCase):
+    """A low score has two opposite causes that look identical in a report.
+
+    Either the model never found the picture — which is fixed by writing a
+    better description — or it found it and the ordering constraint gave
+    that frame to a neighbour, which is not the description's fault at all.
+    A build that cannot tell those apart cannot be acted on.
+    """
+
+    def setUp(self):
+        self.backend = embed.Deterministic(dim=64)
+
+    def _run(self, visuals):
+        return align.Run(source="S", season_episode="S01E01", entries=[
+            align.Entry(beat=1, shot=i + 1,
+                        data={"visual": v, "duration_target_sec": 4})
+            for i, v in enumerate(visuals)])
+
+    def test_a_shot_that_lost_its_frame_to_a_neighbour_is_marked_as_such(self):
+        # Two shots describe the same moment; only one can have it. The
+        # loser's description was not the problem, and saying it was would
+        # send the writer off to rewrite a caption that already worked.
+        caps = [f"filler{i}" for i in range(40)]
+        caps[10], caps[25] = "boxcutter", "apron"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["boxcutter", "boxcutter", "apron"])
+        places = [align.Placement(beat=1, shot=i + 1, path=index.path,
+                                  start_ms=1000, end_ms=5000,
+                                  method="interpolated") for i in range(3)]
+        verdicts = verify.verify_run(index, run, places, self.backend)
+        loser = [v for v in verdicts[:2] if v.lift < visual.LIFT_OK]
+        self.assertTrue(loser, "expected one of the two to lose the frame")
+        self.assertTrue(loser[0].lost_to_ordering)
+
+    def test_a_shot_that_matched_nothing_anywhere_is_not_blamed_on_ordering(self):
+        index = fake_index([f"filler{i}" for i in range(40)],
+                           backend=self.backend)
+        run = self._run(["utterlyunrelated", "alsounrelated", "andathird"])
+        places = [align.Placement(beat=1, shot=i + 1, path=index.path,
+                                  start_ms=1000, end_ms=5000,
+                                  method="interpolated") for i in range(3)]
+        verdicts = verify.verify_run(index, run, places, self.backend)
+        for v in verdicts:
+            if v.best < visual.LIFT_OK:
+                self.assertFalse(v.lost_to_ordering,
+                                 "a shot with no match anywhere cannot have "
+                                 "lost one to the ordering")
+
+    def test_the_two_halves_of_the_diagnosis_are_both_required(self):
+        # Winning a lottery over 1,400 frames is not a match; beating rivals
+        # at a frame nobody matched is not one either.
+        lottery = verify.Verdict(beat=1, shot=1, best=9.0, distinct=False,
+                                 lift=0.1)
+        hollow = verify.Verdict(beat=1, shot=2, best=0.2, distinct=True,
+                                lift=0.1)
+        real = verify.Verdict(beat=1, shot=3, best=3.0, distinct=True,
+                              lift=0.1)
+        self.assertFalse(lottery.lost_to_ordering)
+        self.assertFalse(hollow.lost_to_ordering)
+        self.assertTrue(real.lost_to_ordering)
+
+    def test_a_run_too_short_to_compare_claims_nothing(self):
+        # Two captions cannot tell you whether either is distinctive.
+        index = fake_index([f"filler{i}" for i in range(40)],
+                           backend=self.backend)
+        run = self._run(["boxcutter", "apron"])
+        places = [align.Placement(beat=1, shot=i + 1, path=index.path,
+                                  start_ms=1000, end_ms=5000,
+                                  method="interpolated") for i in range(2)]
+        for v in verify.verify_run(index, run, places, self.backend):
+            self.assertFalse(v.distinct)
+
+    def test_the_summary_names_the_fix(self):
+        rep = verify.Report(checked=10, unmatched=6, lost_to_ordering=4)
+        text = rep.summary()
+        self.assertIn("4 did have a match elsewhere", text)
+        self.assertIn("2 matched nothing anywhere", text)

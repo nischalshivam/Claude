@@ -299,13 +299,69 @@ def fit(run: Run, anchors: list) -> tuple:
     return scale, first[1] - ax[first[0]] * scale * 1000.0
 
 
+def episode_file(db_path: str, run: Run, con=None) -> str:
+    """The video a run declares, found without needing a line from it.
+
+    A run with no quoted line used to be dropped whole — 28 shots of a real
+    script, three of its six runs, gone. But the script named the episode,
+    and the library knows where that file is: the only thing missing was a
+    reason to look, which is that the picture index can now place a shot
+    without any dialogue at all.
+    """
+    from . import sources, subtitles
+    key = subtitles.episode_key(run.season_episode or "")
+    if not key or not run.source:
+        return ""
+    season, episode = key
+    own = None
+    if con is None:
+        from .library import connect
+        own = con = connect(db_path)
+    try:
+        want = sources.canonical(run.source)
+        rows = con.execute(
+            "SELECT path, show FROM media WHERE season=? AND episode=?",
+            (season, episode)).fetchall()
+        for row in rows:
+            have = sources.canonical(row["show"] or "")
+            if have and (have == want or want in have or have in want):
+                return row["path"]
+        return ""
+    finally:
+        if own is not None:
+            own.close()
+
+
 def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Placement]:
     """Place every entry of one run along its scene."""
     out = [Placement(beat=e.beat, shot=e.shot) for e in run.entries]
     anchors = anchors_for(db_path, run, con=con)
     if not anchors:
-        for p in out:
-            p.note = "no anchor line in this run — cannot place it"
+        # No dialogue to stand on. The run is still worth handing on if the
+        # episode is known: `verify` can place it from the pictures alone,
+        # and until it does these stay method "none" so nothing is ever cut
+        # from a position nobody has checked.
+        path = episode_file(db_path, run, con=con)
+        if not path:
+            for p in out:
+                p.note = "no anchor line in this run — cannot place it"
+            return out
+        try:
+            duration = probe(path).duration
+        except ProbeError:
+            duration = 0.0
+        log(f"    {run.label}: {len(out)} shot(s), no quoted line at all — "
+            "only the pictures can place these")
+        n = len(out)
+        for i, (p, e) in enumerate(zip(out, run.entries)):
+            p.path = path
+            # Spread evenly, purely so the run has somewhere to start from.
+            # It is not a guess anyone should act on, which is why the method
+            # stays "none" until something has actually looked.
+            at = duration * (i + 0.5) / n if duration else 0.0
+            p.start_ms = int(at * 1000)
+            p.end_ms = p.start_ms + int(e.target_seconds * 1000)
+            p.note = "no quoted line anywhere near it — placed by picture only"
         return out
 
     path = anchors[0][3]
@@ -521,6 +577,15 @@ def placeable(db_path: str, beats: list, con=None) -> tuple:
             total += n
             anchors = anchors_for(db_path, run, con=con)
             if not anchors:
+                # No dialogue — but if the episode is known AND its pictures
+                # have been indexed, the run can still be placed. Reporting
+                # it as unbuildable would understate the gate by three runs
+                # of a real script, and understating it blocks builds that
+                # would have worked.
+                path = episode_file(db_path, run, con=con)
+                from . import visual
+                if path and visual.load(con, db_path, path) is not None:
+                    placed += n
                 continue
             # A run too short to align is only as good as its own anchors.
             placed += n if n >= MIN_RUN else len(anchors)
