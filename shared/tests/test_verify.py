@@ -1229,6 +1229,25 @@ class TestOnlyAShotThatWasFoundGetsToChooseWhereItGoes(unittest.TestCase):
         verify.verify_run(index, run, places, self.backend)
         self.assertEqual([p.start_ms for p in places], [200000, 204000, 208000])
 
+    def test_no_shot_is_placed_past_the_end_of_the_episode(self):
+        """Interpolation walks outward from the shots that were found, and a
+        run held by one line at its LAST shot can walk right off the back of
+        the film. Two shots of a real build were placed at 2918s and 3488s of
+        a 2848-second episode: ffmpeg cut nothing, both segments failed, and
+        eleven seconds vanished from the finished video.
+        """
+        caps = [f"filler{i}" for i in range(400)]      # 400 frames = 800s
+        caps[380] = "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["boxcutter"] + [f"nothinglikethis{i}"
+                                         for i in range(30)])
+        places = self._places(run, 700.0)
+        verify.verify_run(index, run, places, self.backend)
+        end = float(index.times[-1])
+        for p in places:
+            self.assertLessEqual(p.start_ms / 1000.0, end,
+                                 f"shot {p.shot} is past the end of the film")
+
     def test_interpolation_follows_the_scripts_own_shape(self):
         placed = {0: 100.0, 3: 400.0}
         got = verify.interpolate([0.0] * 4, [0.0, 10.0, 20.0, 30.0], placed)

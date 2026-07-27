@@ -148,6 +148,42 @@ def _absorb(out: list, i: int, hole: float) -> None:
         out[left]["held"] = round(out[left].get("held", 0) + hole, 2)
 
 
+def _cover_failure(made: list, at: int, seconds: float, motion: bool,
+                   log) -> None:
+    """Give a failed shot's seconds to the shots that did render.
+
+    The alternative is what happened on a real build: two segments would not
+    encode, the video came out eleven seconds short, and every cut after the
+    first failure sat ahead of the narration. Length is the one thing that
+    must survive a failure — a wrong picture for four seconds is a mistake, a
+    video that ends while the voice is still talking is a broken video.
+
+    Nearest neighbours first, each to MAX_HOLD_S, re-rendering only the ones
+    whose duration actually changes.
+    """
+    if not made:
+        return
+    order = sorted(range(len(made)), key=lambda k: abs(made[k][0] - at))
+    left = seconds
+    for k in order:
+        if left <= 0.01:
+            break
+        _idx, item, seg, scene_dir, n = made[k]
+        room = MAX_HOLD_S - item["duration"]
+        if room <= 0.01:
+            continue
+        take = min(room, left)
+        item["duration"] = round(item["duration"] + take, 3)
+        item["held"] = round(item.get("held", 0) + take, 2)
+        left -= take
+        try:
+            render_item(item, scene_dir, seg, seed=n, motion=motion)
+        except (RenderError, ProbeError, ValueError) as exc:
+            log(f"      could not lengthen segment {n} — {exc}")
+    if left > 0.01:
+        log(f"      {left:.1f}s of a failed shot could not be covered")
+
+
 def plan_segments(timeline: dict) -> list:
     """Every segment to render, with the holes closed.
 
@@ -282,23 +318,33 @@ def render(timeline: dict, out_path: str, source_dir: str = "",
         log(f"      {len(held)} shot(s) hold a little longer to cover "
             f"{sum(i['held'] for i in held):.0f}s the script left empty")
 
-    segments = []
+    segments, made, holes = [], [], []
     for n, item in enumerate(items, 1):
         seg = os.path.join(work, f"seg_{n:04d}.mp4")
         scene_dir = os.path.join(source_dir, f"scene_{item['scene']:03d}")
         if resume and os.path.isfile(seg) and os.path.getsize(seg) > 1024:
             segments.append(seg)
+            made.append((n - 1, item, seg, scene_dir, n))
             res.reused += 1
             continue
         try:
             render_item(item, scene_dir, seg, seed=n, motion=motion)
             segments.append(seg)
+            made.append((n - 1, item, seg, scene_dir, n))
             res.segments += 1
         except (RenderError, ProbeError, ValueError) as exc:
             res.failed.append((item.get("file", "?"), str(exc)[:160]))
             log(f"      segment {n} failed — {exc}")
+            # A shot that would not render takes its seconds with it, and
+            # concatenation has no idea anything is missing: the video simply
+            # comes out short and every cut after it drifts ahead of the
+            # voice. Two failures cost a real build eleven seconds that way.
+            holes.append((n - 1, item["duration"]))
         if n % 25 == 0:
             log(f"      {n}/{len(items)}  ({time.time() - t0:.0f}s)")
+
+    for at, seconds in holes:
+        _cover_failure(made, at, seconds, motion, log)
 
     if not segments:
         res.failed.append(("render", "every segment failed"))

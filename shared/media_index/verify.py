@@ -701,6 +701,15 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     axis = align.axis(run)
     settled = interpolate([placements[i].start_ms / 1000.0 for i in ordered],
                           [axis[i] for i in ordered], chosen, MIN_APART_S)
+    # An episode has an end. Interpolation walks outward from the shots that
+    # were found, and with a run held by one line at its last shot it can
+    # walk right off the back of the film: two shots of a real build were
+    # placed at 2918s and 3488s of a 2848-second episode. ffmpeg cut nothing,
+    # the segments failed to render, and eleven seconds vanished from the
+    # finished video with the picture drifting ahead of the voice from there.
+    last_frame = float(index.times[-1]) if len(index.times) else 0.0
+    if last_frame > 0:
+        settled = [min(max(0.0, t), last_frame) for t in settled]
     if len(choosers) < len(ordered):
         log(f"      {run.label}: {len(choosers)} shot(s) found in the picture, "
             f"{len(ordered) - len(choosers)} placed between them")

@@ -178,6 +178,19 @@ def _still_count(shot: dict, default: int) -> int:
         return default
 
 
+_LENGTHS: dict = {}
+
+
+def episode_length(path: str) -> float:
+    """How long a video is, asked once per file. 0.0 if it cannot be read."""
+    if path not in _LENGTHS:
+        try:
+            _LENGTHS[path] = float(probe.probe(path).duration or 0.0)
+        except (ProbeError, OSError):
+            _LENGTHS[path] = 0.0
+    return _LENGTHS[path]
+
+
 def _repeated(used: dict | None, path: str, at: float,
               apart: float = REPEAT_APART_S) -> bool:
     """Has this moment of this episode already been used in the video?"""
@@ -301,6 +314,17 @@ def build_scene(job, index: int, beat: dict, placements: list,
         if moved is None:
             # Everything within reach is already on screen somewhere.
             repeats += 1
+            continue
+        # An episode has an end, and a placement can walk off it. Two shots
+        # of a real build were cut at 2918s and 3488s of a 2848-second
+        # episode: ffmpeg wrote a file with no video in it, both segments
+        # failed to render, and the video came out eleven seconds short.
+        # Cheaper to notice here than to discover it during the render.
+        length = episode_length(p.path)
+        if length and moved >= length - 1.0:
+            log(f"      scene {index}: shot {n} is past the end of "
+                f"{os.path.basename(p.path)} ({moved:.0f}s of {length:.0f}s)")
+            unplaced += 1
             continue
         start = moved
         end = start + max(1.0, wanted / 1000.0)

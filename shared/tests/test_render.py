@@ -137,9 +137,11 @@ class TestRenderingAWholeTimeline(unittest.TestCase):
         self.assertTrue(res.ok)
         named = [a for a, _b in res.failed]
         self.assertIn("not_here.jpg", named)
-        # ...and the shortfall it caused is reported too, rather than the
-        # video quietly coming out three seconds short.
-        self.assertIn("length", named)
+        # ...and its seconds go to the shots that did render, rather than
+        # the video quietly coming out three seconds short and every cut
+        # after it sitting ahead of the narration.
+        self.assertNotIn("length", named)
+        self.assertAlmostEqual(res.duration, res.planned, delta=0.5)
 
     def test_an_empty_timeline_says_so_rather_than_writing_nothing(self):
         res = render.render({"scenes": []}, os.path.join(self.out, "v.mp4"),
