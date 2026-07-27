@@ -227,8 +227,11 @@ class TestBatchFiles(unittest.TestCase):
         # numbers, and numbers have been healthy here while the footage was
         # wrong. Describing one picture and looking at the frame that comes
         # back is the only cheap proof that the picture layer works at all.
+        # "web" is the review step the contact sheet could never be: a sheet
+        # shows the stills, not the clips, not the order, not how any of it
+        # got there. Six rounds went into describing pictures in text.
         for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
-                    "make", "sheet", "look", "see", "render"):
+                    "make", "sheet", "look", "see", "render", "web"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 

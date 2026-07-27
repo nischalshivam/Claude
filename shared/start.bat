@@ -60,6 +60,7 @@ echo    L.  Look at the footage       - teach it what your episodes LOOK like
 echo    S.  Describe a picture        - PROVE it can see. do this after L
 echo    T.  Plan the timing           - how long each shot holds
 echo    R.  RENDER THE VIDEO          - the file you can actually watch
+echo    W.  OPEN IN A BROWSER         - see every shot, and why it is there
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
@@ -86,6 +87,7 @@ if /i "!CHOICE!"=="L" goto do_look
 if /i "!CHOICE!"=="S" goto do_see
 if /i "!CHOICE!"=="T" goto do_time
 if /i "!CHOICE!"=="R" goto do_render
+if /i "!CHOICE!"=="W" goto do_web
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -346,6 +348,32 @@ if defined TAUDIO (
     %PY% -m media_index timeline "!TFOLD!" "!TSCRIPT!" --audio "!TAUDIO!" --pace "!TPACE!"
 ) else (
     %PY% -m media_index timeline "!TFOLD!" "!TSCRIPT!" --pace "!TPACE!"
+)
+echo.
+pause
+goto menu
+
+:do_web
+echo.
+echo   This opens the tool in your browser. Every shot of a finished
+echo   video, in order, with the frame itself on screen - and a tag on
+echo   each one saying HOW it got there:
+echo.
+echo      anchor        a quoted line. exact to the millisecond
+echo      verified      the picture matched the description
+echo      interpolated  worked out between two anchors
+echo      filler        right episode, no particular moment of it
+echo.
+echo   Leave this window open while you use it. Ctrl+C closes it.
+echo.
+set "WOUT="
+set /p "WOUT=  an output folder to open (blank = choose it in the browser): "
+if defined WOUT set "WOUT=!WOUT:"=!"
+echo.
+if defined WOUT (
+%PY% -m media_index web --db "!DB!" --out "!WOUT!"
+) else (
+%PY% -m media_index web --db "!DB!"
 )
 echo.
 pause

@@ -389,6 +389,15 @@ def cmd_transcribe(a):
     return 1 if any(r.status == "failed" for r in results) else 0
 
 
+def cmd_web(a):
+    """Serve the pages until the window is closed."""
+    from . import web
+    print()
+    web.serve(db_path=a.db, out=a.out, port=a.port,
+              open_browser=not a.no_browser)
+    return 0
+
+
 def cmd_preflight(a):
     """Check every queued job without building anything."""
     queue = jobs_mod.load_jobs(a.jobs)
@@ -716,6 +725,15 @@ def main(argv=None):
     n.add_argument("--strict", action="store_true",
                    help="build only jobs with no gaps at all")
     n.set_defaults(func=cmd_run)
+
+    wb = sub.add_parser("web", parents=[common],
+                        help="open the tool in a browser")
+    wb.add_argument("--out", default="",
+                    help="an output folder to open straight away")
+    wb.add_argument("--port", type=int, default=0)
+    wb.add_argument("--no-browser", action="store_true",
+                    help="print the address instead of opening a window")
+    wb.set_defaults(func=cmd_web)
 
     a = p.parse_args(argv)
     return a.func(a)
