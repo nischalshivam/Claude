@@ -448,6 +448,44 @@ class TestOneBadAnchorIsWorseThanNone(unittest.TestCase):
                            (90, 2240000, 2243000, "p", "high")])
         self.assertLess(near, align.MAX_RUN_SPAN_S)
 
+    def test_every_quoted_line_is_used_not_just_the_two_at_the_ends(self):
+        """A global line through the first and last anchor ignores everything
+        between them. With four quoted lines it used two — and the shots
+        near the middle ones landed wherever the straight line put them
+        rather than on the millisecond that was actually measured."""
+        run = self._run(n=40, total=200.0)
+        anchors = [(0, 1000000, 1003000, "p", "high"),
+                   (20, 1200000, 1203000, "p", "high"),   # not on the line
+                   (39, 1250000, 1253000, "p", "high")]
+        times = align.stretch(run, anchors)
+        for i, ms, *_rest in anchors:
+            self.assertAlmostEqual(times[i], ms, delta=1500,
+                                   msg=f"the line at shot {i + 1} was ignored")
+
+    def test_a_wrong_line_costs_its_neighbours_and_nothing_more(self):
+        """The measured failure, but with three good lines around it. The
+        stray one is dropped for the rate it implies, not for how far away
+        it is — and the other three keep their millisecond."""
+        run = self._run(n=103, total=462.0)
+        good = [(0, 1980000, 1983000, "p", "high"),
+                (50, 2100000, 2103000, "p", "high"),
+                (102, 2235000, 2238000, "p", "high")]
+        stray = (60, 1247000, 1250000, "p", "medium")     # far, and backwards
+        kept = align.usable_anchors(run, sorted(good + [stray]),
+                                    log=lambda *a: None)
+        self.assertNotIn(stray, kept)
+        for a in good:
+            self.assertIn(a, kept)
+
+    def test_two_lines_that_disagree_still_fall_back_to_the_clearest(self):
+        # With only two there is nothing to arbitrate between them, so the
+        # old rule stands: past ten minutes, trust the stronger one alone.
+        run = self._run()
+        kept = align.usable_anchors(
+            run, [(16, 1247000, 1250000, "p", "medium"),
+                  (94, 2231000, 2234000, "p", "high")], log=lambda *a: None)
+        self.assertEqual(len(kept), 2)      # pruning is the caller's job here
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -300,6 +300,95 @@ def fit(run: Run, anchors: list) -> tuple:
     return scale, first[1] - ax[first[0]] * scale * 1000.0
 
 
+def rate_between(ax: list, a, b) -> float:
+    """Seconds of film per second of script, between two anchors."""
+    span_axis = ax[b[0]] - ax[a[0]]
+    if span_axis <= 0.01:
+        return 1.0
+    return ((b[1] - a[1]) / 1000.0) / span_axis
+
+
+def usable_anchors(run: Run, anchors: list, log=lambda *a: None) -> list:
+    """Drop an anchor only when it disagrees with its NEIGHBOURS.
+
+    The old rule was the run's total span: more than ten minutes and one of
+    the lines was declared wrong. That was written for a real failure — a
+    beat about the AUDIENCE quoted a line that matched far from the scene,
+    and 103 shots ended up over sixteen minutes — but it punishes the shape
+    rather than the fault. An essay legitimately visits one episode twice,
+    and on a real script it cost 84 shots three of their four quoted lines,
+    leaving the whole sequence hanging off a single point at its far end.
+
+    What a wrong anchor actually produces is an impossible RATE: 33 seconds
+    of script stretched over 16 minutes of film. That is what gets checked,
+    pair by pair, so a bad line costs its own neighbourhood and nothing more.
+    """
+    if len(anchors) < 3:
+        return anchors
+    ax = axis(run)
+    kept = list(anchors)
+    while len(kept) > 2:
+        bad = None
+        for j in range(len(kept) - 1):
+            r = rate_between(ax, kept[j], kept[j + 1])
+            if not (MIN_SCALE <= r <= MAX_SCALE):
+                bad = (j, r)
+                break
+        if bad is None:
+            break
+        j, r = bad
+        # Drop the weaker of the pair: a low-confidence match before a high
+        # one, and otherwise the one whose own neighbours disagree with it.
+        a, b = kept[j], kept[j + 1]
+        drop = j if a[4] != "high" and b[4] == "high" else (
+            j + 1 if b[4] != "high" and a[4] == "high" else
+            (j if j > 0 else j + 1))
+        log(f"      the line at shot {kept[drop][0] + 1} implies "
+            f"{r:.0f}x the pace of the script around it — dropped, the "
+            "others still stand")
+        kept.pop(drop)
+    return kept
+
+
+def stretch(run: Run, anchors: list) -> list:
+    """Real episode time (ms) for every shot, from the anchors, piecewise.
+
+    Between two anchors the script's own shape decides, and the two real
+    timestamps decide the pace. Outside the outer anchors the nearest
+    segment's pace carries on.
+
+    A single global line through the first and last anchor was the previous
+    method and it threw away everything in between: with four quoted lines it
+    used two. Piecewise uses all of them, and confines a wrong one to the
+    shots either side of it instead of tilting the whole run.
+    """
+    ax = axis(run)
+    if not anchors:
+        return [0.0 for _ in ax]
+    if len(anchors) == 1:
+        i, start = anchors[0][0], float(anchors[0][1])
+        return [start + (a - ax[i]) * 1000.0 for a in ax]
+
+    pts = [(ax[a[0]], float(a[1])) for a in anchors]
+    rates = []
+    for j in range(len(anchors) - 1):
+        r = rate_between(ax, anchors[j], anchors[j + 1])
+        rates.append(r if MIN_SCALE <= r <= MAX_SCALE else 1.0)
+
+    out = []
+    for a in ax:
+        if a <= pts[0][0]:
+            out.append(pts[0][1] + (a - pts[0][0]) * rates[0] * 1000.0)
+        elif a >= pts[-1][0]:
+            out.append(pts[-1][1] + (a - pts[-1][0]) * rates[-1] * 1000.0)
+        else:
+            j = 0
+            while j < len(pts) - 2 and a > pts[j + 1][0]:
+                j += 1
+            out.append(pts[j][1] + (a - pts[j][0]) * rates[j] * 1000.0)
+    return out
+
+
 def episode_file(db_path: str, run: Run, con=None) -> str:
     """The video a run declares, found without needing a line from it.
 
@@ -381,17 +470,21 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
         duration = 0.0
 
     ax = axis(run)
-    scale, offset = fit(run, anchors)
-    times = [(a * scale * 1000.0 + offset) for a in ax]
-    if len(anchors) > 1 and (max(times) - min(times)) / 1000.0 > MAX_RUN_SPAN_S:
+    anchors = usable_anchors(run, anchors, log)
+    scale, _offset = fit(run, anchors)          # reported, not used to place
+    times = stretch(run, anchors)
+    if len(anchors) == 2 and (max(times) - min(times)) / 1000.0 > MAX_RUN_SPAN_S:
+        # Two lines and nothing to arbitrate between them. Past ten minutes
+        # one of them is describing a different sequence, and there is no
+        # third anchor to say which — so the clearest one stands alone.
         keep = max(anchors, key=lambda a: (a[4] == "high", a[0]))
         log(f"      two lines put this run across "
             f"{(max(times) - min(times)) / 60000:.0f} minutes of the episode, "
             "which is more than one sequence — so one of them is wrong and "
             "only the clearest is used")
         anchors = [keep]
-        scale, offset = fit(run, anchors)
-        times = [(a * scale * 1000.0 + offset) for a in ax]
+        scale, _offset = fit(run, anchors)
+        times = stretch(run, anchors)
     lo = max(0.0, min(times) - 2000)
     hi = max(times) + 2000
     if duration:
