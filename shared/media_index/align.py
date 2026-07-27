@@ -451,13 +451,30 @@ def align_run(db_path: str, run: Run, con=None, log=lambda *a: None) -> list[Pla
             duration = 0.0
         log(f"    {run.label}: {len(out)} shot(s), no quoted line at all — "
             "only the pictures can place these")
-        n = len(out)
+        # The run's own length, laid across the middle of the episode — NOT
+        # spread over the whole film.
+        #
+        # Spreading evenly was meant as a harmless placeholder, and it was
+        # not harmless: five shots the script says are 22 seconds long were
+        # placed 570 seconds apart, and then the picture layer moved one of
+        # them and the rest interpolated from that spacing. They landed at
+        # 1209s, 1778s, 2348s, 2918s and 3487s of a 2848-second episode —
+        # two of them off the end of the film entirely, the others on a
+        # lawyer's office in a scene about somebody else.
+        #
+        # A run is a sequence. Whatever else is unknown about it, its shots
+        # are seconds apart, and the script says exactly how many.
+        ax = axis(run)
+        middle = ax[len(ax) // 2] if ax else 0.0
+        centre = (duration / 2.0) if duration else max(ax[-1], 1.0)
         for i, (p, e) in enumerate(zip(out, run.entries)):
             p.path = path
-            # Spread evenly, purely so the run has somewhere to start from.
-            # It is not a guess anyone should act on, which is why the method
-            # stays "none" until something has actually looked.
-            at = duration * (i + 0.5) / n if duration else 0.0
+            # Not a guess anyone should act on, which is why the method stays
+            # "none" until something has actually looked — but the SHAPE is
+            # real, and the shape is what everything downstream inherits.
+            at = max(0.0, centre + (ax[i] - middle))
+            if duration:
+                at = min(at, max(0.0, duration - e.target_seconds))
             p.start_ms = int(at * 1000)
             p.end_ms = p.start_ms + int(e.target_seconds * 1000)
             p.note = "no quoted line anywhere near it — placed by picture only"

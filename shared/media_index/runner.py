@@ -240,6 +240,21 @@ def _filler_moment(used: dict | None, path: str, duration: float,
     if duration <= 0:
         return None
     lo, hi = FILLER_SPREAD[0] * duration, FILLER_SPREAD[1] * duration
+    # Near where the video already is in this episode, not anywhere in it.
+    #
+    # Scattered across the whole film, filler found the title cards — a real
+    # build put "Produced by" and "Written by" on screen — and characters the
+    # narration has never mentioned. The essay is somewhere specific at that
+    # moment, every other shot from this episode says where, and footage from
+    # the same part of the story is the only kind that can pass unnoticed.
+    seen = sorted(used.get(path, ())) if used else []
+    if seen:
+        near = seen[len(seen) // 2]
+        for step in range(1, 60):
+            for at in (near + step * FILLER_APART_S, near - step * FILLER_APART_S):
+                if lo <= at <= hi and not _repeated(used, path, at,
+                                                    apart=FILLER_APART_S):
+                    return at
     for i in range(96):
         frac = ((k + i) * 0.618033988749895) % 1.0
         at = lo + frac * (hi - lo)

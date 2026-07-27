@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from media_index import align, cutter, library, probe          # noqa: E402
+from media_index import align, cutter, library, probe, verify  # noqa: E402
 from media_index.demo import make_demo_video as dv             # noqa: E402
 
 HAVE_FFMPEG = probe.ffmpeg_bin() is not None
@@ -447,6 +447,31 @@ class TestOneBadAnchorIsWorseThanNone(unittest.TestCase):
         near = self._span([(10, 2000000, 2003000, "p", "high"),
                            (90, 2240000, 2243000, "p", "high")])
         self.assertLess(near, align.MAX_RUN_SPAN_S)
+
+    def test_a_run_with_no_quoted_line_keeps_its_own_length(self):
+        """Five shots the script says are 22 seconds long were spread 570
+        seconds apart as a "harmless placeholder". It was not harmless: the
+        picture layer moved one of them and the rest inherited that spacing,
+        landing at 1209s, 1778s, 2348s, 2918s and 3487s of a 2848-second
+        episode — two off the end of the film, the others on a lawyer's
+        office in a scene about somebody else.
+
+        Whatever else is unknown about a run, its shots are seconds apart.
+        """
+        run = align.Run("Breaking Bad", "S03E01",
+                        [align.Entry(beat=36 + i, shot=1,
+                                     data={"duration_target_sec": 4.4})
+                         for i in range(5)])
+        ax = align.axis(run)
+        mid, centre = ax[len(ax) // 2], 2848.0 / 2
+        placed = [max(0.0, centre + (a - mid)) for a in ax]
+        self.assertLess(max(placed) - min(placed), 30.0,
+                        "a 22-second run was spread across the episode")
+        # ...and when the pictures move one of them, the rest follow closely.
+        settled = verify.interpolate(placed, ax, {2: 2348.0},
+                                     verify.MIN_APART_S)
+        self.assertLess(max(settled) - min(settled), 30.0)
+        self.assertTrue(all(0 <= t <= 2848.0 for t in settled))
 
     def test_every_quoted_line_is_used_not_just_the_two_at_the_ends(self):
         """A global line through the first and last anchor ignores everything
