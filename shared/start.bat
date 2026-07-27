@@ -58,6 +58,7 @@ echo    8.  Set the media folder
 echo    9.  BUILD A VIDEO from a visual script
 echo    L.  Look at the footage       - teach it what your episodes LOOK like
 echo    S.  Describe a picture        - PROVE it can see. do this after L
+echo    T.  Plan the timing           - how long each shot holds
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
@@ -82,6 +83,7 @@ if "!CHOICE!"=="8" goto do_setfolder
 if "!CHOICE!"=="9" goto do_queue
 if /i "!CHOICE!"=="L" goto do_look
 if /i "!CHOICE!"=="S" goto do_see
+if /i "!CHOICE!"=="T" goto do_time
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -309,6 +311,40 @@ if exist "proof\see_01.jpg" start "" "proof\see_01.jpg"
 echo.
 echo   If the top frame is not what you described, the picture layer is
 echo   not working on this footage and nothing built on it will be right.
+echo.
+pause
+goto menu
+
+:do_time
+echo.
+echo   This decides how long every clip and still holds, and when each one
+echo   lands. Nothing is re-cut, so you can re-time as many times as you
+echo   like - it takes seconds.
+echo.
+echo   GIVE IT THE NARRATION AUDIO. Without it the tool guesses from word
+echo   counts at 150 words a minute, and your last recording was read at
+echo   221 - a guess three minutes out over an eleven minute video.
+echo.
+set "TFOLD="
+set /p "TFOLD=  Built folder [built]: "
+if not defined TFOLD set "TFOLD=built"
+set "TFOLD=!TFOLD:"=!"
+set "TSCRIPT="
+set /p "TSCRIPT=  Script file: "
+if not defined TSCRIPT goto menu
+set "TSCRIPT=!TSCRIPT:"=!"
+set "TAUDIO="
+set /p "TAUDIO=  Narration audio: "
+if defined TAUDIO set "TAUDIO=!TAUDIO:"=!"
+set "TPACE="
+set /p "TPACE=  Pace - calm, normal, quick, rapid [normal]: "
+if not defined TPACE set "TPACE=normal"
+echo.
+if defined TAUDIO (
+    %PY% -m media_index timeline "!TFOLD!" "!TSCRIPT!" --audio "!TAUDIO!" --pace "!TPACE!"
+) else (
+    %PY% -m media_index timeline "!TFOLD!" "!TSCRIPT!" --pace "!TPACE!"
+)
 echo.
 pause
 goto menu

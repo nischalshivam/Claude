@@ -345,11 +345,20 @@ def lay_out(scene_index: int, narration: str, start: float, end: float,
 # ---------------------------------------------------------------------------
 
 def plan(beats: list, manifest: dict, total_seconds: float = 0.0,
-         audio: str = "", seed: int = 0, pace: str = "normal") -> Timeline:
-    """Turn a built folder's manifest into a timed sequence."""
+         audio: str = "", seed: int = 0, pace: str = "normal",
+         spans: list | None = None) -> Timeline:
+    """Turn a built folder's manifest into a timed sequence.
+
+    `spans` are real beat boundaries, measured off the recording by
+    `narration.py`. Without them the estimate is used, which assumes an even
+    read — good enough to work with, wrong wherever the narrator paused.
+    """
     base = PACES.get(pace, BASE_SEGMENT_S)
     by_scene = {s.get("scene"): s for s in (manifest.get("scenes") or [])}
-    spans = boundaries(beats, total_seconds)
+    if spans and len(spans) == len(beats):
+        spans = list(spans)
+    else:
+        spans = boundaries(beats, total_seconds)
     tl = Timeline(video=manifest.get("video", ""), audio=audio, pace=pace,
                   total_seconds=(total_seconds
                                  or (spans[-1][1] if spans else 0.0)))

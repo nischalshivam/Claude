@@ -13,8 +13,8 @@ import os
 import sys
 
 from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
-               library, probe, runner, search, sources, subs, subtitles, sync,
-               term, timeline, transcribe, visual)
+               library, narration, probe, runner, search, sources, subs,
+               subtitles, sync, term, timeline, transcribe, visual)
 from .probe import ProbeError
 
 
@@ -454,19 +454,32 @@ def cmd_timeline(a):
         data = json.load(f)
     beats = data if isinstance(data, list) else (data.get("beats") or [])
 
-    total = 0.0
+    total, spans = 0.0, None
     if a.audio:
         try:
             total = probe.probe(a.audio).duration
-            print(f"  narration is {total / 60:.1f} min — the plan is "
-                  "stretched onto it")
+            print(f"  narration is {total / 60:.1f} min")
         except ProbeError as exc:
             print(f"  could not read {a.audio} — {exc}")
-    else:
-        print("  no narration audio given, so the script's own estimate of "
-              "150 words a minute is used")
+        if not a.no_listen:
+            # Listening to the recording beats estimating from word counts,
+            # and by enough to be worth the minutes: an even read is an
+            # assumption, and where it fails it fails locally — every visual
+            # after a long pause under the wrong sentence.
+            heard = narration.align_audio(beats, a.audio, total_seconds=total,
+                                          log=print)
+            print(heard.summary())
+            if heard.ok:
+                spans = heard.spans
+                if heard.weak:
+                    print(f"      {len(heard.weak)} beat(s) had no matched "
+                          "word nearby and were interpolated: "
+                          + ", ".join(str(b) for b in heard.weak[:12]))
+    if spans is None:
+        print("  falling back on the script's estimate of 150 words a minute")
 
     tl = timeline.plan(beats, manifest, total_seconds=total, pace=a.pace,
+                       spans=spans,
                        audio=os.path.abspath(a.audio) if a.audio else "")
     path = timeline.write(tl, a.folder)
     print(tl.summary())
@@ -641,6 +654,8 @@ def main(argv=None):
     tm.add_argument("script", help="the visual script it was built from")
     tm.add_argument("--audio", default="",
                     help="the narration recording, so the plan matches it")
+    tm.add_argument("--no-listen", action="store_true",
+                    help="do not transcribe the voiceover; estimate instead")
     tm.add_argument("--pace", default="normal",
                     choices=sorted(timeline.PACES),
                     help="how often the picture changes (default normal)")
