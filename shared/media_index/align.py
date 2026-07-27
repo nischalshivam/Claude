@@ -23,6 +23,7 @@ between them. That is what turns 7% coverage into most of the script.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 from . import cutter
@@ -322,11 +323,20 @@ def episode_file(db_path: str, run: Run, con=None) -> str:
         rows = con.execute(
             "SELECT path, show FROM media WHERE season=? AND episode=?",
             (season, episode)).fetchall()
+        # A file that is no longer where the library remembers it is no use,
+        # and it is the one a tidied folder leaves behind: the same episode
+        # can be listed twice, once at a path that has gone. Prefer the one
+        # that is actually on disk, and only fall back to the other so the
+        # message stays "this episode is missing" rather than nothing.
+        stale = ""
         for row in rows:
             have = sources.canonical(row["show"] or "")
-            if have and (have == want or want in have or have in want):
+            if not have or not (have == want or want in have or have in want):
+                continue
+            if os.path.isfile(row["path"]):
                 return row["path"]
-        return ""
+            stale = stale or row["path"]
+        return stale
     finally:
         if own is not None:
             own.close()

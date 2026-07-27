@@ -281,12 +281,46 @@ def _stamp(video_path: str) -> tuple:
     return st.st_size, int(st.st_mtime)
 
 
+def rehome(con, video_path: str) -> bool:
+    """Follow a file that was simply moved, rather than indexing it again.
+
+    Someone who tidies "D:\\Breaking Bad Season 5" into "D:\\Breaking Bad"
+    has not changed a single frame, but every row here is keyed by absolute
+    path, so all of it would look unindexed and the slowest step in the tool
+    would run again for nothing.
+
+    Same name, same byte count, same modification time is the same file.
+    Only a lone match is followed: two identical copies in two folders is
+    exactly the situation where guessing is wrong.
+    """
+    try:
+        size, mtime = _stamp(video_path)
+    except OSError:
+        return False
+    name = os.path.basename(video_path)
+    rows = [r for r in con.execute(
+        "SELECT path FROM visual WHERE file_size=? AND file_mtime=?",
+        (size, mtime)).fetchall()
+        if os.path.basename(r["path"]) == name
+        and not os.path.isfile(r["path"])]
+    if len(rows) != 1:
+        return False
+    con.execute("UPDATE visual SET path=? WHERE path=?",
+                (os.path.abspath(video_path), rows[0]["path"]))
+    con.commit()
+    return True
+
+
 def is_current(con, db_path: str, video_path: str, model: str,
                fps: float = DEFAULT_FPS) -> bool:
     """Has this exact video already been indexed with this exact model?"""
     row = con.execute(
         "SELECT file_size, file_mtime, model, fps, vectors FROM visual "
         "WHERE path=?", (os.path.abspath(video_path),)).fetchone()
+    if not row and rehome(con, video_path):
+        row = con.execute(
+            "SELECT file_size, file_mtime, model, fps, vectors FROM visual "
+            "WHERE path=?", (os.path.abspath(video_path),)).fetchone()
     if not row:
         return False
     try:
@@ -303,6 +337,10 @@ def load(con, db_path: str, video_path: str) -> VisualIndex | None:
     row = con.execute(
         "SELECT model, fps, vectors FROM visual WHERE path=?",
         (os.path.abspath(video_path),)).fetchone()
+    if not row and rehome(con, video_path):
+        row = con.execute(
+            "SELECT model, fps, vectors FROM visual WHERE path=?",
+            (os.path.abspath(video_path),)).fetchone()
     if not row or not os.path.isfile(row["vectors"]):
         return None
     try:

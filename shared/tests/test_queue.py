@@ -34,6 +34,49 @@ def write_script(path, shots):
                     "shots": [s]} for i, s in enumerate(shots)], f)
 
 
+class TestAScriptCopiedOutOfAChatWindow(unittest.TestCase):
+    """A chat model asked for JSON returns JSON. Its web page returns
+    typographic quotes, and copying out of one is how a real script arrived
+    with 6,840 of them.
+
+    The error it produced — "Expecting property name enclosed in double
+    quotes: line 3 column 1" — is true and useless: the quotes ARE there,
+    they are simply the wrong ones, and nothing in the message says so.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="smart_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, text, name="s.json"):
+        p = os.path.join(self.tmp, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        return p
+
+    def test_curly_quotes_are_straightened_and_read(self):
+        p = self._write('[{“beat”: 1, “narration”: '
+                        '“He doesn’t look at them.”}]')
+        beats = jobs_mod.read_beats(p)
+        self.assertEqual(beats[0]["beat"], 1)
+        self.assertEqual(beats[0]["narration"], "He doesn't look at them.")
+
+    def test_a_byte_order_mark_and_crlf_are_not_a_problem(self):
+        p = self._write('﻿[\r\n{“beat”: 1}\r\n]')
+        self.assertEqual(jobs_mod.read_beats(p)[0]["beat"], 1)
+
+    def test_a_script_that_is_simply_broken_still_says_what_is_wrong(self):
+        p = self._write('[{"beat": 1,,}]')
+        with self.assertRaises(json.JSONDecodeError):
+            jobs_mod.read_beats(p)
+
+    def test_straightening_leaves_ordinary_json_untouched(self):
+        text = '[{"beat": 1, "narration": "plain"}]'
+        self.assertEqual(jobs_mod.straighten(text), text)
+
+
 class TestJobFile(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="jobfile_")

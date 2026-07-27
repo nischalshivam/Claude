@@ -179,6 +179,7 @@ class ScanResult:
     added: int = 0
     updated: int = 0
     skipped: int = 0
+    forgotten: int = 0            # rows whose file is no longer on disk
     no_subs: list = None          # [(path, reason)]
     desynced: list = None         # [(path, SyncResult-ish description)]
     warnings: list = None         # [(path, reason)] — indexed, but read this
@@ -300,6 +301,31 @@ def _index_one(con, path: str, log, verify_sync=False,
     return status, len(cues)
 
 
+def rehome_all(con, files: list) -> int:
+    """Re-key the picture index onto files that were moved, not changed."""
+    from . import visual
+    done = 0
+    for path in files:
+        try:
+            if visual.rehome(con, path):
+                done += 1
+        except Exception:                  # a scan must never die of tidying
+            continue
+    return done
+
+
+def forget_missing(con) -> int:
+    """Drop rows whose video is not on disk any more. Returns how many."""
+    gone = [r["path"] for r in con.execute("SELECT path FROM media").fetchall()
+            if not os.path.isfile(r["path"])]
+    for path in gone:
+        con.execute("DELETE FROM media WHERE path=?", (path,))
+        con.execute("DELETE FROM visual WHERE path=?", (path,))
+    if gone:
+        con.commit()
+    return len(gone)
+
+
 def build(media_root: str, db_path: str, log=print,
           verify_sync=False, sync_seconds=None) -> ScanResult:
     """Scan `media_root` and bring `db_path` up to date."""
@@ -308,6 +334,20 @@ def build(media_root: str, db_path: str, log=print,
     con = connect(db_path)
     files = list(naming.walk_media(media_root))
     log(f"scanning {len(files)} video file(s) under {media_root}")
+    # Follow files that only MOVED before forgetting anything: the picture
+    # index is the slowest thing in the tool to rebuild, and a tidied folder
+    # changes not one frame of any episode.
+    followed = rehome_all(con, files)
+    if followed:
+        log(f"  {followed} file(s) moved — the picture index followed them")
+    res.forgotten = forget_missing(con)
+    if res.forgotten:
+        # Someone who tidies one folder into another leaves the library
+        # holding two rows for the same episode, one of them at a path that
+        # has gone — and a build that picks the wrong one finds no file and
+        # blames the script.
+        log(f"  {res.forgotten} file(s) are no longer where they were — "
+            "forgotten")
 
     for i, path in enumerate(files, 1):
         try:

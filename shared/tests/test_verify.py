@@ -372,6 +372,42 @@ class TestStoringWhatTheFootageLooksLike(unittest.TestCase):
         # that is ever asked of it
         np.testing.assert_allclose(got.vecs, made.vecs, atol=1e-3)
 
+    def test_a_folder_that_was_tidied_does_not_cost_a_re_index(self):
+        """Moving "D:\\Breaking Bad Season 5" into "D:\\Breaking Bad" changes
+        no frame of any episode, but every row here is keyed by absolute
+        path — so the slowest step in the tool would run again for nothing.
+
+        Same name, same byte count, same date is the same file.
+        """
+        backend = embed.Deterministic(dim=64)
+        made = self._store(backend)
+        moved_dir = os.path.join(self.tmp, "Breaking Bad")
+        os.makedirs(moved_dir, exist_ok=True)
+        moved = os.path.join(moved_dir, "ep.mkv")
+        shutil.move(self.video, moved)
+
+        got = visual.load(self.con, self.db, moved)
+        self.assertIsNotNone(got, "the picture index did not follow the file")
+        self.assertEqual(len(got), len(made))
+        self.assertTrue(visual.is_current(self.con, self.db, moved,
+                                          backend.name))
+
+    def test_two_identical_copies_are_not_guessed_between(self):
+        backend = embed.Deterministic(dim=64)
+        self._store(backend)
+        other = os.path.join(self.tmp, "copy.mkv")
+        shutil.copy2(self.video, other)         # same size, same date, new name
+        self.assertFalse(visual.rehome(self.con, other))
+
+    def test_a_file_still_where_it_was_is_never_rehomed(self):
+        backend = embed.Deterministic(dim=64)
+        self._store(backend)
+        elsewhere = os.path.join(self.tmp, "sub")
+        os.makedirs(elsewhere, exist_ok=True)
+        twin = os.path.join(elsewhere, "ep.mkv")
+        shutil.copy2(self.video, twin)          # the original is still there
+        self.assertFalse(visual.rehome(self.con, twin))
+
     def test_vectors_live_beside_the_database_not_inside_it(self):
         self._store(embed.Deterministic(dim=64))
         self.assertTrue(os.path.isdir(visual.store_dir(self.db)))

@@ -177,9 +177,43 @@ class JobReport:
         return [c for c in self.checks if not c.ok]
 
 
-def _read_beats(path: str) -> list:
+SMART = {"“": '"', "”": '"', "„": '"', "‟": '"',
+         "‘": "'", "’": "'", "‚": "'", "‛": "'",
+         "«": '"', "»": '"', "′": "'", "″": '"'}
+
+
+def straighten(text: str) -> str:
+    """Turn typographic quotes into the ones JSON accepts.
+
+    A chat model asked for JSON returns JSON. A chat model's *web page*
+    returns typographic quotes, and copying out of one is how a real script
+    arrived with 6,840 of them and would not parse at all — on line 3,
+    character 4, with an error message about property names that says
+    nothing about the actual cause.
+
+    Only ever a repair attempt: the straightened text is parsed and used
+    only if it parses. If a narration legitimately contains a quoted phrase,
+    straightening breaks it, the parse fails, and the original error is
+    reported exactly as before.
+    """
+    for bad, good in SMART.items():
+        text = text.replace(bad, good)
+    return text
+
+
+def read_beats(path: str) -> list:
     with open(path, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
+        raw = f.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as first:
+        straight = straighten(raw)
+        if straight == raw:
+            raise
+        try:
+            data = json.loads(straight)
+        except json.JSONDecodeError:
+            raise first from None            # the real fault is the first one
     return data if isinstance(data, list) else (data.get("beats") or [])
 
 
@@ -196,7 +230,7 @@ def preflight(job: Job, log=lambda *a: None) -> JobReport:
         add(Check("script file", False, f"not found: {job.script}"))
         return rep
     try:
-        rep.beats = _read_beats(job.script)
+        rep.beats = read_beats(job.script)
         add(Check("script parses", True, f"{len(rep.beats)} beats"))
     except (json.JSONDecodeError, OSError) as exc:
         add(Check("script parses", False, str(exc)[:160]))

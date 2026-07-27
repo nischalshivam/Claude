@@ -82,9 +82,7 @@ def cmd_find(a):
 
 
 def cmd_resolve(a):
-    with open(a.script, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
-    beats = data if isinstance(data, list) else data.get("beats", [])
+    beats = jobs_mod.read_beats(a.script)
     rows = search.resolve_script(a.db, beats)
 
     icon = {"resolved": term.sym("ok"), "ambiguous": term.sym("warn"),
@@ -186,9 +184,7 @@ def cmd_cut(a):
 
 def cmd_sources(a):
     """Which titles does this script need, and are they in the library?"""
-    with open(a.script, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
-    beats = data if isinstance(data, list) else data.get("beats", [])
+    beats = jobs_mod.read_beats(a.script)
     reqs = sources.check(a.db, beats, resolve_dialogue=not a.fast)
     print(sources.format_report(reqs))
     if a.out:
@@ -209,9 +205,7 @@ def cmd_sources(a):
 
 def cmd_align(a):
     """Place shots that carry no dialogue, by walking the scene in order."""
-    with open(a.script, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
-    beats = data if isinstance(data, list) else data.get("beats", [])
+    beats = jobs_mod.read_beats(a.script)
     places = align.align(a.db, beats, log=print)
     print()
     print(f"{'beat':>5} {'method':<14} {'time':>13} {'conf':<8} note")
@@ -265,9 +259,7 @@ def cmd_look(a):
         if not os.path.isfile(a.script):
             print(f"  No such script: {a.script}")
             return 1
-        with open(a.script, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        beats = data if isinstance(data, list) else (data.get("beats") or [])
+        beats = jobs_mod.read_beats(a.script)
         only = visual.files_for_script(a.db, beats)
         if not only:
             print("  That script names no episode that is in the library.")
@@ -450,9 +442,7 @@ def cmd_timeline(a):
     except (OSError, json.JSONDecodeError) as exc:
         print(f"  No manifest in {a.folder} — build it first.  ({exc})")
         return 1
-    with open(a.script, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
-    beats = data if isinstance(data, list) else (data.get("beats") or [])
+    beats = jobs_mod.read_beats(a.script)
 
     total, spans = 0.0, None
     if a.audio:
