@@ -316,3 +316,262 @@ Isliye Message 1 me constraints wala hissa **hataana mat**. Aur agar output me
 
 > "Ye plain HTML + CSS + vanilla JS me chahiye, ek single file me.
 > React aur Tailwind nahi."
+
+---
+---
+
+# Round 2 — jo pehle round me reh gaya
+
+Pehla round achha aaya: sidebar, foundation/components, Library ki list,
+New Video ka poora form, aur Editor ka timeline — sab ban gaya.
+
+Paanch cheezein reh gayi. Neeche har ek ka alag message hai. **Ek message me
+ek cheez** bhejna, aur har baar shuru me ye line zaroor likhna:
+
+> Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+> plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+---
+
+## Message 4 — "Find another" modal (sabse zaroori)
+
+>>>
+Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+Editor screen ke liye **"Find another" modal** banao. Ye poore tool ka sabse
+zyada istemaal hone wala screen hai — jab tool galat shot chun leta hai, user
+yahin se sahi wala chunta hai.
+
+Modal (center, backdrop ke saath, ~900px chaura):
+
+- Heading: `Scene 12 ke liye dusra shot`
+- Neeche us scene ki narration italic me:
+  *"By the fourth season, the mask is gone. What's left isn't a man protecting
+  his family — it's a man protecting his empire."*
+- Ek line: `Breaking Bad S04E01 me se — 10 sabse milte-julte frames`
+
+- **Grid: 2 rows × 5 thumbnails.** Har thumbnail 16:9. Har ek ke neeche:
+  - timestamp monospace me (`37:12`, `41:02`, `22:18`, ...)
+  - match score (`0.41`) aur uske saath ek patla horizontal bar jo score
+    dikhaye (sabse upar wale ka bar sabse lamba)
+  - pehle wale pe ek chhota `current` badge
+- Hover pe border highlight, click pe selected state (accent border + tick)
+- Ek thumbnail selected dikha do
+
+- Neeche left me ek chhoti line: `score jitna zyada, match utna pakka`
+- Neeche right me: `Cancel` (ghost) + `Use this shot` (primary)
+
+Ek doosra variant bhi banao: **koi alternative nahi mila** —
+grid ki jagah empty state: "Is episode me aur koi milta-julta frame nahi
+mila" + `Cancel`.
+>>>
+
+---
+
+## Message 5 — Library ka "+ Add title" aur "Check" panel
+
+>>>
+Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+Library screen ka **"+ Add title" panel** banao. Ye right side se slide hoke
+aane wala panel hai (~480px chaura), backdrop ke saath.
+
+**Panel ke teen roop banao, teeno dikhao:**
+
+### Roop 1 — khaali form
+- Heading `Add title` + close (×)
+- **Title** — text input, placeholder `The Shawshank Redemption`
+- **Video folder** — text input + `Browse` button,
+  placeholder `E:\Media\The Shawshank Redemption`
+- **Library folder** — disabled input, auto-filled:
+  `E:\Libraries\The Shawshank Redemption`, neeche chhoti muted line
+  "apne aap ban jaayega"
+- Neeche: `Check` (secondary) + `Build index` (primary, **disabled**)
+- Disabled button ke neeche muted line: "pehle Check chalao"
+
+### Roop 2 — Check ka result
+Wahi form upar, neeche ek result card jisme icon + text ki list:
+```
+✓  62 video files mile
+✓  58 episodes — subtitles theek
+⚠  2 episodes — subtitle image-based hai (.srt chahiye)
+      S03E09, S04E02
+✗  2 episodes — subtitle hai hi nahi
+      S02E07, S05E03
+✓  disk pe 340 GB jagah hai
+```
+Aur neeche ek muted estimate line:
+`picture index banne me lagega ~4 ghante`
+Ab `Build index` **enabled** hai.
+
+### Roop 3 — indexing chal rahi hai
+Form chhup jaata hai. Uski jagah:
+- Bada progress bar
+- `Episode 23 / 62`
+- monospace line: `picture index · S03E10`
+- `3h 10m bacha`
+- `Pause` button (secondary) aur `Cancel` (ghost, danger colour me text)
+- Neeche muted line: "band ho jaaye to koi baat nahi — dobara chalane pe
+  yahin se shuru hoga"
+>>>
+
+---
+
+## Message 6 — New Video ka "Check" result panel
+
+>>>
+Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+New Video screen pe jab user `Check` dabata hai, to right side se ek panel
+aata hai (~440px). Wo banao — **teen roop, teeno dikhao:**
+
+Har roop me sabse upar ek bada verdict badge aur ek line:
+
+### Roop 1 — OK (green)
+```
+OK  ·  94% shots resolve honge
+```
+```
+✓  script padh li — 55 scenes, 132 shots
+✓  Breaking Bad — saare episodes indexed
+✓  voiceover mil gaya — 11m 09s
+✓  disk pe jagah hai — 12 GB chahiye, 340 GB hai
+✓  ffmpeg mil gaya
+```
+Neeche: `Build → Editor` primary button
+
+### Roop 2 — GAPS (amber)
+```
+GAPS  ·  83% shots resolve honge
+```
+Wahi list, par ek amber row extra:
+```
+⚠  8 scenes me koi quoted line nahi — footage anumaan hoga
+      scene 12, 19, 24, 31, 38, 44, 49, 52
+```
+Wo scene numbers **clickable chips** ki tarah dikhne chahiye.
+Neeche: `Build anyway → Editor` primary + `Script theek karo` ghost
+
+### Roop 3 — BLOCKED (red)
+```
+BLOCKED  ·  build shuru nahi hoga
+```
+```
+✓  script padh li — 55 scenes, 132 shots
+✗  S05E14 library me nahi hai
+      Library me jaake Breaking Bad rebuild karo
+✗  voiceover file nahi mili
+      E:\Voice\vo-final.m4a
+✓  disk pe jagah hai
+```
+Neeche: `Build` button **disabled**, aur ek `Library kholo` link button
+>>>
+
+---
+
+## Message 7 — Queue aur Settings screens
+
+>>>
+Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+Do screen banao.
+
+### Screen 1 — Queue
+Yahan saari videos ki list hai jo ban rahi hai ya ban chuki hai.
+
+Header: `Queue` + subtitle "Jo ban rahi hai aur jo ban chuki hai" +
+right me `+ New Video` button aur ek `Pause all` ghost button.
+
+Rows, har ek me:
+- Video ka naam (bada) + neeche muted: `Breaking Bad · 55 scenes · 11m 09s`
+- Status badge
+- Right me action buttons
+
+Ye paanch rows dikhao, paanch alag status ke saath:
+
+1. `Why Walter White Broke Bad` — **done** (green) — `12m 04s me bani` —
+   buttons: `Move to editor` (primary) + `Folder kholo` (ghost)
+2. `Gus Fring — The Quiet Villain` — **building** (blue) — progress bar +
+   `scene 31 / 38` + `6m bacha` — button: `Pause`
+3. `The Cousins` — **queued** (grey) — `#3 line me` — buttons: `Upar karo`,
+   `Hatao`
+4. `Jesse's Last Ride` — **needs attention** (amber) —
+   `GAPS · 78% shots` — button: `Check dekho`
+5. `Mike's Rules` — **failed** (red) — `voiceover file nahi mili` —
+   buttons: `Theek karo`, `Dobara chalao`
+
+Neeche ek summary strip: `2 done · 1 building · 1 queued · 1 failed`
+
+### Screen 2 — Settings
+Simple, ek column, sections me:
+
+**Folders**
+- Libraries folder — `E:\Libraries` + Browse
+- Default output folder — `E:\Exports` + Browse
+- Scratch / temp folder — `E:\Temp` + Browse
+
+**Defaults** (nayi video pe ye pehle se bhare aayenge)
+- Quality — 1080p / 4K segmented
+- Pace — Calm / Normal / Quick / Rapid segmented
+- Style preset — dropdown
+- Captions — toggle
+
+**Advanced**
+- ffmpeg path — text input, uske aage green tick + `mil gaya`
+- Model — disabled dropdown `siglip-base-patch16-224`
+- Frames per second (indexing) — number, `0.5`, neeche muted warning
+  "isse badlane pe saari libraries dobara banani padengi"
+
+**Danger zone** — ek red-border card:
+- `Saare temp files hatao` (danger ghost button)
+- `Settings reset karo` (danger ghost button)
+>>>
+
+---
+
+## Message 8 — Export modal + timeline ki khaali jagah
+
+>>>
+Wahi Movie Editor design, wahi components, wahi colours, wahi single-file
+plain HTML + CSS + vanilla JS wale constraints. React/Tailwind nahi.
+
+Do chhoti cheezein.
+
+### 1. Export modal
+Editor ke `Export` button se khulta hai. Center modal, ~520px:
+- Heading `Export`
+- Output folder — text + Browse, `E:\Exports\walter-essay`
+- File name — text, `why-walter-white-broke-bad.mp4`
+- Quality — segmented `1080p` / `4K (upscaled)`
+- Ek muted estimate strip: `~2.1 GB  ·  ~18 minute lagenge`
+- Neeche: `Cancel` ghost + `Export` primary
+
+Ek **doosra roop** bhi banao — export chal raha hai:
+- Progress bar, `segment 84 / 132`, `11m bacha`
+- `Cancel` button
+- Neeche muted: "isko band karke doosra kaam kar sakte ho"
+
+### 2. Timeline me khaali scene
+Editor ke SHOTS track me ek aisa block dikhao jisme kuch hai hi nahi:
+- Dashed border, halka background
+- Andar chhote text me `nothing here`
+- Hover pe ek chhota `+ add shot` button
+Uske aas-paas normal bhare hue blocks bhi rahein taaki farak dikhe.
+>>>
+
+---
+
+## Dark theme
+
+Design me Light/Dark toggle bana hua hai. **Dark pe switch karke ek baar
+saari screens dekh lena.** Agar kahin text padhne me dikkat ho ya koi cheez
+gayab lage, to ek message bhej dena:
+
+>>>
+Dark theme me <screen ka naam> theek nahi dikh raha — <kya dikkat hai>.
+Sirf dark theme ke colours theek karo, layout mat badalna.
+>>>
