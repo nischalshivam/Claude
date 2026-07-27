@@ -228,7 +228,7 @@ class TestBatchFiles(unittest.TestCase):
         # wrong. Describing one picture and looking at the frame that comes
         # back is the only cheap proof that the picture layer works at all.
         for cmd in ("check", "transcribe", "build", "find", "cut", "stats",
-                    "make", "sheet", "look", "see"):
+                    "make", "sheet", "look", "see", "render"):
             self.assertIn(f"media_index {cmd}", text,
                           f"start.bat never runs '{cmd}'")
 

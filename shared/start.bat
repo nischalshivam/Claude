@@ -59,13 +59,14 @@ echo    9.  BUILD A VIDEO from a visual script
 echo    L.  Look at the footage       - teach it what your episodes LOOK like
 echo    S.  Describe a picture        - PROVE it can see. do this after L
 echo    T.  Plan the timing           - how long each shot holds
+echo    R.  RENDER THE VIDEO          - the file you can actually watch
 echo    0.  Exit
 echo  ----------------------------------------------------------
 
 REM  Say what to do next, so the list is never a guess.
 set "NEXT=press 8 and point it at your episode folder"
 if defined MEDIA set "NEXT=press 1, then 2, then 4 - in that order"
-if defined MEDIA if exist "!DB!" set "NEXT=6 proves a clip, L looks, S proves it sees, 9 builds"
+if defined MEDIA if exist "!DB!" set "NEXT=9 builds, T times it, R renders the video"
 echo    NEXT:  !NEXT!
 echo.
 set "CHOICE="
@@ -84,6 +85,7 @@ if "!CHOICE!"=="9" goto do_queue
 if /i "!CHOICE!"=="L" goto do_look
 if /i "!CHOICE!"=="S" goto do_see
 if /i "!CHOICE!"=="T" goto do_time
+if /i "!CHOICE!"=="R" goto do_render
 if "!CHOICE!"=="0" goto bye
 echo.
 echo   That was not one of the numbers on the list.
@@ -345,6 +347,25 @@ if defined TAUDIO (
 ) else (
     %PY% -m media_index timeline "!TFOLD!" "!TSCRIPT!" --pace "!TPACE!"
 )
+echo.
+pause
+goto menu
+
+:do_render
+echo.
+echo   This makes the actual video file. Slow - roughly a minute of
+echo   rendering per minute of finished video - and safe to interrupt:
+echo   run it again and it picks up where it stopped.
+echo.
+echo   Run T first. Without a timeline there is nothing to render.
+echo.
+set "RFOLD="
+set /p "RFOLD=  Built folder [built]: "
+if not defined RFOLD set "RFOLD=built"
+set "RFOLD=!RFOLD:"=!"
+echo.
+%PY% -m media_index render "!RFOLD!"
+if exist "!RFOLD!\video.mp4" start "" "!RFOLD!\video.mp4"
 echo.
 pause
 goto menu

@@ -308,11 +308,27 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     score = lift_matrix(index, texts, backend)
     wanted = np.array([placements[i].start_ms / 1000.0 for i in ordered],
                       dtype=np.float32)
-    # A run with no anchor has no prior worth having — the "expected" times
-    # are an even spread invented so the run had somewhere to start. Pulling
-    # towards that would drag every shot to a position nobody chose.
-    grounded = any(placements[i].method == "anchor" for i in ordered)
-    total = score + (prior_matrix(index.times, wanted) if grounded else 0.0)
+    # The prior is only worth what alignment actually measured, and with one
+    # anchor it measured nothing about pacing — the axis is an assumption
+    # extrapolated from a single point. The build that proved it: the three
+    # runs with NO anchor, placed on the pictures alone, came back 24/24,
+    # 15/15 and 7/7 verified. The runs pinned to one anchor and pulled
+    # towards its extrapolation came back 65/219 and 1/9 — and S04E10 was
+    # four shots, so density is no excuse: three of its four had a match
+    # somewhere and the prior kept them from it.
+    #
+    # Two anchors measure a real stretch between two real times, and that is
+    # worth following where the pictures are quiet. One anchor fixes a point
+    # and nothing else, so it stays pinned and stops voting on everything
+    # around it.
+    grounded = sum(1 for i in ordered if placements[i].method == "anchor")
+    if grounded >= 2:
+        total = score + prior_matrix(index.times, wanted)
+    else:
+        total = score
+        if grounded == 1:
+            log(f"      {run.label}: one anchor only — it is held where its "
+                "line is, but the pictures decide the rest")
 
     pinned = []
     for i in ordered:

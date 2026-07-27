@@ -912,3 +912,65 @@ class TestSayingWhichFixIsNeeded(unittest.TestCase):
         text = rep.summary()
         self.assertIn("4 did have a match elsewhere", text)
         self.assertIn("2 matched nothing anywhere", text)
+
+
+class TestThePriorIsWorthWhatAlignmentMeasured(unittest.TestCase):
+    """One anchor fixes a point. It does not measure a pace.
+
+    The build that settled this: three runs with no anchor at all, placed on
+    the pictures alone, came back 24/24, 15/15 and 7/7 verified. The runs
+    pinned to a single anchor and pulled towards its extrapolation came back
+    65/219 and 1/9 — and one of those was four shots long, so scene density
+    is no excuse. Three of its four had a match somewhere in the episode and
+    the prior kept them from it.
+    """
+
+    def setUp(self):
+        self.backend = embed.Deterministic(dim=64)
+        caps = [f"filler{i}" for i in range(40)]
+        caps[30], caps[33], caps[36] = "doorway", "apron", "cutter"
+        self.index = fake_index(caps, backend=self.backend)
+
+    def _run(self, visuals):
+        return align.Run(source="S", season_episode="S01E01", entries=[
+            align.Entry(beat=1, shot=i + 1,
+                        data={"visual": v, "duration_target_sec": 4})
+            for i, v in enumerate(visuals)])
+
+    def _places(self, at_s, anchors=()):
+        out = []
+        for i, s in enumerate(at_s):
+            p = align.Placement(beat=1, shot=i + 1, path=self.index.path,
+                                start_ms=int(s * 1000),
+                                end_ms=int(s * 1000) + 4000,
+                                method="interpolated", confidence="low")
+            if i in anchors:
+                p.method, p.confidence = "anchor", "high"
+            out.append(p)
+        return out
+
+    def test_one_anchor_does_not_drag_the_rest_away_from_the_pictures(self):
+        # The anchor is real and stays put. Everything else is 100 seconds
+        # from where the pictures say it is, and the pictures must win.
+        places = self._places([2.0, 4.0, 72.0], anchors={2})
+        verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
+                          places, self.backend)
+        self.assertEqual(places[0].start_ms, 60000)
+        self.assertEqual(places[1].start_ms, 66000)
+        self.assertEqual(places[2].start_ms, 72000)
+
+    def test_it_says_so_in_the_log(self):
+        said = []
+        verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
+                          self._places([2.0, 4.0, 72.0], anchors={2}),
+                          self.backend, log=said.append)
+        self.assertTrue(any("one anchor only" in s for s in said), said)
+
+    def test_two_anchors_do_measure_a_pace_and_are_still_followed(self):
+        # Both ends pinned: the run is held between two real times, which is
+        # a measurement rather than an extrapolation.
+        places = self._places([60.0, 66.0, 72.0], anchors={0, 2})
+        verify.verify_run(self.index, self._run(["doorway", "apron", "cutter"]),
+                          places, self.backend)
+        self.assertEqual(places[0].start_ms, 60000)
+        self.assertEqual(places[2].start_ms, 72000)

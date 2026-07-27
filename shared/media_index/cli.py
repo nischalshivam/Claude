@@ -13,8 +13,8 @@ import os
 import sys
 
 from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
-               library, narration, probe, runner, search, sources, subs,
-               subtitles, sync, term, timeline, transcribe, visual)
+               library, narration, probe, render, runner, search, sources,
+               subs, subtitles, sync, term, timeline, transcribe, visual)
 from .probe import ProbeError
 
 
@@ -493,6 +493,22 @@ def cmd_timeline(a):
     return 0
 
 
+def cmd_render(a):
+    """Make the video. The first step whose output can simply be watched."""
+    res = render.render_folder(a.folder, out_name=a.out, audio=a.audio,
+                               motion=not a.no_motion,
+                               resume=not a.restart, log=print)
+    print("")
+    print(render.describe(res))
+    if res.failed:
+        print(f"\n  {len(res.failed)} problem(s):")
+        for what, why in res.failed[:10]:
+            print(f"      {what}  —  {why}")
+    if res.ok:
+        print(f"\n  -> {res.path}")
+    return 0 if res.ok else 1
+
+
 def cmd_sheet(a):
     """One page of every still, so a hundred can be judged at a glance."""
     made = contact.build(a.folder, a.out, columns=a.columns, log=print)
@@ -660,6 +676,18 @@ def main(argv=None):
                     choices=sorted(timeline.PACES),
                     help="how often the picture changes (default normal)")
     tm.set_defaults(func=cmd_timeline)
+
+    rn = sub.add_parser("render", parents=[common],
+                        help="turn a planned timeline into a video file")
+    rn.add_argument("folder", help="a built job output folder")
+    rn.add_argument("--out", default="video.mp4")
+    rn.add_argument("--audio", default="",
+                    help="narration; taken from timeline.json if omitted")
+    rn.add_argument("--no-motion", action="store_true",
+                    help="hold stills dead still instead of drifting")
+    rn.add_argument("--restart", action="store_true",
+                    help="re-render every segment from scratch")
+    rn.set_defaults(func=cmd_render)
 
     sh = sub.add_parser("sheet", parents=[common],
                         help="contact sheet of every still that was made")
