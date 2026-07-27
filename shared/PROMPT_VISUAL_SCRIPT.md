@@ -76,10 +76,34 @@ Rules that follow from that:
 A beat whose narration has no picture still needs a real caption — see Rule
 4. Describe the face, the object or the room you chose, not the idea.
 
-## RULE 1 — one verbatim line every ten shots
+## RULE 1 — THREE verbatim lines in every run, and never fewer than two
 
-Within any stretch of shots from the same episode, at least one shot in every
-ten must carry `exact_dialogue` quoted word for word as it is spoken.
+A "run" is all the shots you take from one episode, however scattered they
+are across the script. **Every run needs at least two quoted lines, and three
+if it has more than twenty shots** — one near its first shot, one near its
+middle, one near its last.
+
+This is the single highest-value thing in this document, and it is worth
+being blunt about why. On a measured build:
+
+| what the run had | what happened |
+| --- | --- |
+| two or more quoted lines | shots landed where they belong |
+| one quoted line, at the last shot | 90 shots hung off one point at the far end |
+| no quoted line at all | 9 scenes of the finished video had nothing to show |
+
+The quoted line is the only *exact* evidence in the whole tool — 89 of 89
+were found in the real subtitles, to the millisecond. The picture search is
+a fallback for the shots between them, and on ordinary interior drama it
+frequently cannot tell one room from another. **Do not rely on it. Quote.**
+
+If a run genuinely has no dialogue anywhere in it — a silent flashback, a
+montage — quote the last line spoken BEFORE the sequence and the first line
+spoken AFTER it, and mark neither as a hook. Two lines bracketing a silence
+place everything inside it.
+
+Within a run, at least one shot in every ten must carry `exact_dialogue`
+quoted word for word as it is spoken.
 
 Word for word means word for word. "Whatever it is you think I've done, you
 have to let me explain" does not match a subtitle reading "Look, whatever you
@@ -265,6 +289,7 @@ Append one final JSON object:
     "verbatim_lines": 0,
     "longest_gap_between_verbatim_lines": 0,
     "runs_without_any_verbatim_line": 0,
+    "runs_with_only_one_verbatim_line": 0,
     "shots_with_a_visible_caption": 0,
     "shots_total": 0
   }
@@ -274,6 +299,7 @@ Fix and re-answer if any of these is true:
   - coverage_percent below 95
   - longest_gap_between_verbatim_lines above 10
   - runs_without_any_verbatim_line above 0
+  - runs_with_only_one_verbatim_line above 0
   - shots_with_a_visible_caption below shots_total
 
 Now here is my script:
