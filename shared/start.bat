@@ -23,10 +23,12 @@ if not defined PY (
 REM -------------------------------------------- remember the last used paths
 set "MEDIA="
 set "DB=library.db"
+set "LIBS="
 if exist "settings.txt" (
     for /f "usebackq tokens=1,* delims==" %%a in ("settings.txt") do (
         if /i "%%a"=="media" set "MEDIA=%%b"
         if /i "%%a"=="db" set "DB=%%b"
+        if /i "%%a"=="libs" set "LIBS=%%b"
     )
 )
 
@@ -133,6 +135,7 @@ if not exist "!NEWDIR!\." (
 set "MEDIA=!NEWDIR!"
 > "settings.txt" echo media=!MEDIA!
 >> "settings.txt" echo db=!DB!
+>> "settings.txt" echo libs=!LIBS!
 REM  No "press any key" here on purpose. The path is usually pasted, and a
 REM  pause straight after a paste swallows the first letter and posts the
 REM  rest into the next prompt. The menu header shows the folder anyway.
@@ -355,9 +358,15 @@ goto menu
 
 :do_web
 echo.
-echo   This opens the tool in your browser. Every shot of a finished
-echo   video, in order, with the frame itself on screen - and a tag on
-echo   each one saying HOW it got there:
+echo   This opens the tool in your browser.
+echo.
+echo   The first screen is LIBRARY: every show and film you own, how much
+echo   of each one is indexed, and what is stopping the rest. A title that
+echo   says "9 of 62 indexed" can still build a video - but in the other 53
+echo   episodes a shot is picked from the dialogue alone and never checked
+echo   against the picture. That is the difference the screen now shows.
+echo.
+echo   The shot-by-shot page is still there, at /shots, with its four tags:
 echo.
 echo      anchor        a quoted line. exact to the millisecond
 echo      verified      the picture matched the description
@@ -367,13 +376,13 @@ echo.
 echo   Leave this window open while you use it. Ctrl+C closes it.
 echo.
 set "WOUT="
-set /p "WOUT=  an output folder to open (blank = choose it in the browser): "
+set /p "WOUT=  an output folder to open (blank = just the library): "
 if defined WOUT set "WOUT=!WOUT:"=!"
 echo.
 if defined WOUT (
-%PY% -m media_index web --db "!DB!" --out "!WOUT!"
+%PY% -m media_index web --db "!DB!" --out "!WOUT!" --libraries "!LIBS!"
 ) else (
-%PY% -m media_index web --db "!DB!"
+%PY% -m media_index web --db "!DB!" --libraries "!LIBS!"
 )
 echo.
 pause

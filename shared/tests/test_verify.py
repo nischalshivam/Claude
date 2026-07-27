@@ -392,6 +392,51 @@ class TestStoringWhatTheFootageLooksLike(unittest.TestCase):
         self.assertTrue(visual.is_current(self.con, self.db, moved,
                                           backend.name))
 
+    def test_moving_the_library_itself_does_not_cost_a_re_index(self):
+        """Copying E:\\Libraries onto a new drive, or tidying the tool's own
+        folder, moves the frames but not one pixel of any episode.
+
+        The row holds the vectors' absolute path, so without following them
+        every episode would look unindexed — the same accident `rehome`
+        prevents for footage, arriving from the other direction. The file
+        name is a hash, so the same name in the store beside the database is
+        the same frames.
+        """
+        backend = embed.Deterministic(dim=64)
+        made = self._store(backend)
+
+        elsewhere = os.path.join(self.tmp, "Libraries", "Breaking Bad")
+        os.makedirs(elsewhere, exist_ok=True)
+        moved_db = os.path.join(elsewhere, "library.db")
+        self.con.close()
+        shutil.copy2(self.db, moved_db)
+        shutil.copytree(visual.store_dir(self.db), visual.store_dir(moved_db))
+        shutil.rmtree(visual.store_dir(self.db))    # only the new copy exists
+
+        con = library.connect(moved_db)
+        try:
+            got = visual.load(con, moved_db, self.video)
+            self.assertIsNotNone(got, "the frames did not move with the library")
+            self.assertEqual(len(got), len(made))
+            self.assertTrue(visual.is_current(con, moved_db, self.video,
+                                              backend.name))
+            # And the repair is permanent: the row now names where they are.
+            row = con.execute("SELECT vectors FROM visual WHERE path=?",
+                              (os.path.abspath(self.video),)).fetchone()
+            self.assertTrue(row["vectors"].startswith(
+                visual.store_dir(moved_db)))
+        finally:
+            con.close()
+        self.con = library.connect(self.db)          # tearDown closes this
+
+    def test_frames_that_are_genuinely_gone_are_not_invented(self):
+        backend = embed.Deterministic(dim=64)
+        self._store(backend)
+        shutil.rmtree(visual.store_dir(self.db))
+        self.assertIsNone(visual.load(self.con, self.db, self.video))
+        self.assertFalse(visual.is_current(self.con, self.db, self.video,
+                                           backend.name))
+
     def test_two_identical_copies_are_not_guessed_between(self):
         backend = embed.Deterministic(dim=64)
         self._store(backend)

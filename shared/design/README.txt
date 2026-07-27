@@ -5,10 +5,15 @@ Claude Design se aayi files. Ye "design" hai, tool nahi.
   Movie Editor standalone-src.html
   support.js                      <- Claude Design ka apna runtime (React chahiye)
 
-.dc.html ko seedha browser me khologe to KHAALI dikhega — ye Claude Design ke
-andar hi chalta hai. Uske andar ka HTML+CSS bilkul theek hai; tool me lagane
-ke liye ek chhota renderer chahiye jo {{ }}, sc-if, sc-for, style-hover
-samajh le. Wo media_index ke andar banega.
+.dc.html ko seedha browser me khologe to KHAALI dikhega -- ye Claude Design ke
+andar hi chalta hai. Tool ise apne tareeke se padhta hai:
+
+  media_index/ui/dcx.js      {{ }}, sc-if, sc-for, onClick, style-hover
+  media_index/ui/screens.html  screens, isi design ki markup se
+  media_index/ui/app.js      asli data
+
+Is file ke colours (--bg, --accent, --ok ...) seedha yahan se padhe jaate hai,
+copy nahi kiye gaye -- isliye design badla to app ke colours khud badal jaayenge.
 
 Naya design aaye to inhi naamo se overwrite kar dena.
 

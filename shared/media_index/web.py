@@ -37,9 +37,20 @@ import threading
 import urllib.parse
 import webbrowser
 
-from . import library, term
+from . import libraries, library, term
 
-PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web_ui.html")
+HERE = os.path.dirname(os.path.abspath(__file__))
+PAGE = os.path.join(HERE, "web_ui.html")
+UI = os.path.join(HERE, "ui")
+# The design lives one folder up from the package, beside the brief it was
+# written from, because it is not code: it is the drawing the screens are
+# built to match, and it gets replaced wholesale when it is redesigned.
+DESIGN = os.path.join(os.path.dirname(HERE), "design", "Movie Editor.dc.html")
+# Served by name, never by path. The page asks for /ui/app.js, not for a file.
+ASSETS = {"app": ("app.html", "text/html; charset=utf-8"),
+          "app.js": ("app.js", "text/javascript; charset=utf-8"),
+          "dcx.js": ("dcx.js", "text/javascript; charset=utf-8"),
+          "screens": ("screens.html", "text/html; charset=utf-8")}
 DEFAULT_PORT = 8712
 # Files the browser is allowed to ask for, by extension. A local server is
 # still a server: it should never hand out a database or a script because a
@@ -135,6 +146,7 @@ def library_facts(db_path: str) -> dict:
 class Handler(http.server.SimpleHTTPRequestHandler):
     db_path = "library.db"
     out_path = ""
+    libraries_root = ""
 
     def log_message(self, *_a):             # the terminal stays readable
         pass
@@ -160,11 +172,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         route = parts.path
 
         if route in ("/", "/index.html"):
+            self._serve_asset("app")
+            return
+
+        # The shot-by-shot page the tool has had since the sixth build. The
+        # app has not replaced it yet, and taking away a page that works in
+        # order to show one that is half built is not an upgrade.
+        if route in ("/shots", "/shots.html"):
             try:
                 with open(PAGE, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError as exc:
                 self._send(500, str(exc).encode(), "text/plain")
+            return
+
+        if route == "/favicon.ico":
+            self._send(204, b"", "image/x-icon")     # asked for by every tab
+            return
+
+        if route.startswith("/ui/"):
+            self._serve_asset(route[4:])
+            return
+
+        if route == "/api/titles":
+            self._json(libraries.catalogue(self.libraries_root, self.db_path))
             return
 
         if route == "/api/start":
@@ -192,6 +223,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         self._send(404, b"not found", "text/plain")
+
+    def _serve_asset(self, name: str) -> None:
+        """The app's own files, by name from a fixed list.
+
+        Never by path. `/ui/` reaches into the package itself, and a route
+        that took a file name from the URL would be a way to read the source
+        — or anything else on the machine — from a browser tab.
+        """
+        if name == "design":
+            path, kind = DESIGN, "text/html; charset=utf-8"
+        elif name in ASSETS:
+            path, kind = os.path.join(UI, ASSETS[name][0]), ASSETS[name][1]
+        else:
+            self._send(404, b"no such asset", "text/plain")
+            return
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError as exc:
+            self._send(404, str(exc).encode(), "text/plain")
+            return
+        self._send(200, body, kind)
 
     def _serve_file(self, query) -> None:
         out = (query.get("out") or [""])[0]
@@ -241,10 +294,11 @@ def free_port(start: int = DEFAULT_PORT, tries: int = 20) -> int:
 
 
 def serve(db_path: str = "library.db", out: str = "", port: int = 0,
-          open_browser: bool = True, log=print) -> None:
+          open_browser: bool = True, log=print, libraries_root: str = "") -> None:
     """Run until interrupted. Localhost only — never the network."""
     Handler.db_path = db_path
     Handler.out_path = os.path.abspath(out) if out else ""
+    Handler.libraries_root = libraries_root
     port = port or free_port()
     url = f"http://127.0.0.1:{port}/"
     d = term.sym("dot")

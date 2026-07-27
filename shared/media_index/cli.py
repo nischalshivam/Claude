@@ -394,7 +394,7 @@ def cmd_web(a):
     from . import web
     print()
     web.serve(db_path=a.db, out=a.out, port=a.port,
-              open_browser=not a.no_browser)
+              open_browser=not a.no_browser, libraries_root=a.libraries)
     return 0
 
 
@@ -731,6 +731,8 @@ def main(argv=None):
     wb.add_argument("--out", default="",
                     help="an output folder to open straight away")
     wb.add_argument("--port", type=int, default=0)
+    wb.add_argument("--libraries", default="",
+                    help="folder holding one library per title")
     wb.add_argument("--no-browser", action="store_true",
                     help="print the address instead of opening a window")
     wb.set_defaults(func=cmd_web)

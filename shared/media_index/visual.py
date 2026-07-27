@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -276,6 +277,36 @@ def _vector_file(db_path: str, video_path: str) -> str:
     return os.path.join(store_dir(db_path), key[:16] + ".npz")
 
 
+def vectors_file(con, db_path: str, video_path: str, stored: str) -> str:
+    """Where this row's frames actually are now.
+
+    The row holds an absolute path, which stays true right up until the
+    library folder itself moves — copied to an SSD, or tidied into
+    E:\\Libraries\\<title>\\ with the database. Not one frame changed; only
+    the road to them did. Without this, every episode would look unindexed
+    and the slowest step in the tool would run again for nothing, which is
+    the same accident `rehome` exists to prevent for moved footage.
+
+    The file name is a hash, so it is unique: the same name in the store
+    beside THIS database is the same vectors. Found that way, the row is
+    corrected, so a moved library costs one lookup rather than one per run.
+    """
+    if stored and os.path.isfile(stored):
+        return stored
+    if not stored:
+        return ""
+    beside = os.path.join(store_dir(db_path), os.path.basename(stored))
+    if not os.path.isfile(beside):
+        return stored                   # genuinely gone; the caller decides
+    try:
+        con.execute("UPDATE visual SET vectors=? WHERE path=?",
+                    (beside, os.path.abspath(video_path)))
+        con.commit()
+    except sqlite3.Error:
+        pass                            # reading still works; only the
+    return beside                       # repair was optional
+
+
 def _stamp(video_path: str) -> tuple:
     st = os.stat(video_path)
     return st.st_size, int(st.st_mtime)
@@ -329,7 +360,8 @@ def is_current(con, db_path: str, video_path: str, model: str,
         return False
     return (row["file_size"] == size and row["file_mtime"] == mtime
             and row["model"] == model and abs(row["fps"] - fps) < 1e-6
-            and os.path.isfile(row["vectors"]))
+            and os.path.isfile(vectors_file(con, db_path, video_path,
+                                            row["vectors"])))
 
 
 def load(con, db_path: str, video_path: str) -> VisualIndex | None:
@@ -341,10 +373,12 @@ def load(con, db_path: str, video_path: str) -> VisualIndex | None:
         row = con.execute(
             "SELECT model, fps, vectors FROM visual WHERE path=?",
             (os.path.abspath(video_path),)).fetchone()
-    if not row or not os.path.isfile(row["vectors"]):
+    vectors = vectors_file(con, db_path, video_path,
+                           row["vectors"]) if row else ""
+    if not row or not os.path.isfile(vectors):
         return None
     try:
-        with np.load(row["vectors"]) as z:
+        with np.load(vectors) as z:
             times = np.asarray(z["times"], dtype=np.float32)
             vecs = np.asarray(z["vecs"], dtype=np.float32)
     except (OSError, ValueError, KeyError):

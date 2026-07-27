@@ -107,9 +107,16 @@ class TestWhatOneFolderKnows(_Built):
 
 
 class TestTheServer(_Built):
+    _next_port = 8830
+
     def setUp(self):
         super().setUp()
-        self.port = web.free_port(8830)
+        # A distinct port per test, walked forward rather than searched for.
+        # Every server started here lives until the process ends, so asking
+        # "what is free?" races the previous test's server still binding —
+        # which showed up as a stack trace beside a passing run.
+        TestTheServer._next_port += 1
+        self.port = web.free_port(TestTheServer._next_port)
         self.thread = threading.Thread(
             target=web.serve,
             kwargs=dict(db_path=os.path.join(self.tmp, "library.db"),
@@ -165,6 +172,39 @@ class TestTheServer(_Built):
         self.assertEqual(self._status("/api/build?out=/definitely/not/here"),
                          404)
 
+    def test_the_app_is_what_opens_and_the_old_page_is_still_there(self):
+        """The shot-by-shot page has worked since the sixth build. Taking it
+        away to show a half-built app would be a downgrade dressed as one."""
+        code, body = self._get("/")
+        self.assertEqual(code, 200)
+        self.assertIn(b"Movie Editor", body)
+        code, body = self._get("/shots")
+        self.assertEqual(code, 200)
+        self.assertIn(b"media_index", body)
+
+    def test_the_app_can_fetch_its_own_parts(self):
+        for path, needle in (("/ui/dcx.js", b"DCX"),
+                             ("/ui/app.js", b"api/titles"),
+                             ("/ui/screens", b"Library."),
+                             ("/ui/design", b"data-theme")):
+            code, body = self._get(path)
+            self.assertEqual(code, 200, path)
+            self.assertIn(needle, body, path)
+
+    def test_ui_serves_a_fixed_list_and_not_whatever_the_url_asks_for(self):
+        """`/ui/` reaches into the package itself. A route that took a file
+        name from the URL would read the source — or anything else — out of
+        a browser tab."""
+        for asked in ("web.py", "../web.py", "..%2Flibrary.db", "app.html"):
+            self.assertEqual(self._status("/ui/" + asked), 404, asked)
+
+    def test_the_titles_a_library_holds_are_served(self):
+        code, body = self._get("/api/titles")
+        self.assertEqual(code, 200)
+        data = json.loads(body)
+        self.assertIn("titles", data)
+        self.assertIn("counts", data)
+
     def test_a_missing_database_is_reported_rather_than_raised(self):
         code, body = self._get("/api/library")
         self.assertEqual(code, 200)
@@ -200,6 +240,56 @@ class TestItNeedsNothingInstalled(unittest.TestCase):
         self.assertNotIn("https://", html)
         self.assertIn("<style>", html)
         self.assertIn("<script>", html)
+
+
+class TestTheAppsOwnFiles(unittest.TestCase):
+    """The page is HTML holding names, and JavaScript holding values. When
+    the two disagree the screen does not break — it quietly shows a blank
+    where a number should be, which is the worst way for a tool that reports
+    numbers to be wrong. So they are checked against each other here."""
+
+    def _read(self, *parts):
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(base, "media_index", *parts),
+                  encoding="utf-8") as f:
+            return f.read()
+
+    def test_every_name_the_screens_ask_for_is_one_the_app_supplies(self):
+        import re
+        screens = self._read("ui", "screens.html")
+        app = self._read("ui", "app.js")
+        asked = set()
+        for raw in re.findall(r"\{\{([^}]*)\}\}", screens):
+            head = raw.strip().split(".")[0]
+            if head and not re.match(r"^(true|false|-?\d)", head):
+                asked.add(head)
+        # `sc-for` introduces its own name for each item; that name is bound
+        # by the renderer, not by app.js.
+        asked -= set(re.findall(r'<sc-for[^>]*as="([^"]+)"', screens))
+        missing = sorted(n for n in asked
+                         if not re.search(r"\b" + re.escape(n) + r"\s*:", app))
+        self.assertFalse(missing, f"screens.html asks for {missing}")
+
+    def test_the_page_pulls_nothing_off_the_internet(self):
+        """The machine this runs on may have no internet at all, and the one
+        thing worse than a page that needs `npm` is a page that looks fine
+        here and is unstyled there."""
+        import re
+        for name in ("app.html", "app.js", "dcx.js", "screens.html"):
+            text = self._read("ui", name)
+            self.assertNotIn("https://", text, name)
+            # http:// appears legitimately in exactly one place: the XML
+            # namespace names, which are identifiers and never fetched.
+            for url in re.findall(r"http://[^\s\"'`]+", text):
+                self.assertTrue(url.startswith("http://www.w3.org/"),
+                                f"{name} reaches for {url}")
+            for banned in ("cdn.", "unpkg", "googleapis", "import React"):
+                self.assertNotIn(banned, text, f"{name} reaches for {banned}")
+
+    def test_the_design_it_is_built_against_is_in_the_repository(self):
+        """A page whose colours live in a file nobody committed is a page
+        that works on one machine."""
+        self.assertTrue(os.path.isfile(web.DESIGN), web.DESIGN)
 
 
 if __name__ == "__main__":
