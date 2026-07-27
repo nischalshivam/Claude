@@ -38,9 +38,25 @@ matter more than the optimisation itself:
     real millisecond and stays fixed. A line matched weakly is allowed to be
     outvoted by forty shots that all agree the scene is somewhere else.
 
-Alignment is still used, as a gentle prior. It is a genuinely good guess
-about pacing, and where the pictures say nothing it should win; it is just no
-longer the only vote.
+Alignment is still used, but as a *window* rather than a vote. A quoted line
+says which stretch of the episode a run belongs to; the pictures say which
+frame inside it. Letting either do the other's job broke a build each way —
+a soft prior overruled pictures that had genuinely matched, and removing it
+altogether let ninety-one shots spread across a whole episode.
+
+## Being sure it was found at all
+
+Two shots in three carry a description the model cannot place. That is
+normal — "he thinks about what he has done" is not a picture — and those
+shots are meant to sit between the ones that were placed, not to choose for
+themselves.
+
+Deciding which is which needs care, because the best of fourteen hundred
+scores is high for *any* caption, including one about nothing in this film.
+So the bar is measured on the episode itself: score a set of captions about
+unrelated things, see how high they get, and require a shot to beat that.
+Chance still leaks through a shot at a time, so the run is asked the same
+question — find more than a quarter of yourself, or find one thing outright.
 """
 from __future__ import annotations
 
@@ -65,7 +81,59 @@ ANCHOR_TOLERANCE_S = 2.5
 # confined to eighteen seconds, which is fewer sampled frames than it has
 # shots — a window so tight it is a pin by another name.
 MIN_REACH_S = 120.0
+# Only shots that HAVE a match anywhere get to choose a frame. The rest are
+# interpolated between them.
+#
+# This is the constraint that was missing, and its absence is what put a box
+# cutter six minutes from the sentence describing it. The solver maximised
+# the total match and nothing else, so a shot matching nothing was free to
+# sit anywhere the ordering allowed — and with fifty-five such shots the best
+# path is simply to spread them over everything available. Ninety-one shots
+# of a hundred-second sequence ended up across twenty minutes of episode.
+#
+# A penalty on the run's total span was the first attempt and it was wrong:
+# it cannot tell a run that spread out because it MATCHED things far apart
+# from one that spread out because it matched nothing. The three runs placed
+# on pictures alone legitimately cover twenty minutes of their episodes, and
+# a span penalty strong enough to fix the first crushes those.
+#
+# Choosing which shots may choose is the distinction that actually exists.
 NEG = -1e9
+
+# Captions about nothing in particular, used to ask each episode how high a
+# description that does NOT belong to it scores anyway.
+#
+# A fixed threshold cannot answer that, because the best of N scores rises
+# with N. Measured on the fake model: a caption matching nothing reached a
+# lift of 1.7 against 400 frames, 2.0 against 1,200 and 2.1 against 3,000 —
+# all of them above the 1.2 that means "found". A 47-minute episode sampled
+# twice a second is 1,400 frames, so on the real builds every shot in the
+# script cleared the bar by luck alone, and "only matched shots may choose"
+# stopped meaning anything.
+#
+# These are unrelated to any particular film on purpose, and there are enough
+# of them that the two highest can be thrown away — one of them landing on a
+# real kitchen or a real staircase should not raise the bar for everyone.
+CONTROLS = (
+    "a snow-covered mountain under a clear sky",
+    "a bowl of soup on a wooden table",
+    "a rocket lifting off from a launch pad",
+    "a busy fish market at dawn",
+    "a violin resting on a velvet cushion",
+    "a herd of elephants crossing a river",
+    "a spiral staircase in an empty library",
+    "a surfboard planted in the sand",
+    "a chessboard mid-game beside a lamp",
+    "a tractor ploughing a muddy field",
+    "a glass of orange juice on a windowsill",
+    "a lighthouse in heavy fog",
+    "a knitted scarf hanging on a hook",
+    "a satellite dish on a flat roof",
+    "a plate of pancakes with syrup",
+    "a bicycle leaning against a brick wall",
+)
+CONTROL_DISCARD = 2          # how many of the highest controls to ignore
+_FLOORS: dict = {}
 
 
 def describe(shot: dict) -> str:
@@ -107,13 +175,19 @@ class Verdict:
     # that cannot tell them apart cannot be acted on.
     best: float = 0.0
     # Whether, at that best frame, this description beats every OTHER
-    # description in the run. `best` alone cannot answer that: the highest
-    # of 1,400 scores is high even for a caption about nothing in the
-    # episode, simply because it is the highest of 1,400. Asking instead
-    # "does any other caption explain this frame better than mine does"
-    # removes the chance entirely — it compares captions, not frames, so
-    # the number of frames searched drops out of it.
+    # description in the run — that is, whether the frame is unambiguously
+    # this shot's rather than one several shots half-explain.
+    #
+    # It does NOT remove chance, and it was written here as though it did.
+    # Measured: twelve captions matching nothing at all, against twelve
+    # hundred frames, came back eleven-of-twelve "distinct" — because a
+    # shot's best frame is by construction the one where its own luck peaked,
+    # and the others sit at their average there. Only `bar` answers chance.
     distinct: bool = False
+    # What counted as found in this episode: `visual.LIFT_OK`, or the
+    # episode's own noise floor when that is higher. Carried on the verdict
+    # so the report is scored by the same bar the solver used.
+    bar: float = visual.LIFT_OK
     note: str = ""
 
     @property
@@ -130,8 +204,8 @@ class Verdict:
         Together they mean: there was a real frame for this shot, it was
         unambiguously this shot's, and something else got it.
         """
-        return (self.distinct and self.best >= visual.LIFT_OK
-                and self.lift < visual.LIFT_OK)
+        return (self.distinct and self.best >= self.bar
+                and self.lift < self.bar)
 
 
 @dataclass
@@ -143,6 +217,14 @@ class Report:
     findable: int = 0            # had a match somewhere in the episode
     lost_to_ordering: int = 0    # ...and did not keep it
     runs_without_index: list = field(default_factory=list)
+    # Runs where nothing beat the episode's noise floor, so the pictures said
+    # nothing and alignment was left to stand. Worth a number of its own: if
+    # this is most of the script, the bar is wrong or the descriptions are,
+    # and either way the stage is doing no work and should say so rather than
+    # look like it agreed with everything.
+    runs_left_alone: int = 0
+    runs_seen: int = 0
+    floors: list = field(default_factory=list)
     reason: str = ""             # why nothing was checked, if nothing was
 
     def summary(self) -> str:
@@ -163,6 +245,13 @@ class Report:
                 "ordering; " f"{self.unmatched - self.lost_to_ordering} "
                 "matched nothing anywhere — those need better descriptions, "
                 "not a looser solver")
+        if self.runs_left_alone:
+            floor = (f", where an unrelated caption already scores "
+                     f"{max(self.floors):.1f}" if self.floors else "")
+            lines.append(
+                f"  {self.runs_left_alone} of {self.runs_seen} scene(s) found "
+                "nothing above chance and were left where alignment put them"
+                + floor)
         return "\n".join(lines)
 
 
@@ -191,6 +280,40 @@ def lift_matrix(index: visual.VisualIndex, texts: list, backend) -> np.ndarray:
     dead = ~np.any(vecs, axis=1)
     out[dead, :] = 0.0
     return out.astype(np.float32)
+
+
+def interpolate(times: list, axis: list, placed: dict) -> list:
+    """Fill the shots nobody could place, between the ones somebody could.
+
+    `placed` maps a shot's index to its chosen time. Everything else lands in
+    proportion to the script's own axis — the same idea alignment has always
+    used, except the fixed points are now shots whose picture was actually
+    found rather than one quoted line at the far end of the run.
+
+    Outside the placed range there is nothing to interpolate between, so the
+    shots there hold the nearest placed time rather than being flung to an
+    end of the episode by an extrapolation nobody checked.
+    """
+    if not placed:
+        return list(times)
+    keys = sorted(placed)
+    out = list(times)
+    for i in range(len(times)):
+        if i in placed:
+            out[i] = placed[i]
+            continue
+        before = [k for k in keys if k < i]
+        after = [k for k in keys if k > i]
+        if not before:
+            out[i] = placed[after[0]]
+        elif not after:
+            out[i] = placed[before[-1]]
+        else:
+            a, b = before[-1], after[0]
+            span = axis[b] - axis[a]
+            frac = (axis[i] - axis[a]) / span if span > 0.01 else 0.5
+            out[i] = placed[a] + frac * (placed[b] - placed[a])
+    return out
 
 
 def prior_matrix(times: np.ndarray, wanted_s: np.ndarray) -> np.ndarray:
@@ -275,6 +398,44 @@ def _distinct_at_best(score: np.ndarray) -> np.ndarray:
     mine = score[np.arange(n), peak]
     best_any = score[:, peak].max(axis=0)
     return mine >= best_any - 1e-6
+
+
+def noise_floor(index: visual.VisualIndex, backend, inside=None) -> float:
+    """How high a caption that does not belong here scores anyway.
+
+    The answer depends on the episode and on how many of its frames are being
+    searched, so it is measured rather than assumed: score a fixed set of
+    captions about unrelated things, take each one's best frame, and report
+    near the top of what those reach. A shot that cannot beat that has not
+    been found — it has merely been searched for a long time.
+
+    The two highest controls are discarded first. On a domestic drama one of
+    them will occasionally describe a real frame, and a bar set by a genuine
+    match is a bar no honest shot can clear.
+
+    The controls are scored against the episode once and the rows kept, not
+    the answer: every run wants a different stretch, so a cache of finished
+    floors would miss on all but the first and re-encode sixteen captions per
+    run. The rows are 16 x N floats — ninety kilobytes for a long episode.
+    """
+    if not len(index):
+        return 0.0
+    key = (getattr(index, "path", ""), getattr(index, "model", ""),
+           len(index), getattr(backend, "name", ""))
+    rows = _FLOORS.get(key)
+    if rows is None:
+        rows = lift_matrix(index, list(CONTROLS), backend)
+        _FLOORS[key] = rows
+    if not rows.size:
+        return 0.0
+    if inside:
+        lo, hi = inside
+        rows = rows[:, max(0, lo):hi + 1]
+    if not rows.size:
+        return 0.0
+    best = np.sort(rows.max(axis=1))
+    keep = best[:-CONTROL_DISCARD] if len(best) > CONTROL_DISCARD else best
+    return float(keep[-1]) if len(keep) else 0.0
 
 
 def _bounds_for_window(times: np.ndarray, window) -> tuple:
@@ -365,48 +526,107 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
         bounds.append(_bounds_for_anchor(index.times, p.start_ms / 1000.0)
                       if anchor else inside)
 
-    path = solve(total, bounds)
-    if not path and any(held):
+    # Only shots with a match somewhere may choose a frame. A shot that
+    # matched nothing has no opinion, and letting it vote is what spread a
+    # hundred-second sequence over twenty minutes.
+    #
+    # "A match" is measured against this episode's own noise floor, over the
+    # same frames the shot is allowed to occupy. A fixed number cannot do it:
+    # the best of fourteen hundred scores is high for any caption at all.
+    floor = noise_floor(index, backend, inside)
+    bar = max(visual.LIFT_OK, floor)
+    strong = max(visual.LIFT_STRONG, bar + (visual.LIFT_STRONG - visual.LIFT_OK))
+    if floor > visual.LIFT_OK:
+        log(f"      {run.label}: a caption about nothing scores {floor:.1f} "
+            f"here, so {bar:.1f} is what counts as found")
+    searched = score
+    if inside:
+        lo_i, hi_i = inside
+        searched = score[:, max(0, lo_i):hi_i + 1]
+    reachable = (searched.max(axis=1) if searched.size
+                 else np.zeros(len(ordered)))
+    own_best = _distinct_at_best(score)
+    choosers = [k for k in range(len(ordered))
+                if held[k] or reachable[k] >= bar]
+
+    # A last question, asked of the run rather than of any one shot: is this
+    # more than luck would have given it anyway?
+    #
+    # No per-shot bar can be clean. The floor sits near the top of what a
+    # caption about nothing reaches, so roughly one shot in eight still clears
+    # it by chance — two of twelve, in the test that measures this. Two lucky
+    # frames are enough to drag the other ten between them, which is the
+    # original complaint in miniature.
+    #
+    # So a run must find more than a quarter of itself, or find one thing
+    # convincingly. The second half matters as much as the first: a single
+    # shot far above the floor in a run of twenty is not luck, and refusing it
+    # would throw away the one real thing the model saw.
+    #
+    # Only the picture picks are counted. A quoted line is separate evidence
+    # and keeps its pin either way — but it does not vouch for the lucky
+    # frames around it, and a run held by two anchors can still be pulled two
+    # minutes out of shape by one of them.
+    picks = [k for k in choosers if not held[k]]
+    if picks and not any(reachable[k] >= strong for k in picks) \
+            and len(picks) <= len(ordered) / 4.0:
+        log(f"      {run.label}: only {len(picks)} of {len(ordered)} shot(s) "
+            "beat what an unrelated caption scores here — that is chance, not "
+            "a match")
+        choosers = [k for k in choosers if held[k]]
+
+    path = solve(total[choosers], [bounds[k] for k in choosers]) if choosers else []
+    if not path and any(held[k] for k in choosers):
         # The pins themselves are out of order, which no assignment can
         # satisfy. That is worth knowing: it means two quoted lines disagree
         # about which way this run runs. Solve it on the pictures alone.
         log(f"      {run.label}: the quoted lines contradict each other on "
             "order — deciding on the pictures alone")
-        path = solve(total, [inside] * len(ordered))
+        path = solve(total[choosers], [inside] * len(choosers))
         held = [False] * len(ordered)
     if not path:
-        log(f"      {run.label}: too few frames indexed to re-place "
-            f"{len(ordered)} shot(s) — left as aligned")
-        for i in ordered:
+        log(f"      {run.label}: nothing in these {len(ordered)} shot(s) could "
+            "be found in the picture — left as aligned")
+        for k, i in enumerate(ordered):
             out[i] = Verdict(beat=placements[i].beat, shot=placements[i].shot,
-                             note="not enough indexed frames")
+                             bar=bar, best=float(reachable[k]),
+                             distinct=bool(own_best[k]),
+                             note="no frame in this episode matched any of them")
         return out
 
-    reachable = score.max(axis=1) if score.size else np.zeros(len(ordered))
-    own_best = _distinct_at_best(score)
-    solid = any(float(score[k, path[k]]) >= visual.LIFT_STRONG
-                for k in range(len(ordered)))
+    chosen = {k: float(index.times[path[j]]) for j, k in enumerate(choosers)}
+    lifts = {k: float(score[k, path[j]]) for j, k in enumerate(choosers)}
+    axis = align.axis(run)
+    settled = interpolate([placements[i].start_ms / 1000.0 for i in ordered],
+                          [axis[i] for i in ordered], chosen)
+    if len(choosers) < len(ordered):
+        log(f"      {run.label}: {len(choosers)} shot(s) found in the picture, "
+            f"{len(ordered) - len(choosers)} placed between them")
+
+    solid = any(v >= strong for v in lifts.values())
     for k, i in enumerate(ordered):
         p = placements[i]
-        f = path[k]
-        lift = float(score[k, f])
+        # `path` is indexed by chooser, not by shot: a shot nobody could find
+        # has no entry in it at all, and reading one was how an earlier
+        # version of this quietly mixed up which shot went where.
+        lift = lifts.get(k, 0.0)
         best = float(reachable[k])
         before = p.start_ms
-        after = int(index.times[f] * 1000)
+        after = int(settled[k] * 1000)
         duration = max(500, p.end_ms - p.start_ms)
 
         if held[k]:
             v = Verdict(beat=p.beat, shot=p.shot, action="pinned",
                         before_ms=before, after_ms=before, lift=lift,
-                        best=best, distinct=bool(own_best[k]))
+                        best=best, distinct=bool(own_best[k]), bar=bar)
             v.note = ("held on its quoted line; the picture "
-                      + ("agrees" if lift >= visual.LIFT_OK else "says little"))
+                      + ("agrees" if lift >= bar else "says little"))
             out[i] = v
             continue
 
         p.start_ms = after
         p.end_ms = after + duration
-        if lift >= visual.LIFT_OK:
+        if lift >= bar:
             p.method = "verified"
         elif grounded or solid:
             # Something in this run IS fixed — a quoted line, or a picture
@@ -417,12 +637,12 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
             # Nothing in this run is fixed by anything. Cutting here would
             # be inventing a position, so it stays unplaced and is reported.
             p.method = "none"
-        p.confidence = ("high" if lift >= visual.LIFT_STRONG
-                        else "medium" if lift >= visual.LIFT_OK else "low")
+        p.confidence = ("high" if lift >= strong
+                        else "medium" if lift >= bar else "low")
         v = Verdict(beat=p.beat, shot=p.shot, before_ms=before,
                     after_ms=after, lift=lift, best=best,
-                    distinct=bool(own_best[k]))
-        if lift >= visual.LIFT_OK:
+                    distinct=bool(own_best[k]), bar=bar)
+        if lift >= bar:
             v.action = "moved" if abs(after - before) >= 1000 else "kept"
             p.note = f"the picture matches this description (lift {lift:.1f})"
             if v.action == "moved":
@@ -484,6 +704,12 @@ def apply(db_path: str, beats: list, placements: list,
                 continue
             verdicts = verify_run(index, run, mine, backend, log=log)
             report.verdicts += verdicts
+            report.runs_seen += 1
+            if verdicts and all(v.action == "unchecked" for v in verdicts):
+                report.runs_left_alone += 1
+            floor = max((v.bar for v in verdicts), default=0.0)
+            if floor > visual.LIFT_OK:
+                report.floors.append(floor)
             for v in verdicts:
                 if v.action in ("kept", "moved", "pinned", "drifted"):
                     report.checked += 1
@@ -493,7 +719,11 @@ def apply(db_path: str, beats: list, placements: list,
                     report.unmatched += 1
                     if v.lost_to_ordering:
                         report.lost_to_ordering += 1
-                if v.distinct:
+                # "Findable" has to mean the same thing here as it does in
+                # `lost_to_ordering`, or the two numbers in the report
+                # contradict each other: a real match somewhere, above this
+                # episode's own bar, that this shot could call its own.
+                if v.distinct and v.best >= v.bar:
                     report.findable += 1
             _log_run(run, verdicts, log)
         if report.runs_without_index and not report.checked:
@@ -506,8 +736,8 @@ def apply(db_path: str, beats: list, placements: list,
 
 
 def _log_run(run, verdicts: list, log) -> None:
-    matched = sum(1 for v in verdicts if v.lift >= visual.LIFT_OK)
-    findable = sum(1 for v in verdicts if v.distinct)
+    matched = sum(1 for v in verdicts if v.lift >= v.bar)
+    findable = sum(1 for v in verdicts if v.distinct and v.best >= v.bar)
     moved = [v for v in verdicts if v.action == "moved"]
     log(f"      {run.label}: {matched}/{len(verdicts)} shot(s) found in the "
         f"picture, {len(moved)} moved"

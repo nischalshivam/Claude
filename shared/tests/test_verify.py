@@ -913,6 +913,16 @@ class TestSayingWhichFixIsNeeded(unittest.TestCase):
         self.assertIn("4 did have a match elsewhere", text)
         self.assertIn("2 matched nothing anywhere", text)
 
+    def test_the_summary_says_when_the_stage_did_nothing(self):
+        """A raised bar can leave this stage agreeing with everything it was
+        given, which looks identical to it having checked and approved. The
+        count is what tells those apart in a log."""
+        rep = verify.Report(checked=40, runs_seen=9, runs_left_alone=7,
+                            floors=[2.6, 1.9])
+        text = rep.summary()
+        self.assertIn("7 of 9 scene(s) found nothing above chance", text)
+        self.assertIn("2.6", text)
+
 
 class TestAnAnchorPicksTheStretchAndThePicturesPickTheFrame(unittest.TestCase):
     """Neither is allowed to do the other's job. Two builds proved it.
@@ -1010,3 +1020,203 @@ class TestAnAnchorPicksTheStretchAndThePicturesPickTheFrame(unittest.TestCase):
         verify.verify_run(index, self._run(["doorway", "apron", "cutter"]),
                           places, self.backend)
         self.assertEqual(places[0].start_ms, 1_200_000)
+
+
+class TestOnlyAShotThatWasFoundGetsToChooseWhereItGoes(unittest.TestCase):
+    """The constraint whose absence put a box cutter six minutes from the
+    sentence describing it.
+
+    The solver maximised the total match and nothing else, so a shot that
+    matched nothing was free to sit anywhere the ordering allowed — and with
+    fifty-five such shots the best path is simply to spread them over
+    everything available. Ninety-one shots of a hundred-second sequence ended
+    up across twenty minutes of episode.
+
+    A penalty on the run's total span was the first attempt and it was wrong.
+    It cannot tell a run that spread out because it MATCHED things far apart
+    from one that spread out because it matched nothing, and the three runs
+    placed on pictures alone legitimately cover twenty minutes of their
+    episodes. Choosing which shots may choose is the distinction that
+    actually exists.
+    """
+
+    def setUp(self):
+        self.backend = embed.Deterministic(dim=64)
+
+    def _run(self, visuals, seconds=4.0):
+        return align.Run(source="S", season_episode="S01E01", entries=[
+            align.Entry(beat=1, shot=i + 1,
+                        data={"visual": v, "duration_target_sec": seconds})
+            for i, v in enumerate(visuals)])
+
+    def _places(self, run, at_s):
+        return [align.Placement(beat=1, shot=e.shot, path="/fake/ep.mkv",
+                                start_ms=int(at_s * 1000),
+                                end_ms=int(at_s * 1000) + 4000,
+                                method="interpolated", confidence="low")
+                for e in run.entries]
+
+    def test_a_run_nobody_could_find_is_left_alone_rather_than_scattered(self):
+        # Twelve shots in a forty-minute episode with nothing to match. The
+        # old solver spread them over the whole thing; there is no honest
+        # position for any of them, so they stay where alignment put them.
+        index = fake_index([f"filler{i}" for i in range(1200)],
+                           backend=self.backend)
+        run = self._run([f"nothinglikethis{i}" for i in range(12)])
+        places = self._places(run, 1000.0)
+        said = []
+        verify.verify_run(index, run, places, self.backend, log=said.append)
+        spread = (max(p.start_ms for p in places)
+                  - min(p.start_ms for p in places)) / 1000.0
+        self.assertEqual(spread, 0.0)
+        self.assertTrue(any("could be found in the picture" in s for s in said),
+                        said)
+
+    def test_the_shots_between_two_matches_land_between_them(self):
+        caps = [f"filler{i}" for i in range(400)]
+        caps[10], caps[300] = "doorway", "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["doorway", "nothinglikethis", "boxcutter"])
+        places = self._places(run, 100.0)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual(places[0].start_ms, 20000)
+        self.assertEqual(places[2].start_ms, 600000)
+        self.assertTrue(20000 < places[1].start_ms < 600000,
+                        "the unmatched shot left the range it belongs in")
+
+    def test_a_run_that_genuinely_matched_far_apart_is_not_squeezed(self):
+        """The three runs placed on pictures alone came back 24/24, 15/15 and
+        7/7 verified, and they legitimately cover twenty minutes of their
+        episodes. Nothing here may punish that."""
+        caps = [f"filler{i}" for i in range(1200)]
+        caps[50], caps[600], caps[1100] = "doorway", "apron", "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["doorway", "apron", "boxcutter"])
+        places = self._places(run, 100.0)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual([p.start_ms for p in places],
+                         [100000, 1200000, 2200000])
+
+    def test_an_unmatched_shot_before_every_match_holds_the_first_one(self):
+        # There is nothing to interpolate between, and extrapolating would
+        # fling it to an end of the episode nobody checked.
+        caps = [f"filler{i}" for i in range(400)]
+        caps[100], caps[200] = "doorway", "apron"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["nothinglikethis", "doorway", "apron"])
+        places = self._places(run, 50.0)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual(places[0].start_ms, places[1].start_ms)
+
+    def test_two_lucky_shots_do_not_get_to_drag_the_other_ten(self):
+        """The per-shot bar cannot be clean, so the run is asked as well.
+
+        The floor sits near the top of what an unrelated caption reaches, and
+        about one shot in eight still clears it by chance. Two of them are
+        enough to spread the ten between them across everything in between,
+        which is the whole complaint in miniature.
+        """
+        index = fake_index([f"filler{i}" for i in range(1200)],
+                           backend=self.backend)
+        run = self._run([f"nothinglikethis{i}" for i in range(12)])
+        places = self._places(run, 1000.0)
+        said = []
+        verify.verify_run(index, run, places, self.backend, log=said.append)
+        self.assertEqual({p.start_ms for p in places}, {1_000_000})
+        self.assertTrue(any("chance, not a match" in s for s in said), said)
+
+    def test_a_quoted_line_does_not_vouch_for_lucky_frames_around_it(self):
+        """An anchor is separate evidence and keeps its pin. It does not make
+        the chance matches near it real, and a run held by one anchor could
+        still be pulled two minutes out of shape by one of them."""
+        index = fake_index([f"filler{i}" for i in range(1200)],
+                           backend=self.backend)
+        run = self._run([f"nothinglikethis{i}" for i in range(12)])
+        places = self._places(run, 1000.0)
+        places[0].method, places[0].confidence = "anchor", "high"
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual({p.start_ms for p in places}, {1_000_000})
+
+    def test_one_certain_match_in_a_long_run_still_counts(self):
+        """The other half of that rule. A single shot far above the floor is
+        not luck, and a share test on its own would throw away the one real
+        thing the model saw."""
+        caps = [f"filler{i}" for i in range(1200)]
+        caps[600] = "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        run = self._run(["boxcutter"] + [f"nothinglikethis{i}" for i in range(11)])
+        places = self._places(run, 100.0)
+        verify.verify_run(index, run, places, self.backend)
+        self.assertEqual(places[0].start_ms, 1_200_000)
+
+    def test_interpolation_follows_the_scripts_own_shape(self):
+        placed = {0: 100.0, 3: 400.0}
+        got = verify.interpolate([0.0] * 4, [0.0, 10.0, 20.0, 30.0], placed)
+        self.assertEqual(got, [100.0, 200.0, 300.0, 400.0])
+
+    def test_interpolating_with_nothing_placed_changes_nothing(self):
+        self.assertEqual(verify.interpolate([1.0, 2.0], [0.0, 1.0], {}),
+                         [1.0, 2.0])
+
+
+class TestWhatAnUnrelatedCaptionScoresHereAnyway(unittest.TestCase):
+    """The best of N scores rises with N, and a fixed threshold cannot know N.
+
+    A caption describing nothing in the episode reached a lift of 1.7 against
+    400 frames and 2.1 against 3,000 — both above the 1.2 that is supposed to
+    mean "found". A 47-minute episode sampled twice a second is 1,400 frames,
+    so on the real builds every shot in the script cleared the bar by luck
+    alone and "only matched shots may choose" meant nothing at all.
+
+    So the bar is measured on the episode instead of assumed.
+    """
+
+    def setUp(self):
+        self.backend = embed.Deterministic(dim=64)
+        verify._FLOORS.clear()
+
+    def test_the_floor_rises_with_the_number_of_frames_searched(self):
+        small = verify.noise_floor(
+            fake_index([f"filler{i}" for i in range(200)], backend=self.backend),
+            self.backend)
+        big = verify.noise_floor(
+            fake_index([f"filler{i}" for i in range(3000)],
+                       path="/fake/big.mkv", backend=self.backend),
+            self.backend)
+        self.assertGreater(big, small)
+
+    def test_a_real_match_is_well_clear_of_it(self):
+        caps = [f"filler{i}" for i in range(1200)]
+        caps[600] = "boxcutter"
+        index = fake_index(caps, backend=self.backend)
+        found = verify.lift_matrix(index, ["boxcutter"], self.backend).max()
+        self.assertGreater(found, verify.noise_floor(index, self.backend) * 1.5)
+
+    def test_one_control_that_happens_to_match_does_not_raise_it(self):
+        """On a domestic drama one of these captions will occasionally
+        describe a real frame, and a bar set by a genuine match is a bar no
+        honest shot can clear. The highest two are discarded for that."""
+        caps = [f"filler{i}" for i in range(600)]
+        clean = verify.noise_floor(fake_index(caps, backend=self.backend),
+                                   self.backend)
+        verify._FLOORS.clear()
+        caps[100] = "lighthouse heavy fog"
+        caps[200] = "pancakes with syrup"
+        planted = verify.noise_floor(
+            fake_index(caps, path="/fake/planted.mkv", backend=self.backend),
+            self.backend)
+        self.assertLess(planted, clean * 1.2)
+
+    def test_an_empty_episode_has_no_floor_rather_than_raising(self):
+        empty = visual.VisualIndex(path="/fake/none.mkv",
+                                   times=np.zeros(0, dtype=np.float32),
+                                   vecs=np.zeros((0, 64), dtype=np.float32))
+        self.assertEqual(verify.noise_floor(empty, self.backend), 0.0)
+
+    def test_the_answer_is_kept_rather_than_recomputed_per_shot(self):
+        index = fake_index([f"filler{i}" for i in range(300)],
+                           backend=self.backend)
+        first = verify.noise_floor(index, self.backend)
+        with mock.patch.object(verify, "lift_matrix",
+                               side_effect=AssertionError("recomputed")):
+            self.assertEqual(verify.noise_floor(index, self.backend), first)

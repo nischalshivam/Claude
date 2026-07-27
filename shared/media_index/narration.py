@@ -134,30 +134,59 @@ def heard(audio_path: str, model_name: str = DEFAULT_MODEL,
     try:
         log("    reading the voiceover…")
         transcribe.extract_audio(audio_path, wav)
-        model = transcribe._load_model(model_name)
-        log(f"    listening with {model_name}…")
-        segments, _info = model.transcribe(
-            wav, language="en", word_timestamps=True, beam_size=5,
-            # No VAD here. It exists to skip silence in a film; on a
-            # voiceover it can clip the quiet start of a line, and a word
-            # dropped from the transcript is one fewer anchor.
-            vad_filter=False,
-            condition_on_previous_text=False)
-        out = []
-        for seg in segments:
-            for w in (getattr(seg, "words", None) or []):
-                text = normalise(getattr(w, "word", ""))
-                if not text:
-                    continue
-                out.append(Word(text=text[0],
-                                start=float(getattr(w, "start", 0.0)),
-                                end=float(getattr(w, "end", 0.0))))
-        return out
+        # Try the GPU, then the CPU — around the LISTENING, not just the
+        # loading. Loading on "auto" succeeds on a machine with a graphics
+        # card and no CUDA runtime; the failure comes later, on the first
+        # actual computation, as
+        #
+        #     Library cublas64_12.dll is not found or cannot be loaded
+        #
+        # A fallback wrapped around the load alone never fired, and two
+        # builds silently fell back on a word-count estimate instead.
+        last = None
+        for device, compute in (("auto", "auto"), ("cpu", "int8")):
+            try:
+                model = transcribe._load_model(model_name, device=device,
+                                               compute_type=compute)
+                log(f"    listening with {model_name} on {device}…")
+                out = _listen(model, wav)
+                if out:
+                    return out
+                last = RuntimeError("nothing was heard")
+            except transcribe.TranscribeUnavailable:
+                raise
+            except Exception as exc:              # any GPU/driver failure
+                last = exc
+                if device != "cpu":
+                    log(f"    the graphics card could not be used ({exc}); "
+                        "listening on the processor instead")
+        raise NarrationUnavailable(str(last or "the recording could not be read"))
     finally:
         try:
             os.remove(wav)
         except OSError:
             pass
+
+
+def _listen(model, wav: str) -> list:
+    """Every word the model heard, with its second."""
+    segments, _info = model.transcribe(
+        wav, language="en", word_timestamps=True, beam_size=5,
+        # No VAD here. It exists to skip silence in a film; on a voiceover it
+        # can clip the quiet start of a line, and a word dropped from the
+        # transcript is one fewer anchor.
+        vad_filter=False,
+        condition_on_previous_text=False)
+    out = []
+    for seg in segments:                          # a generator: this is where
+        for w in (getattr(seg, "words", None) or []):   # the work happens
+            text = normalise(getattr(w, "word", ""))
+            if not text:
+                continue
+            out.append(Word(text=text[0],
+                            start=float(getattr(w, "start", 0.0)),
+                            end=float(getattr(w, "end", 0.0))))
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -216,23 +216,34 @@ class Deterministic(Backend):
 
     def __init__(self, dim: int = 32):
         super().__init__(name="deterministic", dim=dim)
+        self._cache: dict = {}
 
-    def _hash_vec(self, tokens) -> np.ndarray:
+    def _word_vec(self, word: str) -> np.ndarray:
         # crc32, not hash(): Python randomises string hashing per process, so
         # a "deterministic" backend built on hash() would return different
         # vectors on every run and a stored index would stop matching itself.
         #
-        # Three positions per word, not one. A single position means two
-        # unrelated words that happen to land on the same slot become
-        # indistinguishable — and that is not a hypothetical: thirty words
-        # over sixty-four slots collided immediately, and a test asserting
-        # "the right frame was found" failed because the fake model genuinely
-        # could not tell two of them apart.
+        # A dense random direction per word, not a few raised slots. The
+        # sparse version put every word on three of sixty-four positions,
+        # which meant two unrelated words overlapped often enough to score
+        # halfway to a match — an unrelated caption reached a lift of 2.4
+        # against a thousand frames, higher than the 1.2 the real model needs
+        # to call something found. Tests calibrated against that were
+        # calibrating against noise. Random directions in the full dimension
+        # behave like the real thing: identical words score 1.0, unrelated
+        # ones score about zero, and the gap between them is wide enough that
+        # a threshold means something.
+        v = self._cache.get(word)
+        if v is None:
+            rng = np.random.default_rng(zlib.crc32(word.encode("utf-8")))
+            v = rng.standard_normal(self.dim).astype(np.float32)
+            self._cache[word] = v
+        return v
+
+    def _hash_vec(self, tokens) -> np.ndarray:
         v = np.zeros(self.dim, dtype=np.float32)
         for t in tokens:
-            word = str(t).encode("utf-8")
-            for k, weight in ((b"", 1.0), (b"\x01", 0.7), (b"\x02", 0.5)):
-                v[zlib.crc32(word + k) % self.dim] += weight
+            v += self._word_vec(str(t))
         return v
 
     def encode_texts(self, texts: list) -> np.ndarray:
