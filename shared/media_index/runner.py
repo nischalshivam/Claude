@@ -133,6 +133,11 @@ def _narration_for(beat: dict) -> str:
 # same red-lit frame returning again and again down the page.
 STILL_WINDOW_S = 1.5
 
+# Every clip is cut this long whatever the timeline later uses, so that no
+# planned duration can ever exceed the footage on disk. It must not be less
+# than timeline.MAX_CLIP_S; a test asserts that they agree.
+CLIP_HEADROOM_S = 6.0
+
 
 def _wants_still(shot: dict) -> bool:
     return str(shot.get("kind") or "").strip().lower() == "still"
@@ -189,7 +194,20 @@ def build_scene(job, index: int, beat: dict, placements: list,
         try:
             if not _wants_still(shot):
                 clip_path = os.path.join(scene_dir, f"clip_{n:02d}.mp4")
-                cutter.cut_clip(p.path, start, min(end, start + job.clip_seconds),
+                # Cut the LONGEST the timeline could ever ask for, not the
+                # nominal clip length. These two disagreed: clips were cut
+                # at 4.0s and the timeline planned up to 6.0s, so 42 clips
+                # of a real build were asked to run longer than the footage
+                # that existed. ffmpeg cannot invent frames, so each one
+                # came out short, and 34 seconds vanished from an
+                # eleven-minute video — silently, and cumulatively, until
+                # the picture finished 45 seconds ahead of the voice.
+                #
+                # This is raw material. How much of it is used is the
+                # timeline's decision, made later and changeable without
+                # re-cutting anything.
+                headroom = max(job.clip_seconds, CLIP_HEADROOM_S)
+                cutter.cut_clip(p.path, start, min(end, start + headroom),
                                 clip_path, height=job.height)
                 res.clips.append(clip_path)
                 res.methods[os.path.basename(clip_path)] = p.method

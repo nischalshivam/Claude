@@ -68,19 +68,38 @@ def available() -> bool:
 
 
 def _load_model(name: str, device: str = "auto", compute_type: str = "auto"):
+    """Load the model, falling back to the CPU when the GPU cannot be used.
+
+    "auto" picks CUDA whenever a GPU is visible, and a machine can have a
+    GPU without the CUDA runtime beside it. That failed with
+
+        Library cublas64_12.dll is not found or cannot be loaded
+
+    which reads like a missing model and is nothing of the kind — the model
+    was there, the graphics libraries were not. It cost a real build its
+    narration alignment, silently, and the timeline fell back on an estimate
+    that was three minutes out.
+    """
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise TranscribeUnavailable(
             "faster-whisper is not installed — run: pip install faster-whisper"
         ) from exc
-    try:
-        return WhisperModel(name, device=device, compute_type=compute_type)
-    except Exception as exc:
-        raise TranscribeUnavailable(
-            f"could not load model {name!r}: {exc}. The first run downloads it, "
-            "so this usually means no internet or a blocked connection."
-        ) from exc
+
+    attempts = [(device, compute_type)]
+    if device == "auto":
+        attempts.append(("cpu", "int8"))
+    last = None
+    for dev, ctype in attempts:
+        try:
+            return WhisperModel(name, device=dev, compute_type=ctype)
+        except Exception as exc:                 # any GPU/driver/IO problem
+            last = exc
+    raise TranscribeUnavailable(
+        f"could not load model {name!r}: {last}. The first run downloads it, "
+        "so this usually means no internet or a blocked connection."
+    ) from last
 
 
 def extract_audio(video_path: str, out_wav: str, timeout=3600) -> str:

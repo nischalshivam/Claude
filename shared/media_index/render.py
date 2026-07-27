@@ -65,6 +65,7 @@ class RenderResult:
     failed: list = field(default_factory=list)     # [(file, reason)]
     seconds: float = 0.0
     duration: float = 0.0
+    planned: float = 0.0          # what the timeline asked for
 
     @property
     def ok(self) -> bool:
@@ -111,19 +112,80 @@ def still_filter(duration: float, seed: int, motion: bool = True) -> str:
             f"s={WIDTH}x{HEIGHT}:fps={FPS},setsar=1")
 
 
+def plan_segments(timeline: dict) -> list:
+    """Every segment to render, with the holes closed.
+
+    Concatenation has no idea what time an item was meant to start at — it
+    simply plays one file after another. So a beat with no footage does not
+    leave a gap in the finished video, it *shortens* it, and everything
+    afterwards slides earlier by that much. On the real eleven-minute build
+    two empty beats and 42 clips shorter than they were planned to run left
+    the picture 45 seconds ahead of the voice by the end, and the video
+    ended while the narrator was still talking.
+
+    Whatever the timeline says a beat occupies, that much video comes out.
+    A hole is absorbed by holding the shot before it a little longer, which
+    is what an editor would do anyway; a hole at the very start lengthens
+    the first shot instead.
+    """
+    out = []
+    for scene in (timeline.get("scenes") or []):
+        for item in (scene.get("items") or []):
+            out.append({
+                "scene": scene.get("scene"),
+                "file": item.get("file", ""),
+                "kind": item.get("kind", "image"),
+                "start": float(item.get("start") or 0.0),
+                "duration": max(0.05, float(item.get("duration") or 0.0)),
+            })
+    if not out:
+        return out
+
+    for i, seg in enumerate(out[:-1]):
+        hole = out[i + 1]["start"] - (seg["start"] + seg["duration"])
+        if hole > 0.01:
+            seg["duration"] = round(seg["duration"] + hole, 3)
+            seg["held"] = round(hole, 2)
+    lead = out[0]["start"]
+    if lead > 0.01:
+        out[0]["duration"] = round(out[0]["duration"] + lead, 3)
+        out[0]["held"] = round(lead, 2)
+    total = float(timeline.get("total_seconds") or 0.0)
+    tail = total - (out[-1]["start"] + out[-1]["duration"])
+    if tail > 0.01:
+        # The narration runs on past the last picture. Holding the closing
+        # shot is right: cutting to black while someone is still speaking is
+        # the most visible mistake a video can end on.
+        out[-1]["duration"] = round(out[-1]["duration"] + tail, 3)
+        out[-1]["held"] = round(out[-1].get("held", 0) + tail, 2)
+    return out
+
+
 def render_item(item: dict, source_dir: str, out_path: str, seed: int,
                 motion: bool = True) -> None:
-    """One visual, encoded to the one format every segment shares."""
+    """One visual, encoded to the one format every segment shares.
+
+    The segment comes out at exactly the duration asked for, whatever the
+    source holds. A clip cut to four seconds and asked to run five and a
+    half used to yield four — ffmpeg's `-t` cannot invent footage — and 42
+    of those quietly removed 34 seconds from an eleven-minute video and
+    pulled everything after them out of sync with the voice.
+
+    `tpad` clones the final frame to cover the shortfall, so the picture
+    holds instead of the timeline slipping. It is a freeze rather than an
+    invention, and it is visible in the report.
+    """
     name = item.get("file") or ""
     src = os.path.join(source_dir, name)
     if not os.path.isfile(src):
         raise RenderError(f"missing {name}")
-    duration = max(0.1, float(item.get("duration") or 0))
+    duration = max(0.05, float(item.get("duration") or 0))
     ff = require_ffmpeg()
 
     if str(item.get("kind")) == "video":
         cmd = [ff, "-y", "-v", "error", "-i", src, "-t", f"{duration:.3f}",
-               "-vf", f"{FIT},fps={FPS}"]
+               "-vf", (f"tpad=stop_mode=clone:stop_duration={duration:.3f},"
+                       f"{FIT},fps={FPS}")]
     else:
         cmd = [ff, "-y", "-v", "error", "-loop", "1", "-i", src,
                "-t", f"{duration:.3f}",
@@ -171,17 +233,23 @@ def render(timeline: dict, out_path: str, source_dir: str = "",
     work = os.path.join(source_dir, WORK_DIR)
     os.makedirs(work, exist_ok=True)
 
-    items = [(s, i) for s in (timeline.get("scenes") or [])
-             for i in (s.get("items") or [])]
+    items = plan_segments(timeline)
     if not items:
         res.failed.append(("timeline", "no items to render"))
         return res
 
-    log(f"  rendering {len(items)} segment(s) at {WIDTH}x{HEIGHT}")
+    res.planned = round(sum(i["duration"] for i in items), 2)
+    held = [i for i in items if i.get("held")]
+    log(f"  rendering {len(items)} segment(s) at {WIDTH}x{HEIGHT}, "
+        f"{res.planned / 60:.1f} min of picture")
+    if held:
+        log(f"      {len(held)} shot(s) hold a little longer to cover "
+            f"{sum(i['held'] for i in held):.0f}s the script left empty")
+
     segments = []
-    for n, (scene, item) in enumerate(items, 1):
+    for n, item in enumerate(items, 1):
         seg = os.path.join(work, f"seg_{n:04d}.mp4")
-        scene_dir = os.path.join(source_dir, f"scene_{scene.get('scene'):03d}")
+        scene_dir = os.path.join(source_dir, f"scene_{item['scene']:03d}")
         if resume and os.path.isfile(seg) and os.path.getsize(seg) > 1024:
             segments.append(seg)
             res.reused += 1
@@ -226,6 +294,18 @@ def render(timeline: dict, out_path: str, source_dir: str = "",
         res.duration = probe(res.path).duration if res.path else 0.0
     except ProbeError:
         res.duration = 0.0
+    # The one check that catches a whole class of silent failure. Every
+    # earlier version of this shortened the video without saying so, and a
+    # video that ends while the narrator is still talking is the loudest
+    # possible symptom of the quietest possible bug.
+    if res.path and res.planned and abs(res.duration - res.planned) > 1.0:
+        res.failed.append((
+            "length",
+            f"asked for {res.planned:.0f}s, got {res.duration:.0f}s — "
+            f"{res.planned - res.duration:+.0f}s"))
+        log(f"  WARNING: the video is {res.planned - res.duration:.0f}s "
+            "shorter than the timeline; the picture will drift ahead of "
+            "the voice")
     res.seconds = time.time() - t0
     return res
 
@@ -255,7 +335,8 @@ def describe(res: RenderResult) -> str:
         why = "; ".join(f"{a}: {b}" for a, b in res.failed[:3])
         return f"  nothing was written — {why or 'unknown'}"
     return (f"  {os.path.basename(res.path)} {d} "
-            f"{res.duration / 60:.1f} min {d} "
+            f"{res.duration / 60:.1f} min of "
+            f"{res.planned / 60:.1f} planned {d} "
             f"{res.segments} rendered, {res.reused} reused {d} "
             f"{res.seconds / 60:.0f} min"
             + (f" {d} {len(res.failed)} shot(s) failed" if res.failed else ""))

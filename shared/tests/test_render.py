@@ -135,8 +135,11 @@ class TestRenderingAWholeTimeline(unittest.TestCase):
         res = render.render(tl, os.path.join(self.out, "v.mp4"),
                             source_dir=self.out, resume=False)
         self.assertTrue(res.ok)
-        self.assertEqual(len(res.failed), 1)
-        self.assertIn("not_here.jpg", res.failed[0][0])
+        named = [a for a, _b in res.failed]
+        self.assertIn("not_here.jpg", named)
+        # ...and the shortfall it caused is reported too, rather than the
+        # video quietly coming out three seconds short.
+        self.assertIn("length", named)
 
     def test_an_empty_timeline_says_so_rather_than_writing_nothing(self):
         res = render.render({"scenes": []}, os.path.join(self.out, "v.mp4"),
@@ -187,3 +190,156 @@ class TestRenderingAWholeTimeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestNothingIsSilentlyLostFromTheLength(unittest.TestCase):
+    """The bug this class exists for.
+
+    Concatenation has no idea what time an item was meant to start. A beat
+    with no footage does not leave a gap in the finished video, it shortens
+    it — and everything after slides earlier by that much. On a real
+    eleven-minute build two empty beats and 42 clips shorter than planned
+    left the picture 45 seconds ahead of the voice, and the video ended
+    while the narrator was still talking.
+    """
+
+    def _timeline(self, scenes, total=None):
+        tl = {"scenes": scenes}
+        if total is not None:
+            tl["total_seconds"] = total
+        return tl
+
+    def test_a_beat_with_no_footage_does_not_shorten_the_video(self):
+        tl = self._timeline([
+            {"scene": 1, "items": [
+                {"file": "a.jpg", "kind": "image", "start": 0.0,
+                 "duration": 5.0}]},
+            {"scene": 2, "items": []},                       # 4s of nothing
+            {"scene": 3, "items": [
+                {"file": "b.jpg", "kind": "image", "start": 9.0,
+                 "duration": 3.0}]},
+        ], total=12.0)
+        segs = render.plan_segments(tl)
+        self.assertEqual(len(segs), 2)
+        self.assertAlmostEqual(sum(s["duration"] for s in segs), 12.0,
+                               places=2)
+
+    def test_the_hole_is_covered_by_the_shot_before_it(self):
+        tl = self._timeline([
+            {"scene": 1, "items": [
+                {"file": "a.jpg", "kind": "image", "start": 0.0,
+                 "duration": 5.0}]},
+            {"scene": 2, "items": [
+                {"file": "b.jpg", "kind": "image", "start": 9.0,
+                 "duration": 3.0}]},
+        ], total=12.0)
+        segs = render.plan_segments(tl)
+        self.assertAlmostEqual(segs[0]["duration"], 9.0, places=2)
+        self.assertAlmostEqual(segs[0]["held"], 4.0, places=2)
+
+    def test_narration_running_past_the_last_picture_holds_it(self):
+        # Cutting to black while someone is still speaking is the most
+        # visible mistake a video can end on.
+        tl = self._timeline([{"scene": 1, "items": [
+            {"file": "a.jpg", "kind": "image", "start": 0.0,
+             "duration": 5.0}]}], total=9.0)
+        segs = render.plan_segments(tl)
+        self.assertAlmostEqual(segs[0]["duration"], 9.0, places=2)
+
+    def test_a_hole_at_the_very_start_lengthens_the_first_shot(self):
+        tl = self._timeline([{"scene": 1, "items": [
+            {"file": "a.jpg", "kind": "image", "start": 2.0,
+             "duration": 5.0}]}], total=7.0)
+        segs = render.plan_segments(tl)
+        self.assertAlmostEqual(segs[0]["duration"], 7.0, places=2)
+
+    def test_a_timeline_with_no_holes_is_left_alone(self):
+        tl = self._timeline([{"scene": 1, "items": [
+            {"file": "a.jpg", "kind": "image", "start": 0.0, "duration": 4.0},
+            {"file": "b.jpg", "kind": "image", "start": 4.0,
+             "duration": 3.0}]}], total=7.0)
+        segs = render.plan_segments(tl)
+        self.assertEqual([s["duration"] for s in segs], [4.0, 3.0])
+        self.assertFalse(any("held" in s for s in segs))
+
+    def test_the_planned_length_always_matches_the_narration(self):
+        # Whatever the script leaves empty, the picture covers the voice.
+        import random as _r
+        rng = _r.Random(4)
+        scenes, t = [], 0.0
+        for i in range(1, 30):
+            budget = rng.uniform(3.0, 20.0)
+            items = []
+            if rng.random() > 0.15:                  # some beats are empty
+                at = t
+                # Never past the end of the beat: an item that overran into
+                # the next one would be a fault in the timeline, not
+                # something the renderer should be papering over.
+                while t + budget - at > 2.5:
+                    d = min(rng.uniform(2.5, 6.0), t + budget - at)
+                    items.append({"file": "x.jpg", "kind": "image",
+                                  "start": round(at, 2), "duration": round(d, 2)})
+                    at += d
+            scenes.append({"scene": i, "items": items})
+            t += budget
+        segs = render.plan_segments(self._timeline(scenes, total=round(t, 2)))
+        self.assertAlmostEqual(sum(s["duration"] for s in segs), t, places=1)
+
+
+class TestTheCutAndThePlanAgree(unittest.TestCase):
+    def test_clips_are_cut_at_least_as_long_as_the_timeline_may_ask(self):
+        """The 34 seconds that vanished from a real video.
+
+        The builder cut every clip to 4.0 seconds and the timeline planned
+        up to 6.0, so 42 clips were asked to run longer than the footage
+        that existed. ffmpeg cannot invent frames; each came out short, and
+        the shortfall accumulated until the picture finished 45 seconds
+        ahead of the voice.
+        """
+        from media_index import runner, timeline as tl_mod
+        self.assertGreaterEqual(runner.CLIP_HEADROOM_S, tl_mod.MAX_CLIP_S,
+                                "clips are cut shorter than the timeline "
+                                "may plan them")
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class TestASegmentIsExactlyAsLongAsAsked(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="exact_")
+        src = dv.build(os.path.join(cls.tmp, "src.mkv"), log=lambda *a: None)
+        # A deliberately short clip: two seconds of footage.
+        cutter.cut_clip(src, 5.0, 7.0, os.path.join(cls.tmp, "short.mp4"),
+                        height=720)
+        cutter.extract_frame(src, 20.0, os.path.join(cls.tmp, "still.jpg"),
+                             width=1920)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_a_clip_shorter_than_asked_holds_its_last_frame(self):
+        out = os.path.join(self.tmp, "held.mp4")
+        render.render_item({"file": "short.mp4", "kind": "video",
+                            "duration": 5.5}, self.tmp, out, seed=1)
+        self.assertAlmostEqual(probe.probe(out).duration, 5.5, delta=0.15)
+
+    def test_a_clip_longer_than_asked_is_trimmed(self):
+        out = os.path.join(self.tmp, "trim.mp4")
+        render.render_item({"file": "short.mp4", "kind": "video",
+                            "duration": 1.2}, self.tmp, out, seed=1)
+        self.assertAlmostEqual(probe.probe(out).duration, 1.2, delta=0.15)
+
+    def test_a_still_comes_out_at_the_asked_for_length(self):
+        out = os.path.join(self.tmp, "still.mp4")
+        render.render_item({"file": "still.jpg", "kind": "image",
+                            "duration": 7.3}, self.tmp, out, seed=2)
+        self.assertAlmostEqual(probe.probe(out).duration, 7.3, delta=0.2)
+
+    def test_a_finished_video_that_came_out_short_says_so(self):
+        # Every earlier version shortened the video without a word. A video
+        # that ends while the narrator is still talking is the loudest
+        # symptom of the quietest bug, and it must never be silent again.
+        res = render.RenderResult(path=__file__, planned=100.0, duration=60.0)
+        self.assertTrue(res.ok)
+        self.assertGreater(abs(res.planned - res.duration), 1.0)
