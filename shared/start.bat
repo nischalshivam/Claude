@@ -273,7 +273,7 @@ echo   episodes, which is minutes. Give it a script here to do only those,
 echo   or leave it blank to do everything you own.
 echo.
 set "LSCRIPT="
-set /p "LSCRIPT=  Script file, or blank for everything: "
+set /p "LSCRIPT=  the .json visual script, or blank for everything: "
 if defined LSCRIPT set "LSCRIPT=!LSCRIPT:"=!"
 if defined LSCRIPT if not exist "!LSCRIPT!" (
     echo.
@@ -328,18 +328,18 @@ echo   counts at 150 words a minute, and your last recording was read at
 echo   221 - a guess three minutes out over an eleven minute video.
 echo.
 set "TFOLD="
-set /p "TFOLD=  Built folder [built]: "
+set /p "TFOLD=  1 of 4 - the output folder from step 9 [built]: "
 if not defined TFOLD set "TFOLD=built"
 set "TFOLD=!TFOLD:"=!"
 set "TSCRIPT="
-set /p "TSCRIPT=  Script file: "
+set /p "TSCRIPT=  2 of 4 - the same .json visual script: "
 if not defined TSCRIPT goto menu
 set "TSCRIPT=!TSCRIPT:"=!"
 set "TAUDIO="
-set /p "TAUDIO=  Narration audio: "
+set /p "TAUDIO=  3 of 4 - the narration mp3: "
 if defined TAUDIO set "TAUDIO=!TAUDIO:"=!"
 set "TPACE="
-set /p "TPACE=  Pace - calm, normal, quick, rapid [normal]: "
+set /p "TPACE=  4 of 4 - pace: calm, normal, quick, rapid [normal]: "
 if not defined TPACE set "TPACE=normal"
 echo.
 if defined TAUDIO (
@@ -360,7 +360,7 @@ echo.
 echo   Run T first. Without a timeline there is nothing to render.
 echo.
 set "RFOLD="
-set /p "RFOLD=  Built folder [built]: "
+set /p "RFOLD=  the same output folder from step 9 [built]: "
 if not defined RFOLD set "RFOLD=built"
 set "RFOLD=!RFOLD:"=!"
 echo.
@@ -384,7 +384,7 @@ echo   footage, cuts the clips, pulls the stills, and puts one contact
 echo   sheet on screen so you can judge the whole video at a glance.
 echo.
 set "SCRIPT="
-set /p "SCRIPT=  Script file: "
+set /p "SCRIPT=  1 of 2 - the .json visual script: "
 if not defined SCRIPT goto menu
 set "SCRIPT=!SCRIPT:"=!"
 if not exist "!SCRIPT!" (
@@ -395,7 +395,7 @@ if not exist "!SCRIPT!" (
     goto menu
 )
 set "OUTDIR=built"
-set /p "OUTDIR=  Output folder [built]: "
+set /p "OUTDIR=  2 of 2 - a NEW output folder [built]: "
 if not defined OUTDIR set "OUTDIR=built"
 set "OUTDIR=!OUTDIR:"=!"
 echo.
