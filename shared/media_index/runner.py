@@ -32,7 +32,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import align, cutter, frames, jobs as jobs_mod, term, verify
+from . import align, cutter, frames, jobs as jobs_mod, probe, term, verify
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -74,6 +74,15 @@ class SceneResult:
     @property
     def interpolated(self) -> int:
         return sum(1 for m in self.methods.values() if m == "interpolated")
+
+    @property
+    def filler(self) -> int:
+        """Assets from the right episode but no particular moment of it.
+
+        The one kind of asset the tool cannot justify, counted separately so
+        it can never hide inside "interpolated" — an editor scanning the
+        manifest should be able to find every one of them in a second."""
+        return sum(1 for m in self.methods.values() if m == "filler")
 
 
 @dataclass
@@ -149,6 +158,13 @@ CLIP_HEADROOM_S = 6.0
 # because a hand moving through a shot makes every frame slightly different.
 # Time cannot be argued with in the same way.
 REPEAT_APART_S = 2.0
+# How far a repeated shot may be moved to find footage nobody has used.
+SHIFT_REACH_S = 45.0
+# Filler is spread across the middle of an episode — never the titles, never
+# the credits — and kept well apart so a beat with nothing does not become a
+# beat with the same corridor four times.
+FILLER_SPREAD = (0.10, 0.90)
+FILLER_APART_S = 20.0
 
 
 def _wants_still(shot: dict) -> bool:
@@ -170,14 +186,75 @@ def _repeated(used: dict | None, path: str, at: float,
     return any(abs(at - t) < apart for t in used.get(path, ()))
 
 
+def _free_moment(used: dict | None, path: str, at: float,
+                 reach: float = SHIFT_REACH_S) -> float | None:
+    """The nearest second of this episode nobody has used yet.
+
+    Refusing a repeated shot outright was the first version and it emptied
+    seven scenes of a real build — the repetition became holes, and the
+    holes became stills sitting on screen for half a minute. These
+    placements are interpolated guesses to begin with; moving one a few
+    seconds costs nothing anybody can measure and keeps the scene.
+    """
+    if not _repeated(used, path, at):
+        return at
+    step = REPEAT_APART_S
+    d = step
+    while d <= reach:
+        for cand in (at + d, at - d):
+            if cand >= 0 and not _repeated(used, path, cand):
+                return cand
+        d += step
+    return None
+
+
+def _filler_moment(used: dict | None, path: str, duration: float,
+                   k: int) -> float | None:
+    """Somewhere in this episode nobody has been yet, for a shot with no
+    placement at all.
+
+    Three runs of a real script carried no quoted line and matched no
+    picture, so 198 seconds of an eleven-minute video had nothing to show
+    and the shots around those holes were stretched to cover them. The
+    script still names the episode, and footage from the right episode is
+    what an editor reaches for when the exact frame cannot be found. It is
+    marked as filler everywhere it appears — this is the one place the tool
+    shows something it cannot justify, and it says so.
+
+    The golden ratio spreads successive calls across the episode instead of
+    clustering them, without needing any state beyond a counter.
+    """
+    if duration <= 0:
+        return None
+    lo, hi = FILLER_SPREAD[0] * duration, FILLER_SPREAD[1] * duration
+    for i in range(96):
+        frac = ((k + i) * 0.618033988749895) % 1.0
+        at = lo + frac * (hi - lo)
+        if not _repeated(used, path, at, apart=FILLER_APART_S):
+            return at
+    return None
+
+
 def _mark_used(used: dict | None, path: str, at: float) -> None:
     if used is not None:
         used.setdefault(path, []).append(at)
 
 
+def _filler_for(episode: str, used: dict | None, log) -> tuple:
+    """(seconds, path) somewhere in the episode a beat names, or (None, '')."""
+    if not episode or not os.path.isfile(episode):
+        return None, ""
+    try:
+        length = probe.probe(episode).duration
+    except (ProbeError, OSError):
+        return None, ""
+    taken = len(used.get(episode, ())) if used else 0
+    return _filler_moment(used, episode, float(length or 0.0), taken), episode
+
+
 def build_scene(job, index: int, beat: dict, placements: list,
                 seen: list | None = None, log=lambda *a: None,
-                used: dict | None = None) -> SceneResult:
+                used: dict | None = None, episode: str = "") -> SceneResult:
     """Cut every shot of one beat. Never raises — a bad scene is reported.
 
     Driven by alignment rather than by dialogue matches alone. On a real
@@ -203,19 +280,30 @@ def build_scene(job, index: int, beat: dict, placements: list,
     unplaced = 0
     repeats = 0
 
+    filled = 0
     for p in mine:
         n = p.shot
         shot = shots[n - 1] if 0 < n <= len(shots) else {}
+        wanted = p.end_ms - p.start_ms
         if not p.ok or not p.path:
-            unplaced += 1
-            continue
-        if _repeated(used, p.path, p.start_ms / 1000.0):
-            # Somewhere earlier in this video the same moment is already on
-            # screen. Cutting it again does not add a shot, it repeats one.
+            # No line, no picture — but the script named the episode, and
+            # showing the right episode beats showing nothing at all.
+            at, path = _filler_for(episode, used, log)
+            if at is None:
+                unplaced += 1
+                continue
+            p = align.Placement(beat=p.beat, shot=p.shot, path=path,
+                                start_ms=int(at * 1000),
+                                end_ms=int(at * 1000) + max(4000, wanted),
+                                method="filler", confidence="low")
+            filled += 1
+        moved = _free_moment(used, p.path, p.start_ms / 1000.0)
+        if moved is None:
+            # Everything within reach is already on screen somewhere.
             repeats += 1
             continue
-        start = p.start_ms / 1000.0
-        end = max(start + 1.0, p.end_ms / 1000.0)
+        start = moved
+        end = start + max(1.0, wanted / 1000.0)
         res.source = res.source or os.path.basename(p.path)
         # The weakest placement in the scene, not the last one seen: a scene
         # is only as trustworthy as its least certain shot.
@@ -260,7 +348,10 @@ def build_scene(job, index: int, beat: dict, placements: list,
 
     if res.clips or res.stills:
         res.status = "cut" if res.clips else "fallback"
-        if unplaced:
+        if filled:
+            res.note = (f"{filled} shot(s) filled from this episode — no line "
+                        "and no picture matched them")
+        elif unplaced:
             res.note = f"{unplaced} shot(s) could not be placed"
         elif repeats:
             res.note = (f"{repeats} shot(s) skipped — already on screen "
@@ -369,6 +460,7 @@ def write_manifest(job, result: JobResult) -> str:
             "anchored": s.anchored,
             "verified": s.verified,
             "interpolated": s.interpolated,
+            "filler": s.filler,
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
                   "placed_by": s.methods.get(os.path.basename(p), "unknown"),
@@ -386,6 +478,25 @@ def write_manifest(job, result: JobResult) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     return path
+
+
+def _episodes_by_beat(db_path: str, beats: list) -> dict:
+    """{beat number: episode file} for every run in the script.
+
+    Never raises: an episode the library cannot resolve simply has no
+    filler, which is the behaviour this replaced.
+    """
+    out: dict = {}
+    try:
+        for run in align.runs(beats):
+            path = align.episode_file(db_path, run)
+            if not path:
+                continue
+            for entry in run.entries:
+                out.setdefault(entry.beat, path)
+    except Exception:
+        return out
+    return out
 
 
 def run_job(job, report, log=print) -> JobResult:
@@ -407,8 +518,13 @@ def run_job(job, report, log=print) -> JobResult:
         log(checked.summary())
         seen: list = []          # every still already taken, for de-duplication
         used: dict = {}          # and every moment of every episode used
+        # Which episode each beat belongs to, whether or not anything in it
+        # could be placed. A beat nobody could place still names its episode,
+        # and that is enough to show the right show rather than nothing.
+        owns = _episodes_by_beat(job.db, report.beats)
         for i, beat in enumerate(report.beats, 1):
-            scene = build_scene(job, i, beat, placements, seen, log, used)
+            scene = build_scene(job, i, beat, placements, seen, log, used,
+                                owns.get(beat.get("beat", i), ""))
             result.scenes.append(scene)
             mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
             log(f"    scene {i:03d} {mark[scene.status]} "

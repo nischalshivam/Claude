@@ -399,18 +399,70 @@ class TestOneMomentGetsOnScreenOnce(unittest.TestCase):
     def _job(self, tmp):
         return jobs_mod.Job(name="j", script="s.json", out=tmp)
 
-    def test_a_shot_landing_where_one_already_played_is_skipped(self):
-        tmp = tempfile.mkdtemp(prefix="repeat_")
+    def test_a_shot_landing_where_one_already_played_moves_aside(self):
+        """Refusing it outright emptied seven scenes of a real build, and the
+        holes became stills sitting on screen for half a minute. The
+        placement is an interpolated guess anyway; moving it two seconds
+        costs nothing and keeps the scene."""
+        moved = runner._free_moment({"/ep.mkv": [1930.0]}, "/ep.mkv", 1930.4)
+        self.assertIsNotNone(moved)
+        self.assertFalse(runner._repeated({"/ep.mkv": [1930.0]}, "/ep.mkv",
+                                          moved))
+        self.assertLess(abs(moved - 1930.4), runner.SHIFT_REACH_S)
+
+    def test_a_shot_with_nowhere_to_go_is_dropped_not_repeated(self):
+        packed = {"/ep.mkv": [float(t) for t in range(0, 400)]}
+        self.assertIsNone(runner._free_moment(packed, "/ep.mkv", 200.0))
+
+
+class TestABeatNobodyCouldPlaceStillShowsSomething(unittest.TestCase):
+    """Three runs of a real script carried no quoted line and matched no
+    picture. 198 seconds of an eleven-minute video had nothing at all to
+    show, the shots around those holes were stretched to cover them, and a
+    twelve-second still ran for thirty.
+
+    The script still names the episode. Footage from the right episode is
+    what an editor reaches for when the exact frame cannot be found, and it
+    is labelled `filler` everywhere it appears so nobody mistakes it for a
+    match.
+    """
+
+    def test_filler_moments_spread_across_the_episode(self):
+        used, got = {}, []
+        for _ in range(6):
+            at = runner._filler_moment(used, "/e.mkv", 2800.0,
+                                       len(used.get("/e.mkv", ())))
+            got.append(at)
+            used.setdefault("/e.mkv", []).append(at)
+        self.assertEqual(len(set(got)), 6)
+        for a in got:                       # never the titles, never the credits
+            self.assertGreater(a, 2800.0 * runner.FILLER_SPREAD[0] - 1)
+            self.assertLess(a, 2800.0 * runner.FILLER_SPREAD[1] + 1)
+        for a in got:                       # and never twice the same corner
+            self.assertEqual(sum(1 for b in got
+                                 if abs(a - b) < runner.FILLER_APART_S), 1)
+
+    def test_no_episode_means_no_filler_rather_than_a_crash(self):
+        self.assertEqual(runner._filler_for("", {}, lambda *a: None),
+                         (None, ""))
+        self.assertEqual(runner._filler_for("/nope.mkv", {}, lambda *a: None),
+                         (None, ""))
+
+    @unittest.skipUnless(probe.ffmpeg_bin(), "ffmpeg not installed")
+    def test_an_unplaceable_beat_is_filled_from_its_own_episode(self):
+        tmp = tempfile.mkdtemp(prefix="filler_")
         try:
-            used = {"/ep.mkv": [1930.0]}
+            vid = dv.build(os.path.join(tmp, "e.mkv"), log=lambda *a: None)
+            job = jobs_mod.Job(name="j", script="s.json",
+                               out=os.path.join(tmp, "out"))
             beat = {"beat": 1, "narration": "N.", "shots": [{"source": "x"}]}
-            p = runner.align.Placement(beat=1, shot=1, path="/ep.mkv",
-                                       start_ms=1930_400, end_ms=1934_400,
-                                       method="interpolated")
-            scene = runner.build_scene(self._job(tmp), 1, beat, [p], [],
-                                       log=lambda *a: None, used=used)
-            self.assertEqual(scene.status, "empty")
-            self.assertIn("already on screen", scene.note)
+            nowhere = [runner.align.Placement(beat=1, shot=1)]
+            scene = runner.build_scene(job, 1, beat, nowhere, [],
+                                       log=lambda *a: None, used={},
+                                       episode=vid)
+            self.assertTrue(scene.ok, "the beat still has nothing to show")
+            self.assertEqual(scene.filler, len(scene.methods))
+            self.assertIn("filled from this episode", scene.note)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

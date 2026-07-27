@@ -51,6 +51,11 @@ SEGMENT_PRESET = "veryfast"
 # move should be felt rather than seen.
 ZOOM_RANGE = (1.06, 1.16)
 WORK_DIR = "segments"
+# The longest any one picture may stay on screen once holes are absorbed.
+# The same ceiling the timeline plans to, because a viewer cannot tell the
+# difference between a still that was planned to run twelve seconds and one
+# that ended up running twelve seconds.
+MAX_HOLD_S = 12.0
 
 
 class RenderError(RuntimeError):
@@ -112,6 +117,37 @@ def still_filter(duration: float, seed: int, motion: bool = True) -> str:
             f"s={WIDTH}x{HEIGHT}:fps={FPS},setsar=1")
 
 
+def _absorb(out: list, i: int, hole: float) -> None:
+    """Share a hole between the shots on either side of it.
+
+    Either side works and neither breaks sync: concatenation only cares
+    about total duration, so a second added before the hole and a second
+    added after it both leave everything downstream where it belongs. What
+    matters is that no single shot swallows the lot — a picture that sits
+    still for half a minute is the most obvious thing in a video.
+
+    Nearest shots first, widening outward over the whole video if the ones
+    beside the hole are already at MAX_HOLD_S. Only if EVERY shot is at its
+    limit does the remainder go to the nearest one anyway — a finished video
+    that is the right length beats a tidy rule.
+    """
+    left = i
+    order = sorted(range(len(out)), key=lambda k: (abs(k - i - 0.5), k))
+    for j in order:
+        if hole <= 0.01:
+            break
+        room = MAX_HOLD_S - out[j]["duration"]
+        if room <= 0.01:
+            continue
+        take = min(room, hole)
+        out[j]["duration"] = round(out[j]["duration"] + take, 3)
+        out[j]["held"] = round(out[j].get("held", 0) + take, 2)
+        hole -= take
+    if hole > 0.01:                      # nowhere left: the length still wins
+        out[left]["duration"] = round(out[left]["duration"] + hole, 3)
+        out[left]["held"] = round(out[left].get("held", 0) + hole, 2)
+
+
 def plan_segments(timeline: dict) -> list:
     """Every segment to render, with the holes closed.
 
@@ -124,9 +160,11 @@ def plan_segments(timeline: dict) -> list:
     ended while the narrator was still talking.
 
     Whatever the timeline says a beat occupies, that much video comes out.
-    A hole is absorbed by holding the shot before it a little longer, which
-    is what an editor would do anyway; a hole at the very start lengthens
-    the first shot instead.
+    A hole is absorbed by the shots around it, and it is SHARED — because
+    giving a whole hole to the one shot before it is how a twelve-second
+    still ended up on screen for thirty seconds. Three and a half minutes of
+    a real eleven-minute build had no footage, that time went to eleven
+    shots, and each of them held eighteen seconds longer than planned.
     """
     out = []
     for scene in (timeline.get("scenes") or []):
@@ -141,23 +179,21 @@ def plan_segments(timeline: dict) -> list:
     if not out:
         return out
 
-    for i, seg in enumerate(out[:-1]):
-        hole = out[i + 1]["start"] - (seg["start"] + seg["duration"])
+    for i in range(len(out) - 1):
+        hole = out[i + 1]["start"] - (out[i]["start"] + out[i]["duration"])
         if hole > 0.01:
-            seg["duration"] = round(seg["duration"] + hole, 3)
-            seg["held"] = round(hole, 2)
+            _absorb(out, i, hole)
     lead = out[0]["start"]
     if lead > 0.01:
-        out[0]["duration"] = round(out[0]["duration"] + lead, 3)
-        out[0]["held"] = round(lead, 2)
+        _absorb(out, 0, lead)
     total = float(timeline.get("total_seconds") or 0.0)
     tail = total - (out[-1]["start"] + out[-1]["duration"])
     if tail > 0.01:
         # The narration runs on past the last picture. Holding the closing
-        # shot is right: cutting to black while someone is still speaking is
-        # the most visible mistake a video can end on.
-        out[-1]["duration"] = round(out[-1]["duration"] + tail, 3)
-        out[-1]["held"] = round(out[-1].get("held", 0) + tail, 2)
+        # shots is right: cutting to black while someone is still speaking is
+        # the most visible mistake a video can end on. Shared backwards from
+        # the end, for the same reason every other hole is shared.
+        _absorb(out, len(out) - 1, tail)
     return out
 
 

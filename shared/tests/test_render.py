@@ -224,7 +224,7 @@ class TestNothingIsSilentlyLostFromTheLength(unittest.TestCase):
         self.assertAlmostEqual(sum(s["duration"] for s in segs), 12.0,
                                places=2)
 
-    def test_the_hole_is_covered_by_the_shot_before_it(self):
+    def test_the_hole_is_covered_by_the_shots_around_it(self):
         tl = self._timeline([
             {"scene": 1, "items": [
                 {"file": "a.jpg", "kind": "image", "start": 0.0,
@@ -234,8 +234,31 @@ class TestNothingIsSilentlyLostFromTheLength(unittest.TestCase):
                  "duration": 3.0}]},
         ], total=12.0)
         segs = render.plan_segments(tl)
-        self.assertAlmostEqual(segs[0]["duration"], 9.0, places=2)
-        self.assertAlmostEqual(segs[0]["held"], 4.0, places=2)
+        self.assertAlmostEqual(sum(s["duration"] for s in segs), 12.0, places=2)
+        self.assertTrue(all(s["duration"] <= render.MAX_HOLD_S for s in segs))
+
+    def test_no_shot_is_left_sitting_on_screen_for_half_a_minute(self):
+        """The complaint this was written for. Three and a half minutes of a
+        real build had no footage; the whole of each hole went to the one
+        shot before it, and a twelve-second still ran for thirty seconds.
+
+        Either side of a hole works and neither breaks sync — concatenation
+        only cares about total duration — so it is shared.
+        """
+        items = [{"scene": i, "items": [
+            {"file": f"{i}.jpg", "kind": "image", "start": i * 5.0,
+             "duration": 5.0}]} for i in range(8)]
+        items.append({"scene": 8, "items": []})              # 60s of nothing
+        items.append({"scene": 9, "items": [
+            {"file": "z.jpg", "kind": "image", "start": 100.0,
+             "duration": 5.0}]})
+        segs = render.plan_segments(self._timeline(items, total=105.0))
+        self.assertAlmostEqual(sum(s["duration"] for s in segs), 105.0,
+                               places=2)
+        self.assertLessEqual(max(s["duration"] for s in segs),
+                             render.MAX_HOLD_S + 0.01)
+        self.assertGreater(sum(1 for s in segs if s.get("held")), 5,
+                           "the hole was not shared out")
 
     def test_narration_running_past_the_last_picture_holds_it(self):
         # Cutting to black while someone is still speaking is the most
