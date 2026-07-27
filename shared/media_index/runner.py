@@ -496,6 +496,25 @@ def _episodes_by_beat(db_path: str, beats: list) -> dict:
                 out.setdefault(entry.beat, path)
     except Exception:
         return out
+
+    # A beat can name no episode at all. Six shots of a real script were
+    # press portraits — Vince Gilligan, an actor at a premiere, rows of
+    # cinema seats — which live nowhere in a library of episodes, so those
+    # beats had nothing and the video had a hole where the narration was
+    # talking about the writers' room. The neighbouring beats know which
+    # episode the essay is in at that point, and that is the right answer
+    # for a held face under a line about the making of it.
+    order = [b.get("beat") for b in beats if b.get("beat") is not None]
+    last = ""
+    for beat_no in order:                      # carry forward
+        last = out.get(beat_no) or last
+        if last:
+            out.setdefault(beat_no, last)
+    last = ""
+    for beat_no in reversed(order):            # then back, for the opening
+        last = out.get(beat_no) or last
+        if last:
+            out.setdefault(beat_no, last)
     return out
 
 

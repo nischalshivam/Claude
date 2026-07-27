@@ -90,6 +90,15 @@ def requirements(beats: list) -> list[TitleRequirement]:
             title = (shot.get("source") or "").strip()
             if not title:
                 continue
+            # The same rule the `images` list has always had, applied where
+            # the model actually puts these: a shot marked as coming from
+            # outside the film, or one naming no episode of a series it
+            # claims to be from, is a press photo or a piece of stock — and
+            # looking those up in a library of episodes reports titles
+            # missing on a script that needs none of them.
+            kind = (shot.get("type") or "from_source").strip().lower()
+            if kind and kind != "from_source":
+                continue
             key = canonical(title)
             req = by_key.get(key)
             if req is None:

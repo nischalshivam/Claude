@@ -241,6 +241,17 @@ is the failure this whole field exists to prevent.
 
 **kind** — "clip" for moving footage, "still" for a held frame. Required.
 
+**type** — REQUIRED on any shot that does NOT come out of the film: an
+actor's press portrait, a photograph of a cinema, a writer at a desk. Set
+`"type": "real_world"` and leave `season_episode` empty.
+
+Six shots of a real script were press portraits — Vince Gilligan, an actor
+at a premiere, rows of cinema seats — written as ordinary shots with a
+`source` of "Vince Gilligan press portrait". The tool then went looking for
+a film of that name, reported it missing, and the beats came out empty. A
+shot from the film and a shot of the world are different searches, and the
+only thing that tells them apart is this field.
+
 **count** — stills only. How many distinct frames to take from that moment.
 
 **exact_dialogue** — spoken during this shot, word for word, or empty.
