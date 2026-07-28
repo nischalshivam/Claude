@@ -366,6 +366,10 @@ echo   says "9 of 62 indexed" can still build a video - but in the other 53
 echo   episodes a shot is picked from the dialogue alone and never checked
 echo   against the picture. That is the difference the screen now shows.
 echo.
+echo   NEW VIDEO is the form: script, voiceover, title, folder. Check tells
+echo   you what will happen BEFORE the build - how many shots will be found,
+echo   and which scenes will be guesses - and Build runs it with a bar.
+echo.
 echo   The shot-by-shot page is still there, at /shots, with its four tags:
 echo.
 echo      anchor        a quoted line. exact to the millisecond

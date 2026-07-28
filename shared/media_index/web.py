@@ -37,7 +37,7 @@ import threading
 import urllib.parse
 import webbrowser
 
-from . import libraries, library, term
+from . import builds, jobs as jobs_mod, libraries, library, sources, term
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "web_ui.html")
@@ -134,6 +134,100 @@ def build_folder(out: str) -> dict:
     }
 
 
+# Folders and files a picker will show. A browser cannot open a native file
+# dialog from a page, so the tool has to do the walking itself — and it
+# should only ever offer the kinds of file the field is actually for.
+PICK = {"script": (".json",),
+        "audio": (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg"),
+        "folder": ()}
+
+
+def script_facts(path: str) -> dict:
+    """What a script says about itself, read the moment it is chosen.
+
+    This is the one number that tells someone the tool understood the file
+    they just picked. Getting it after a forty-minute build is not the same
+    information.
+    """
+    beats = jobs_mod.read_beats(path)
+    shots = sum(len(b.get("shots") or []) for b in beats)
+    reqs = sources.requirements(beats)
+    # `episodes_declared` holds (season, episode) pairs. Handing those to a
+    # page as-is puts "1,1, 1,3" on screen, which is not a thing anyone has
+    # ever called an episode.
+    episodes = sorted({se for r in reqs for se in r.episodes_declared})
+    labelled = [f"S{int(s):02d}E{int(e):02d}" for s, e in episodes]
+    return {"path": os.path.abspath(path), "beats": len(beats),
+            "shots": shots, "titles": [r.title for r in reqs],
+            "episodes": labelled[:24], "episodes_total": len(labelled)}
+
+
+def audio_facts(path: str) -> dict:
+    from .probe import ProbeError, probe
+    try:
+        info = probe(path)
+    except ProbeError as exc:
+        return {"path": os.path.abspath(path), "error": str(exc)[:200]}
+    return {"path": os.path.abspath(path), "seconds": round(info.duration, 1)}
+
+
+def browse(path: str, kind: str = "folder") -> dict:
+    """One folder's worth of somewhere to go next.
+
+    Deliberately not rooted anywhere: the whole point is choosing a script
+    on D: and a library on E:. It only ever LISTS — nothing here opens,
+    writes or deletes a thing, and the extensions offered are the field's.
+    """
+    here = os.path.abspath(path or os.path.expanduser("~"))
+    # Walk up until something is really there. The remembered folder from
+    # last session may have been deleted, and so may its parent — a picker
+    # that opens on a folder that does not exist shows nothing and looks
+    # broken, when all that happened is someone tidied their drive.
+    while not os.path.isdir(here):
+        parent = os.path.dirname(here)
+        if parent == here:
+            here = os.path.abspath(os.sep)
+            break
+        here = parent
+    wanted = PICK.get(kind, ())
+    folders, files = [], []
+    try:
+        for name in sorted(os.listdir(here), key=str.lower):
+            full = os.path.join(here, name)
+            try:
+                if os.path.isdir(full):
+                    if not name.startswith("."):
+                        folders.append({"name": name, "path": full})
+                elif wanted and os.path.splitext(name)[1].lower() in wanted:
+                    files.append({"name": name, "path": full,
+                                  "size": os.path.getsize(full)})
+            except OSError:
+                continue                    # a permission wall is not an error
+    except OSError as exc:
+        return {"path": here, "error": str(exc)[:200],
+                "folders": [], "files": [], "up": os.path.dirname(here)}
+    up = os.path.dirname(here)
+    return {"path": here, "up": up if up != here else "",
+            "folders": folders, "files": files,
+            "drives": _drives()}
+
+
+def _drives() -> list:
+    """Every drive letter that exists, on the machine this actually runs on.
+
+    D: holds the footage and E: the libraries; a picker that cannot leave
+    one of them is a picker nobody can use.
+    """
+    if os.name != "nt":
+        return [{"name": "/", "path": os.path.abspath(os.sep)}]
+    found = []
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = f"{letter}:\\"
+        if os.path.isdir(root):
+            found.append({"name": f"{letter}:", "path": root})
+    return found
+
+
 def library_facts(db_path: str) -> dict:
     try:
         stats = library.stats(db_path)
@@ -141,6 +235,12 @@ def library_facts(db_path: str) -> dict:
         return {"error": str(exc)[:200], "db": os.path.abspath(db_path)}
     stats["db"] = os.path.abspath(db_path)
     return stats
+
+
+# One runner for the process. Builds are serialised inside it: two at once
+# would fight over ffmpeg and the disk and finish slower than one after the
+# other.
+RUNNER = builds.Runner()
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -198,6 +298,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(libraries.catalogue(self.libraries_root, self.db_path))
             return
 
+        if route == "/api/script":
+            path = (query.get("path") or [""])[0].strip()
+            if not os.path.isfile(path):
+                self._json({"error": f"no such file: {path}"}, 404)
+                return
+            try:
+                self._json(script_facts(path))
+            except Exception as exc:
+                # A script that will not parse is the single most common way
+                # a build fails, and it fails here rather than forty minutes
+                # in. The message is the parser's own, which names the line.
+                self._json({"error": str(exc)[:300]}, 400)
+            return
+
+        if route == "/api/audio":
+            path = (query.get("path") or [""])[0].strip()
+            if not os.path.isfile(path):
+                self._json({"error": f"no such file: {path}"}, 404)
+                return
+            self._json(audio_facts(path))
+            return
+
+        if route == "/api/browse":
+            self._json(browse((query.get("path") or [""])[0],
+                              (query.get("kind") or ["folder"])[0]))
+            return
+
+        if route == "/api/task":
+            task = RUNNER.get((query.get("id") or [""])[0])
+            if not task:
+                self._json({"error": "no such task"}, 404)
+                return
+            self._json(task.as_dict())
+            return
+
+        if route == "/api/tasks":
+            self._json({"tasks": RUNNER.all()})
+            return
+
         if route == "/api/start":
             self._json({"db": os.path.abspath(self.db_path),
                         "out": self.out_path})
@@ -222,6 +361,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._serve_file(query)
             return
 
+        self._send(404, b"not found", "text/plain")
+
+    def do_POST(self) -> None:              # noqa: N802 (stdlib spelling)
+        route = urllib.parse.urlsplit(self.path).path
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            spec = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, OSError) as exc:
+            self._json({"error": f"unreadable request: {exc}"}, 400)
+            return
+        if not isinstance(spec, dict):
+            self._json({"error": "expected an object"}, 400)
+            return
+
+        if route == "/api/check":
+            self._json(builds.check(RUNNER, spec, self.db_path).as_dict())
+            return
+        if route == "/api/build":
+            self._json(builds.build(RUNNER, spec, self.db_path).as_dict())
+            return
         self._send(404, b"not found", "text/plain")
 
     def _serve_asset(self, name: str) -> None:

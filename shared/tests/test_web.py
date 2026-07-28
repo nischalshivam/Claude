@@ -205,6 +205,101 @@ class TestTheServer(_Built):
         self.assertIn("titles", data)
         self.assertIn("counts", data)
 
+    def _post(self, path, payload):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
+
+    def test_a_script_says_what_it_contains_the_moment_it_is_chosen(self):
+        """The one number that says the tool understood the file just
+        picked. Getting it after a forty-minute build is not the same
+        information."""
+        script = os.path.join(self.tmp, "s.json")
+        _write(script, [{"beat": 1, "narration": "x", "shots": [
+            {"source": "Breaking Bad", "season_episode": "S04E01",
+             "exact_dialogue": "a line"},
+            {"source": "Breaking Bad", "season_episode": "S03E13",
+             "exact_dialogue": "another"}]}])
+        code, data = self._get("/api/script?path=" + urllib.parse.quote(script))
+        self.assertEqual(code, 200)
+        data = json.loads(data)
+        self.assertEqual(data["beats"], 1)
+        self.assertEqual(data["shots"], 2)
+        # Not "(4, 1)" and not "4,1" — the way anyone would write it down.
+        self.assertEqual(data["episodes"], ["S03E13", "S04E01"])
+
+    def test_a_script_that_will_not_parse_says_so_here_not_forty_minutes_in(self):
+        bad = os.path.join(self.tmp, "bad.json")
+        with open(bad, "w") as f:
+            f.write("{ nope")
+        self.assertEqual(
+            self._status("/api/script?path=" + urllib.parse.quote(bad)), 400)
+        self.assertEqual(self._status("/api/script?path=/nowhere.json"), 404)
+
+    def test_the_picker_lists_folders_and_only_the_wanted_files(self):
+        """A picker for a script should not offer the video files beside it."""
+        os.makedirs(os.path.join(self.tmp, "Scripts"), exist_ok=True)
+        _write(os.path.join(self.tmp, "a.json"), [])
+        open(os.path.join(self.tmp, "b.mkv"), "wb").close()
+        code, body = self._get("/api/browse?kind=script&path="
+                               + urllib.parse.quote(self.tmp))
+        self.assertEqual(code, 200)
+        data = json.loads(body)
+        names = [f["name"] for f in data["files"]]
+        self.assertIn("a.json", names)
+        self.assertNotIn("b.mkv", names)
+        self.assertIn("Scripts", [f["name"] for f in data["folders"]])
+
+    def test_the_picker_offers_no_files_at_all_when_choosing_a_folder(self):
+        _write(os.path.join(self.tmp, "a.json"), [])
+        data = json.loads(self._get("/api/browse?kind=folder&path="
+                                    + urllib.parse.quote(self.tmp))[1])
+        self.assertEqual(data["files"], [])
+
+    def test_a_folder_that_is_gone_lands_somewhere_real(self):
+        # Someone's remembered folder gets deleted between sessions. The
+        # picker should open at its parent, not at a stack trace.
+        data = json.loads(self._get(
+            "/api/browse?path=" + urllib.parse.quote(
+                os.path.join(self.tmp, "not", "here")))[1])
+        self.assertTrue(os.path.isdir(data["path"]))
+
+    def test_a_check_is_a_task_you_can_ask_about(self):
+        script = os.path.join(self.tmp, "s.json")
+        _write(script, [{"beat": 1, "narration": "x", "shots": []}])
+        code, task = self._post("/api/check", {
+            "name": "t", "script": script, "out": self.tmp})
+        self.assertEqual(code, 200)
+        self.assertTrue(task["id"])
+        for _ in range(200):
+            code, now = self._get("/api/task?id=" + task["id"])
+            now = json.loads(now)
+            if now["status"] != "running":
+                break
+            time.sleep(0.1)
+        self.assertNotEqual(now["status"], "running", "the check never ended")
+        self.assertIn(now["report"].get("verdict"),
+                      ("READY", "GAPS", "BLOCKED"))
+
+    def test_an_unknown_task_is_named_rather_than_guessed_at(self):
+        self.assertEqual(self._status("/api/task?id=nope"), 404)
+
+    def test_rubbish_posted_at_it_is_an_answer_not_a_stack_trace(self):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/check", data=b"not json",
+            headers={"Content-Type": "application/json"})
+        try:
+            code = urllib.request.urlopen(req, timeout=5).status
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        self.assertEqual(code, 400)
+
     def test_a_missing_database_is_reported_rather_than_raised(self):
         code, body = self._get("/api/library")
         self.assertEqual(code, 200)

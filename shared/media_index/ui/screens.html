@@ -196,6 +196,229 @@
     </div>
     </sc-if>
 
+    <!-- ..................................................... New Video -->
+    <sc-if value="{{ onNewVideo }}">
+    <div style="padding:38px 40px 64px 40px;">
+
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:28px; padding-bottom:26px;">
+        <div>
+          <div style="font-size:30px; font-weight:700; letter-spacing:-0.035em; line-height:1.1;">New Video.</div>
+          <div style="font-size:14px; color:var(--muted); padding-top:8px;">Script aur voiceover do — baaki tool sambhal lega.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div onClick="{{ runCheck }}" style="{{ checkBtn }}" style-hover="background:var(--hover);">Check</div>
+          <div onClick="{{ buildExport }}" style="{{ exportBtn }}" style-hover="background:var(--hover); color:var(--text);">Build → Export</div>
+          <div onClick="{{ buildEditor }}" style="{{ buildBtn }}" style-hover="background:var(--accent-hover);">
+            Build → Editor
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6h7M6.6 3.1L9.5 6l-2.9 2.9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:flex-start; gap:20px;">
+        <div style="flex:1; min-width:0; max-width:760px; display:flex; flex-direction:column; gap:14px;">
+
+          <!-- Source ................................................... -->
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
+            <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em; padding-bottom:18px;">Source</div>
+            <div style="display:flex; flex-direction:column; gap:16px;">
+
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Title</div>
+                <div onClick="{{ toggleSrc }}" style="display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:10px 12px; cursor:pointer; user-select:none; transition:border-color .14s ease;" style-hover="border-color:var(--accent);">
+                  <div style="{{ pickedDot }}"></div>
+                  <div style="flex:1; font-size:13px; font-weight:550;">{{ pickedName }}</div>
+                  <div style="font-size:12.5px; color:var(--muted);">{{ pickedDetail }}</div>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:var(--faint);"><path d="M3 4.6L6 7.6l3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <sc-if value="{{ srcOpen }}">
+                  <div style="margin-top:6px; background:var(--surface); border:1px solid var(--border-strong); border-radius:11px; padding:5px; box-shadow:var(--shadow-md); animation:fadein .14s ease;">
+                    <sc-for list="{{ srcOptions }}" as="o">
+                      <div onClick="{{ o.pick }}" style="{{ o.rowStyle }}" style-hover="background:var(--hover);">
+                        <div style="{{ o.dotStyle }}"></div>
+                        <div style="{{ o.nameStyle }}">{{ o.name }}</div>
+                        <div style="font-size:12px; color:var(--muted);">{{ o.detail }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Script <span style="color:var(--faint); font-weight:400;">· .json</span></div>
+                <div style="display:flex; gap:7px;">
+                  <div style="flex:1; min-width:0; display:flex; align-items:center; gap:9px; background:var(--raised); border:1px solid var(--border); border-radius:9px; padding:9px 12px;">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--muted); flex:0 0 14px;"><path d="M4 2.5h5l3 3v8H4v-11z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path><path d="M9 2.5v3h3" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"></path></svg>
+                    <div style="{{ scriptNameStyle }}">{{ scriptName }}</div>
+                  </div>
+                  <div onClick="{{ pickScript }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Choose</div>
+                </div>
+                <sc-if value="{{ scriptOk }}">
+                  <div style="margin-top:8px; display:flex; align-items:center; flex-wrap:wrap; gap:8px; background:var(--accent-soft); border-radius:9px; padding:9px 12px;">
+                    <div style="font-size:12px; font-weight:650; color:var(--accent);">{{ script.beats }} scenes</div>
+                    <div style="width:1px; height:11px; background:var(--border-strong);"></div>
+                    <div style="font-size:12px; font-weight:650; color:var(--accent);">{{ script.shots }} shots</div>
+                    <div style="width:1px; height:11px; background:var(--border-strong);"></div>
+                    <div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--muted);">{{ scriptEpisodes }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ scriptError }}">
+                  <div style="margin-top:8px; background:var(--bad-soft); border:1px solid var(--bad-line); color:var(--bad); border-radius:9px; padding:10px 12px; font-size:12px; line-height:1.6;">{{ scriptError }}</div>
+                </sc-if>
+              </div>
+
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Voiceover <span style="color:var(--faint); font-weight:400;">· .m4a / .mp3 / .wav</span></div>
+                <div style="display:flex; gap:7px;">
+                  <div style="flex:1; min-width:0; display:flex; align-items:center; gap:9px; background:var(--raised); border:1px solid var(--border); border-radius:9px; padding:9px 12px;">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="color:var(--muted); flex:0 0 14px;"><path d="M8 2.5v11M5 5v6M11 5v6M2.5 7v2M13.5 7v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"></path></svg>
+                    <div style="{{ audioNameStyle }}">{{ audioName }}</div>
+                    <div style="font-size:12px; color:var(--muted); white-space:nowrap;">{{ audioLength }}</div>
+                  </div>
+                  <div onClick="{{ pickAudio }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Choose</div>
+                </div>
+              </div>
+
+              <div style="display:flex; gap:16px;">
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Video title</div>
+                  <input type="text" value="{{ videoTitle }}" data-keep="videoTitle" onInput="{{ setVideoTitle }}" placeholder="Why Walter White Broke Bad" style="width:100%; box-sizing:border-box; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:9px 12px; color:var(--text); font-size:13px; outline:none;" style-focus="border-color:var(--accent);">
+                </div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Output folder</div>
+                  <div style="display:flex; gap:7px;">
+                    <input type="text" value="{{ outFolder }}" data-keep="outFolder" onInput="{{ setOutFolder }}" placeholder="D:\OF17" style="flex:1; min-width:0; box-sizing:border-box; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:9px 12px; color:var(--text); font-size:13px; outline:none; font-family:'Cascadia Code', Consolas, monospace;" style-focus="border-color:var(--accent);">
+                    <div onClick="{{ pickOut }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Browse</div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Look ..................................................... -->
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
+            <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em; padding-bottom:18px;">Look</div>
+            <div style="display:flex; gap:10px;">
+              <sc-for list="{{ presets }}" as="p">
+                <div onClick="{{ p.pick }}" style="{{ p.style }}">
+                  <div style="display:flex; align-items:center; gap:7px;">
+                    <div style="font-size:13px; font-weight:620;">{{ p.name }}</div>
+                    <sc-if value="{{ p.recommended }}"><div style="font-size:9px; font-weight:650; letter-spacing:0.05em; color:var(--accent); background:var(--accent-soft); padding:2px 5px; border-radius:4px;">REC</div></sc-if>
+                  </div>
+                  <div style="font-size:11.5px; color:var(--muted); padding-top:5px; line-height:1.45;">{{ p.why }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex; gap:34px; padding-top:20px;">
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:7px;">Quality</div>
+                <div style="display:flex; padding:3px; background:var(--raised); border-radius:10px; gap:3px; width:230px;">
+                  <div onClick="{{ set1080 }}" style="{{ q1080 }}">1080p</div>
+                  <div onClick="{{ set4k }}" style="{{ q4k }}">4K (upscaled)</div>
+                </div>
+                <sc-if value="{{ is4k }}">
+                  <div style="padding-top:8px; font-size:11.5px; color:var(--warn);">source 1080p hai — file 4x badi hogi</div>
+                </sc-if>
+              </div>
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:7px;">Pace</div>
+                <div style="display:flex; padding:3px; background:var(--raised); border-radius:10px; gap:3px;">
+                  <sc-for list="{{ paces }}" as="p">
+                    <div onClick="{{ p.pick }}" style="{{ p.style }}">{{ p.name }}</div>
+                  </sc-for>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:7px;">Clip length</div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <input type="number" value="{{ clipSeconds }}" step="0.5" min="1.5" max="12" data-keep="clip" onInput="{{ setClip }}" style="width:82px; box-sizing:border-box; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:8px 11px; color:var(--text); font-size:13px; outline:none;" style-focus="border-color:var(--accent);">
+                  <div style="font-size:12px; color:var(--muted);">seconds</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="padding-top:18px; font-size:11.5px; color:var(--faint); line-height:1.6;">Transitions, filters aur animations abhi Auto pe hai — har still pe Ken Burns lagta hai, aur direction har shot pe alag. Unke 20-20 options baad me aayenge.</div>
+          </div>
+        </div>
+
+        <!-- Check / progress panel .................................... -->
+        <div style="width:400px; flex:0 0 400px;">
+          <sc-if value="{{ noPanel }}">
+            <div style="border:1px dashed var(--border-strong); border-radius:14px; padding:34px 24px; text-align:center;">
+              <div style="font-size:13px; font-weight:600;">Pehle Check chalao</div>
+              <div style="font-size:12.5px; color:var(--muted); padding-top:8px; line-height:1.6;">Build se pehle bata dega ki kitne shots milenge, aur kya kami hai. 10-30 second lagta hai.</div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ panelOpen }}">
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-md); overflow:hidden; animation:fadein .16s ease;">
+            <div style="padding:16px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px;">
+              <div style="{{ verdictStyle }}">{{ verdictLabel }}</div>
+              <div style="flex:1; font-size:12.5px; color:var(--muted);">{{ verdictWhy }}</div>
+              <div onClick="{{ closePanel }}" style="color:var(--faint); cursor:pointer; font-size:16px; line-height:1;" style-hover="color:var(--text);">×</div>
+            </div>
+
+            <sc-if value="{{ taskRunning }}">
+              <div style="padding:18px;">
+                <div style="height:5px; border-radius:99px; background:var(--border); overflow:hidden;">
+                  <div style="{{ barStyle }}"></div>
+                </div>
+                <div style="padding-top:11px; display:flex; justify-content:space-between; gap:12px; font-size:12px;">
+                  <div style="color:var(--text);">{{ taskStage }}</div>
+                  <div style="font-family:'Cascadia Code', Consolas, monospace; color:var(--faint); white-space:nowrap;">{{ taskElapsed }}</div>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ hasReport }}">
+              <div style="padding:16px 18px; display:flex; flex-direction:column; gap:9px;">
+                <sc-for list="{{ reportChecks }}" as="c">
+                  <div style="display:flex; align-items:flex-start; gap:9px;">
+                    <div style="{{ c.mark }}">{{ c.icon }}</div>
+                    <div style="flex:1; min-width:0;">
+                      <div style="font-size:12.5px; color:var(--text);">{{ c.name }}</div>
+                      <sc-if value="{{ c.detail }}"><div style="font-size:11.5px; color:var(--muted); padding-top:2px; line-height:1.5; word-break:break-word;">{{ c.detail }}</div></sc-if>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <sc-if value="{{ hasWeak }}">
+                <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--warn-soft); border:1px solid var(--warn-line); border-radius:10px;">
+                  <div style="font-size:12px; color:var(--warn); line-height:1.6;">In scenes me koi quoted line nahi — footage anumaan hoga:</div>
+                  <div style="padding-top:8px; display:flex; flex-wrap:wrap; gap:5px;">
+                    <sc-for list="{{ weakScenes }}" as="w">
+                      <div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--warn); background:var(--surface); border:1px solid var(--warn-line); padding:2px 7px; border-radius:5px;">{{ w }}</div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+            </sc-if>
+
+            <sc-if value="{{ taskFailed }}">
+              <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--bad-soft); border:1px solid var(--bad-line); border-radius:10px; font-size:12px; color:var(--bad); line-height:1.6; word-break:break-word;">{{ taskError }}</div>
+            </sc-if>
+
+            <sc-if value="{{ builtOk }}">
+              <div style="padding:0 18px 18px 18px; display:flex; gap:8px;">
+                <div onClick="{{ goEditor }}" style="flex:1; text-align:center; background:var(--accent); color:var(--on-accent); font-size:12.5px; font-weight:600; padding:10px; border-radius:9px; cursor:pointer;" style-hover="background:var(--accent-hover);">Move to editor</div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ hasLines }}">
+              <div style="border-top:1px solid var(--line); background:var(--raised); padding:12px 18px; max-height:190px; overflow:auto; font-family:'Cascadia Code', Consolas, monospace; font-size:10.5px; color:var(--faint); line-height:1.7;">
+                <sc-for list="{{ taskLines }}" as="l"><div style="white-space:pre-wrap; word-break:break-word;">{{ l }}</div></sc-for>
+              </div>
+            </sc-if>
+          </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+    </sc-if>
+
     <!-- ......................................................... not yet -->
     <sc-if value="{{ onStub }}">
       <div style="height:100%; display:flex; align-items:center; justify-content:center;">
@@ -211,4 +434,55 @@
     </sc-if>
 
   </div>
+
+  <!-- A browser cannot open a native file dialog from a page, so the tool
+       walks the disk itself. It only ever lists: nothing here opens, writes
+       or deletes anything. -->
+  <sc-if value="{{ pickerOpen }}">
+  <div onClick="{{ closePicker }}" style="position:fixed; inset:0; background:rgba(10,14,20,.45); display:flex; align-items:center; justify-content:center; z-index:50; animation:fadein .12s ease;">
+    <div onClick="{{ swallow }}" style="width:660px; max-width:92vw; max-height:78vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border-strong); border-radius:15px; box-shadow:var(--shadow-md); overflow:hidden;">
+      <div style="padding:16px 18px 13px 18px; border-bottom:1px solid var(--line);">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="flex:1; font-size:14px; font-weight:640;">{{ pickerTitle }}</div>
+          <div onClick="{{ closePicker }}" style="color:var(--faint); cursor:pointer; font-size:17px; line-height:1;" style-hover="color:var(--text);">×</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:7px; padding-top:11px;">
+          <div onClick="{{ pickerUpGo }}" style="{{ upBtn }}" style-hover="background:var(--hover);">↑ Up</div>
+          <div title="{{ pickerPath }}" style="flex:1; min-width:0; font-family:'Cascadia Code', Consolas, monospace; font-size:11.5px; color:var(--muted); background:var(--raised); border-radius:8px; padding:7px 10px; overflow:hidden; white-space:nowrap;">{{ pickerShown }}</div>
+        </div>
+        <sc-if value="{{ hasDrives }}">
+          <div style="display:flex; gap:5px; padding-top:9px;">
+            <sc-for list="{{ pickerDrives }}" as="d">
+              <div onClick="{{ d.go }}" style="font-family:'Cascadia Code', Consolas, monospace; font-size:11.5px; color:var(--muted); background:var(--raised); padding:5px 11px; border-radius:7px; cursor:pointer;" style-hover="background:var(--hover); color:var(--text);">{{ d.name }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="flex:1; min-height:180px; overflow:auto; padding:8px;">
+        <sc-if value="{{ pickerError }}">
+          <div style="padding:16px; font-size:12.5px; color:var(--bad);">{{ pickerError }}</div>
+        </sc-if>
+        <sc-for list="{{ pickerRows }}" as="r">
+          <div onClick="{{ r.go }}" style="display:flex; align-items:center; gap:10px; padding:8px 11px; border-radius:8px; cursor:pointer;" style-hover="background:var(--hover);">
+            <div style="{{ r.iconStyle }}">{{ r.icon }}</div>
+            <div style="flex:1; min-width:0; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.name }}</div>
+            <div style="font-size:11px; color:var(--faint); white-space:nowrap;">{{ r.meta }}</div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ pickerEmpty }}">
+          <div style="padding:26px; text-align:center; font-size:12.5px; color:var(--faint);">{{ pickerEmptyWhy }}</div>
+        </sc-if>
+      </div>
+
+      <div style="padding:13px 18px; border-top:1px solid var(--line); display:flex; align-items:center; gap:8px;">
+        <div style="flex:1; font-size:11.5px; color:var(--faint);">{{ pickerHint }}</div>
+        <div onClick="{{ closePicker }}" style="color:var(--muted); font-size:12.5px; font-weight:550; padding:8px 13px; border-radius:9px; cursor:pointer;" style-hover="background:var(--hover); color:var(--text);">Cancel</div>
+        <sc-if value="{{ pickingFolder }}">
+          <div onClick="{{ useThisFolder }}" style="background:var(--accent); color:var(--on-accent); font-size:12.5px; font-weight:600; padding:9px 15px; border-radius:9px; cursor:pointer;" style-hover="background:var(--accent-hover);">Ye folder chuno</div>
+        </sc-if>
+      </div>
+    </div>
+  </div>
+  </sc-if>
 </div>
