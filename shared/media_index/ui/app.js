@@ -26,10 +26,12 @@
     form: load("me.form", {
       title: "", script: "", audio: "", name: "", out: "",
       preset: "auto", quality: "1080", pace: "normal", clip: 4.0,
-      timings: "", cast: "",
+      timings: "", timingsFrom: "", cast: "", narration: "",
     }),
     cast: null,             // what the chosen cast folder holds
     castError: "",
+    narration: null,        // the clean narration script, if one was given
+    narrationError: "",
     script: null,           // what the chosen script says about itself
     scriptError: "",
     audio: null,
@@ -163,6 +165,7 @@
       title: f.title,
       timings: f.timings,
       cast: f.cast,
+      narration: f.narration,
     };
   }
 
@@ -363,7 +366,20 @@
     if (target === "script") readScript(path);
     else if (target === "audio") readAudio(path);
     else if (target === "cast") lookAtCast();
+    else if (target === "narration") readNarration();
     else draw();
+  }
+
+  function readNarration() {
+    var path = state.form.narration;
+    remember();
+    if (!path) { setState({ narration: null, narrationError: "" }); return; }
+    get("/api/narration?path=" + encodeURIComponent(path))
+      .then(function (data) { setState({ narration: data, narrationError: "" }); })
+      .catch(function (err) {
+        setState({ narration: null,
+                   narrationError: String(err.message || err) });
+      });
   }
 
   function lookAtCast() {
@@ -390,9 +406,22 @@
         // A name for the video, if there is not one already: the file's own
         // is a better first guess than an empty box.
         if (!state.form.name) {
-          state.form.name = baseName(path).replace(/\.json$/i, "");
-          remember();
+          state.form.name = baseName(path).replace(/\.(json|txt)$/i, "");
         }
+        // The script's own scene ranges, put in the box rather than applied
+        // behind the page. They are the model's guesses — on a real script
+        // one of them was ten minutes wide — so they belong somewhere a
+        // person can see them and fix the two that matter.
+        //
+        // Never over a line somebody typed. Replaced only when the box is
+        // empty, or still holds exactly what the LAST script filled in, so
+        // choosing a different script does not leave stale times behind.
+        var f = state.form;
+        if (data.timings && (!f.timings || f.timings === f.timingsFrom)) {
+          f.timings = data.timings;
+          f.timingsFrom = data.timings;
+        }
+        remember();
         setState({ script: data });
       })
       .catch(function (err) {
@@ -870,6 +899,7 @@
             : (state.script.titles || []).join(", ") || "koi episode named nahi")
         : "",
       scriptError: state.scriptError,
+      scriptNote: state.script ? (state.script.note || "") : "",
 
       audioPath: f.audio,
       setAudio: function (ev) { accept("audio", ev.target.value.trim()); },
@@ -902,6 +932,17 @@
         : [],
       castError: state.castError,
 
+      narrationPath: f.narration,
+      setNarration: function (ev) {
+        f.narration = ev.target.value.trim();
+        readNarration();
+      },
+      pickNarration: function () { choosePath("narration", "narration"); },
+      narrationFacts: state.narration
+        ? state.narration.words + " words — voiceover isi se time hoga"
+        : "",
+      narrationError: state.narrationError,
+
       videoTitle: f.name,
       setVideoTitle: function (ev) { f.name = ev.target.value; setQuiet({}); },
       outFolder: f.out,
@@ -932,7 +973,7 @@
         + (running ? " opacity:.5; pointer-events:none;" : ""),
       clearForm: function () {
         state.form = { title: "", script: "", audio: "", name: "", out: "",
-                       timings: "", cast: "",
+                       timings: "", timingsFrom: "", cast: "", narration: "",
                        preset: "auto", quality: "1080", pace: "normal",
                        clip: 4.0 };
         remember();

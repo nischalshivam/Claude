@@ -164,7 +164,7 @@ def job_from(spec: dict, db: str) -> jobs_mod.Job:
         extras={k: v for k, v in spec.items()
                 if k in ("pace", "quality", "captions", "preset", "after",
                          "transitions", "filters", "animation", "title",
-                         "timings", "cast")})
+                         "timings", "cast", "narration")})
 
 
 def timing_advice(rep, typed: str = "") -> list:
@@ -182,7 +182,16 @@ def timing_advice(rep, typed: str = "") -> list:
     out = []
     for shots, label, key in timings.unstated(beats, said):
         out.append({"label": label, "shots": shots,
-                    "example": f"{key} 29:30-33:40"})
+                    "example": f"{key} 29:30-33:40",
+                    "why": "koi timing nahi"})
+    # And the ones that DO have a time, given so wide that having it barely
+    # helps. Second in the list because a missing range is worse than a
+    # loose one — but both are one line to fix.
+    for _ratio, label, shots, room, wanted in timings.too_wide(beats, said):
+        out.append({"label": label, "shots": shots,
+                    "example": f"{label.split()[-1]} — abhi {room/60:.0f} min",
+                    "why": f"itni chaudi ki fayda kam — {wanted/60:.0f} min "
+                           "ki footage chahiye, range chhoti karo"})
     return out
 
 
@@ -356,8 +365,10 @@ def build(runner: Runner, spec: dict, db: str) -> Task:
                 total = probe.probe(job.audio).duration
             except probe.ProbeError as exc:
                 log(f"could not read the narration — {exc}")
-            heard = narration.align_audio(rep.beats, job.audio,
-                                          total_seconds=total, log=log)
+            heard = narration.align_audio(
+                rep.beats, job.audio, total_seconds=total,
+                clean=narration.read_clean(job.extras.get("narration") or ""),
+                log=log)
             log(heard.summary())
             if heard.ok:
                 spans = heard.spans

@@ -144,8 +144,20 @@ left for the tool to work with. A single range would have placed all 85.
 
   - **Approximate is fine, and expected.** The tool pads what you give it.
     Within a minute is plenty. Do not agonise.
-  - **Err WIDE, never narrow.** "28:00-35:00" for a four-minute scene costs
-    almost nothing. "31:00-31:30" for the same scene throws most of it away.
+  - **Size it to the SCENE, plus two minutes of slack.** A four-minute
+    sequence gets about a six-minute range. This matters, and a real script
+    got it wrong in a specific way: asked to "err wide", it returned
+    `29:30-40:00` — ten and a half minutes — for a four-minute scene, and
+    round numbers (`20:00-30:00`, `40:00-50:00`) for four others. A range
+    that wide is barely better than no range at all, because the shots then
+    spread across it.
+  - Narrow is still the worse mistake of the two: `31:00-31:30` for that
+    scene throws most of it away. Aim for scene length + 2 minutes and stop
+    thinking about it.
+  - **Round numbers are a warning sign.** If every range you have written
+    starts and ends on a multiple of five minutes, you are not recalling
+    anything — you are filling in boxes. Mark those `low`, or leave them
+    out.
   - **One range per run**, written on the run's FIRST shot. Repeating it on
     every shot of the run is harmless.
   - **Say how sure you are:**
@@ -372,7 +384,10 @@ in a library of films.
 
 ## Before you finish
 
-Append one final JSON object:
+Append one final JSON object. It is a SEPARATE JSON document, after the
+closing `]` of the array — not an extra element inside it, and not merged
+into it. The tool reads both, and reads any plain-English note you put after
+them too:
 
 {
   "summary": {
@@ -406,6 +421,11 @@ Fix and re-answer if any of these is true:
     so in one line after the JSON, naming the episode. Never fill it in to
     make this number go up. A made-up range is the most damaging thing you
     can put in this file.
+
+After the summary you may write one or two plain sentences — outside the
+JSON — about which `scene_range` values are guesses and should be checked in
+a player. That note is shown to the person before they build, and it is the
+most useful thing you can say to them.
 
 Now here is my script:
 ````

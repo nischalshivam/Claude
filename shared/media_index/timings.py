@@ -270,6 +270,47 @@ def windows_for(beats: list, stated: list, log=lambda *a: None) -> dict:
     return out
 
 
+# How much wider than the run's own screen time a stated window may be
+# before it is worth saying something. A run asking for seventy seconds of
+# footage inside a ten-minute window is not being placed by that window; it
+# is being spread across it.
+WIDE_FACTOR = 3.0
+
+
+def too_wide(beats: list, stated: list) -> list:
+    """Stated windows far wider than the run inside them, worst first.
+
+    Written after a real script came back with `S03E13 40:00-47:00` for a
+    six-shot run — seven minutes of episode for thirty seconds of video —
+    and `20:00-30:00`, `40:00-50:00`, `30:00-45:00` for three others. Round
+    numbers, every one of them, which is what a guess looks like written
+    down.
+
+    A range like that is not wrong, and the tool will use it. It is just
+    barely worth having, and the person can fix it in ten seconds if
+    somebody tells them which one to look at.
+    """
+    out = []
+    for said in stated or []:
+        lo, hi = said.window
+        room = hi - lo
+        for run in align.runs(beats or []):
+            if not _matches(run, said):
+                continue
+            wanted = 0.0
+            for entry in run.entries:
+                try:
+                    wanted += float((entry.data or {})
+                                    .get("duration_target_sec") or 4.0)
+                except (TypeError, ValueError, AttributeError):
+                    wanted += 4.0
+            if wanted > 0 and room > wanted * WIDE_FACTOR:
+                out.append((room / wanted, run.label, len(run.entries),
+                            room, wanted))
+    out.sort(reverse=True)
+    return out
+
+
 def unstated(beats: list, stated: list) -> list:
     """Runs nobody has stated a time for, worst first.
 

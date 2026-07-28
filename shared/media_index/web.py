@@ -139,6 +139,7 @@ def build_folder(out: str) -> dict:
 # dialog from a page, so the tool has to do the walking itself — and it
 # should only ever offer the kinds of file the field is actually for.
 PICK = {"script": (".json", ".txt"),
+        "narration": (".txt", ".md", ".json"),
         "audio": (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg"),
         "folder": ()}
 
@@ -158,9 +159,61 @@ def script_facts(path: str) -> dict:
     # ever called an episode.
     episodes = sorted({se for r in reqs for se in r.episodes_declared})
     labelled = [f"S{int(s):02d}E{int(e):02d}" for s, e in episodes]
+    summary, note = jobs_mod.script_extras(path)
     return {"path": os.path.abspath(path), "beats": len(beats),
             "shots": shots, "titles": [r.title for r in reqs],
-            "episodes": labelled[:24], "episodes_total": len(labelled)}
+            "episodes": labelled[:24], "episodes_total": len(labelled),
+            # The timings box, already filled in from what the script said.
+            # The script's ranges are the model's guesses and some of them
+            # are ten minutes wide — which is exactly why they belong in an
+            # editable box rather than being applied silently. Somebody can
+            # see them, fix the two that matter, and build.
+            "timings": timings_text(beats),
+            "summary": summary, "note": note[:600]}
+
+
+def timings_text(beats: list) -> str:
+    """The script's own `scene_range` fields, as lines for the timings box.
+
+    One line per run that declared one, longest run first — the run with
+    eighty-five shots in it is the one worth checking, and it should not be
+    third in the list because of the order the essay happens to visit
+    episodes in.
+    """
+    from . import align, subtitles, timings as timings_mod
+
+    seen, lines = set(), []
+    for said in timings_mod.from_script(beats):
+        if said.season is None or said.episode is None:
+            continue
+        key = f"S{said.season:02d}E{said.episode:02d}"
+        if key in seen:
+            continue
+        seen.add(key)
+        shots = sum(len(r.entries) for r in align.runs(beats)
+                    if subtitles.episode_key(r.season_episode or "")
+                    == (said.season, said.episode))
+        lo, hi = said.lo, said.hi
+        span = (f"{int(lo // 60)}:{int(lo % 60):02d}-"
+                f"{int(hi // 60)}:{int(hi % 60):02d}" if hi > lo
+                else f"{int(lo // 60)}:{int(lo % 60):02d}")
+        lines.append((shots, f"{key} {span}"))
+    lines.sort(key=lambda a: -a[0])
+    return "\n".join(line for _n, line in lines)
+
+
+def narration_facts(path: str) -> dict:
+    """How many words the narration script holds, and whether it is the one.
+
+    Both numbers matter and the second one more: a narration script for a
+    different video would sail through every other check and quietly retime
+    the whole build.
+    """
+    from . import narration
+
+    text = narration.read_clean(path)
+    words = narration.normalise(text)
+    return {"path": os.path.abspath(path), "words": len(words)}
 
 
 def audio_facts(path: str) -> dict:
@@ -458,6 +511,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # a build fails, and it fails here rather than forty minutes
                 # in. The message is the parser's own, which names the line.
                 self._json({"error": str(exc)[:300]}, 400)
+            return
+
+        if route == "/api/narration":
+            path = (query.get("path") or [""])[0].strip()
+            if not os.path.isfile(path):
+                self._json({"error": f"no such file: {path}"}, 404)
+                return
+            self._json(narration_facts(path))
             return
 
         if route == "/api/cast":

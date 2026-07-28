@@ -62,6 +62,8 @@ class Alignment:
     total_seconds: float = 0.0
     weak: list = field(default_factory=list)         # beats placed on a guess
     reason: str = ""                                 # why it did not work
+    used_clean: bool = False     # the narration script was given and matched
+    drifted: int = 0             # beats whose narration is not in that script
 
     @property
     def ok(self) -> bool:
@@ -81,7 +83,9 @@ class Alignment:
                 f"{self.anchors} unmistakable word(s) matched "
                 f"({self.rate:.0%}) {d} "
                 f"{len(self.spans) - len(self.weak)}/{len(self.spans)} beats "
-                "placed on the recording itself")
+                "placed on the recording itself"
+                + (f" {d} timed against your narration script"
+                   if self.used_clean else ""))
 
 
 def normalise(text: str) -> list:
@@ -100,6 +104,65 @@ def script_words(beats: list) -> tuple:
         words += normalise(beat.get("narration") or "")
         ends.append(len(words))
     return words, ends
+
+
+# How many of a beat's opening words have to line up before its position in
+# the narration script is believed. Long enough that a common phrase cannot
+# match by accident, short enough to survive the model dropping a comma.
+HEAD_WORDS = 6
+
+
+def _find_from(hay: list, needle: list, start: int):
+    """Where `needle` ends in `hay`, searching forward from `start`.
+
+    Matched on its opening words rather than the whole of it: the beat text
+    in a visual script is a copy of the narration, and a copy made by a
+    language model routinely loses a word or gains one. Demanding the whole
+    passage back verbatim would fail on exactly the scripts this is for.
+    """
+    key = needle[:HEAD_WORDS] or needle
+    for i in range(start, len(hay) - len(key) + 1):
+        if hay[i:i + len(key)] == key:
+            return min(len(hay), i + len(needle))
+    return None
+
+
+def beats_in_clean(beats: list, clean: list) -> tuple:
+    """(beat_end_index into the clean script, how many beats drifted).
+
+    The visual script's `narration` fields are a copy of the real narration,
+    and the tool times the video by matching those words against what it
+    hears. Every word the model quietly reworded is a word that cannot
+    match, and a beat whose text has drifted takes its scene boundary with
+    it.
+
+    Given the narration script that was actually read aloud, the beats can
+    be located inside THAT instead — the same text the voice is speaking, so
+    the anchors are the real ones and the boundaries are the real ones.
+
+    Returns (None, n) when the two disagree too much to be the same script,
+    which is a thing worth saying rather than working around.
+    """
+    ends, cursor, drift = [], 0, 0
+    for beat in beats:
+        want = normalise(beat.get("narration") or "")
+        if not want:
+            ends.append(cursor)
+            continue
+        at = _find_from(clean, want, cursor)
+        if at is None:
+            # Try from the top: an essay that doubles back, or a beat the
+            # model moved. Only accept it ahead of where we already are.
+            at = _find_from(clean, want, 0)
+            drift += 1
+            if at is None or at < cursor:
+                ends.append(cursor)
+                continue
+        cursor = at
+        ends.append(cursor)
+    if drift > max(2, len(beats) // 4):
+        return None, drift
+    return ends, drift
 
 
 # ---------------------------------------------------------------------------
@@ -277,12 +340,26 @@ def time_at(word_index: int, anchors: list, spoken: list,
     return max(0.0, min(total, at)), distance
 
 
-def align(beats: list, spoken: list, total_seconds: float = 0.0) -> Alignment:
-    """Turn a transcript into one (start, end) per beat."""
+def align(beats: list, spoken: list, total_seconds: float = 0.0,
+          clean: str = "") -> Alignment:
+    """Turn a transcript into one (start, end) per beat.
+
+    `clean` is the narration script that was read aloud, when there is one.
+    It is used in preference to the beat text for exactly one reason: it is
+    the words the voice is actually saying, so every anchor it produces is
+    real. The beat text is a copy of it, and copies drift.
+    """
     words, ends = script_words(beats)
+    used_clean, drifted = False, 0
+    clean_words = normalise(clean)
+    if clean_words:
+        mapped, drifted = beats_in_clean(beats, clean_words)
+        if mapped:
+            words, ends, used_clean = clean_words, mapped, True
     total = total_seconds or (spoken[-1].end if spoken else 0.0)
     result = Alignment(script_words=len(words), heard_words=len(spoken),
-                       total_seconds=total)
+                       total_seconds=total, used_clean=used_clean,
+                       drifted=drifted)
     if not words:
         result.reason = "the script has no narration text"
         return result
@@ -316,8 +393,20 @@ def align(beats: list, spoken: list, total_seconds: float = 0.0) -> Alignment:
     return result
 
 
+def read_clean(path: str) -> str:
+    """The narration script as text. Never raises — it is an optional input."""
+    if not path or not os.path.isfile(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
 def align_audio(beats: list, audio_path: str, model_name: str = DEFAULT_MODEL,
-                total_seconds: float = 0.0, log=lambda *a: None) -> Alignment:
+                total_seconds: float = 0.0, clean: str = "",
+                log=lambda *a: None) -> Alignment:
     """The whole thing: listen, match, report. Never raises."""
     t0 = time.time()
     try:
@@ -326,6 +415,12 @@ def align_audio(beats: list, audio_path: str, model_name: str = DEFAULT_MODEL,
         return Alignment(reason=str(exc))
     except Exception as exc:                    # a bad recording is not fatal
         return Alignment(reason=f"{type(exc).__name__}: {exc}")
-    out = align(beats, spoken, total_seconds=total_seconds)
+    out = align(beats, spoken, total_seconds=total_seconds, clean=clean)
+    if clean and not out.used_clean:
+        log("    the narration script does not match this visual script's "
+            "beats — timing from the beats instead")
+    elif out.used_clean and out.drifted:
+        log(f"    {out.drifted} beat(s) had been reworded away from your "
+            "narration script; found anyway")
     log(f"    listened in {time.time() - t0:.0f}s")
     return out

@@ -184,3 +184,46 @@ class TestAStatedShotTime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARangeGivenTooWide(unittest.TestCase):
+    """A real script came back with `S03E13 40:00-47:00` for a six-shot run —
+    seven minutes of episode for thirty seconds of video — and three more on
+    round five-minute boundaries. Not wrong, and barely worth having."""
+
+    def _beats(self, shots, seconds=5.0, se="S03E13", **extra):
+        return [{"beat": 1, "shots": [
+            dict({"source": "Breaking Bad", "season_episode": se,
+                  "visual": f"shot {i}", "duration_target_sec": seconds},
+                 **extra) for i in range(shots)]}]
+
+    def test_a_seven_minute_window_for_thirty_seconds_of_video_is_named(self):
+        beats = self._beats(6)
+        said = timings.parse_lines("S03E13 40:00-47:00")
+        got = timings.too_wide(beats, said)
+        self.assertEqual(len(got), 1)
+        _ratio, label, shots, room, wanted = got[0]
+        self.assertIn("S03E13", label)
+        self.assertEqual(shots, 6)
+        self.assertAlmostEqual(room, 420.0)
+        self.assertAlmostEqual(wanted, 30.0)
+
+    def test_a_range_that_fits_the_run_is_left_alone(self):
+        """S04E01: 88 shots, seven minutes of footage, a ten-minute window.
+        Loose, but it is placing the run rather than spreading it."""
+        beats = self._beats(88, se="S04E01")
+        said = timings.parse_lines("S04E01 29:30-40:00")
+        self.assertEqual(timings.too_wide(beats, said), [])
+
+    def test_the_worst_offender_comes_first(self):
+        beats = (self._beats(2, se="S04E12")
+                 + [{"beat": 2, "shots": [
+                     {"source": "Breaking Bad", "season_episode": "S04E13",
+                      "visual": f"x {i}", "duration_target_sec": 5}
+                     for i in range(14)]}])
+        said = timings.parse_lines("S04E12 30:00-45:00\nS04E13 20:00-30:00")
+        got = timings.too_wide(beats, said)
+        self.assertIn("S04E12", got[0][1])
+
+    def test_nothing_stated_means_nothing_to_complain_about(self):
+        self.assertEqual(timings.too_wide(self._beats(6), []), [])

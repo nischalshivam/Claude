@@ -201,20 +201,99 @@ def straighten(text: str) -> str:
     return text
 
 
+def _documents(raw: str) -> tuple:
+    """([every JSON value in the file], whatever prose followed them).
+
+    The visual-script prompt asks for the beats as an array, then says
+    "append one final JSON object" carrying the model's own summary, and
+    then invites a line of plain English about which ranges are guesses. A
+    model following all three instructions exactly produces a file that
+    `json.loads` refuses:
+
+        Extra data: line 2104 column 1 (char 80848)
+
+    That character is the opening brace of the summary block. The file was
+    correct, the instructions were correct, and the reader was the thing
+    that was wrong — a 139-shot script the model had got right in every
+    other respect could not be opened at all.
+
+    So: read JSON values until something stops being JSON, and keep the
+    remainder as text. The first document is what matters; everything after
+    it is the model talking, and the tool should listen rather than choke.
+    Only a file whose FIRST value will not parse is a broken file.
+    """
+    dec = json.JSONDecoder()
+    out, at, n = [], 0, len(raw)
+    while at < n:
+        while at < n and raw[at].isspace():
+            at += 1
+        if at >= n:
+            break
+        try:
+            value, at = dec.raw_decode(raw, at)
+        except json.JSONDecodeError:
+            if not out:
+                raise                       # nothing parsed: a real failure
+            return out, raw[at:].strip()
+        out.append(value)
+    return out, ""
+
+
+def _beats_in(documents: list) -> list:
+    """The beats, whichever of the documents is carrying them.
+
+    Never the summary: that object has no `beats` key, so a file written the
+    other way round — summary first — still finds the right one.
+    """
+    for doc in documents:
+        if isinstance(doc, list):
+            return doc
+    for doc in documents:
+        if isinstance(doc, dict) and doc.get("beats"):
+            return doc["beats"]
+    return []
+
+
+def script_extras(path: str) -> tuple:
+    """(the model's summary block, the note it wrote after the JSON).
+
+    Worth surfacing rather than discarding. The summary is the model marking
+    its own homework, and the marks are informative even when they are
+    wrong. The note is better still — on the real script it read:
+
+        "The S03E13 Gale-killing run and S04E08 cartel-pool flashback run
+         are low confidence; both are late in their episodes but I don't
+         know the exact minute. ... should be verified in a player before
+         building."
+
+    That is the model naming, unprompted, exactly which four numbers a
+    person should check before starting a forty-minute build. Throwing it
+    away to keep the parser tidy would be the worst trade in this file.
+    """
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            docs, note = _documents(f.read())
+    except (OSError, ValueError):
+        return {}, ""
+    for doc in docs:
+        if isinstance(doc, dict) and isinstance(doc.get("summary"), dict):
+            return doc["summary"], note
+    return {}, note
+
+
 def read_beats(path: str) -> list:
     with open(path, "r", encoding="utf-8-sig") as f:
         raw = f.read()
     try:
-        data = json.loads(raw)
+        return _beats_in(_documents(raw)[0])
     except json.JSONDecodeError as first:
         straight = straighten(raw)
         if straight == raw:
             raise
         try:
-            data = json.loads(straight)
+            return _beats_in(_documents(straight)[0])
         except json.JSONDecodeError:
             raise first from None            # the real fault is the first one
-    return data if isinstance(data, list) else (data.get("beats") or [])
 
 
 def preflight(job: Job, log=lambda *a: None) -> JobReport:

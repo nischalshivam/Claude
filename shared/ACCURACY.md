@@ -55,8 +55,20 @@ Kuch baatein:
 - **Check chalao.** Panel me niche list aayegi ki kis episode ki line abhi
   baaki hai, aur usme kitne shots hain. Sabse upar wale se shuru karo.
 
-Script me bhi likha ja sakta hai — kisi bhi shot par `"scene_range":
-"29:30-33:40"`. Box aur script dono ho to **box jeetta hai**.
+**Box apne aap bhar jaata hai.** Script me `scene_range` hai to script
+choose karte hi box me lines aa jaati hain, sabse bade run ki line sabse
+upar. Wo model ke *anumaan* hain — isliye box me dikhte hain, chupke se lag
+nahi jaate. Do-teen jo galat lagen, unhe apne player me dekh ke theek kar
+do.
+
+Check panel ab do cheezein bataata hai:
+- kis episode ki line **hai hi nahi**
+- kis episode ki line **itni chaudi hai ki fayda kam hai** — jaise 6 shots
+  ke liye 7 minute ka range. Ise scene ke barabar + 2 minute kar do.
+
+Box aur script dono ho to **box jeetta hai**. Naya script chunoge to box
+apne aap naye script wali lines se badal jaayega — bas tab nahi jab tumne
+khud kuch type kiya ho.
 
 Ek shot ka exact time bhi de sakte ho — `"at": "31:07"` — lekin ye tabhi
 karo jab tumne player me us frame tak scrub kiya ho. Ye anchor ban jaata
@@ -122,6 +134,25 @@ Koi cast folder na do to sab kuch pehle jaisa chalta hai.
 
 ---
 
+## 3.5 Clean narration script
+
+New Video page par ab **Clean narration script** ka field hai — wahi .txt jo
+tumne voiceover banane ke liye diya tha.
+
+Isse fayda ye hai: tool har scene ka time nikaalne ke liye visual script ke
+`narration` text ko voiceover se match karta hai. Par wo text model ne copy
+kiya hota hai, aur copy karte waqt shabd badalte hain. Jitne shabd badle,
+utni scene boundary khiskati hai.
+
+Asli narration script de doge to har beat **usi text me** dhoonda jaayega jo
+awaaz bol rahi hai. Agar file match nahi karti (galti se dusri video ki de
+di), tool bata dega aur purane tareeke se hi time karega — chupke se kuch
+galat nahi karega.
+
+Optional hai, par de dena — 10 second ka kaam hai.
+
+---
+
 ## 4. Script me quoted lines
 
 Purana rule, ab bhi sach: **har run me kam se kam 2 lines quote honi
@@ -149,6 +180,19 @@ de do.
   Ab agar run ka stretch pata ho, shots **script ke order me** bichhte hain.
 - **Stated timings** — sab kuch ke upar.
 - **Characters** — reference photos se frame chunav.
+
+## Agar script open hi na ho
+
+`Extra data: line 2104 column 1` — ye ab nahi aayega. Wo file kharab nahi
+thi: prompt hi model se bolta hai ki array ke baad ek summary object aur ek
+note likhe, matlab file me teen cheezein hoti hain. Reader ab teeno padhta
+hai, aur note ko New Video page par dikha bhi deta hai — usme model khud
+bata deta hai kaunse ranges uska anumaan hain.
+
+Jo file sach me kharab hai (JSON tuta hua), wo ab bhi error degi, usi line
+number ke saath.
+
+---
 
 ## Ek line me
 
