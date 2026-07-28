@@ -26,7 +26,10 @@
     form: load("me.form", {
       title: "", script: "", audio: "", name: "", out: "",
       preset: "auto", quality: "1080", pace: "normal", clip: 4.0,
+      timings: "", cast: "",
     }),
+    cast: null,             // what the chosen cast folder holds
+    castError: "",
     script: null,           // what the chosen script says about itself
     scriptError: "",
     audio: null,
@@ -61,7 +64,7 @@
   // yesterday's script, voiceover and folder sitting in the boxes looks
   // exactly like a form somebody filled in — and the first thing anyone
   // does with a filled-in form is press the button.
-  var FORM_VERSION = "3";
+  var FORM_VERSION = "4";
 
   function load(key, fallback) {
     try {
@@ -158,6 +161,8 @@
       quality: f.quality,
       preset: f.preset,
       title: f.title,
+      timings: f.timings,
+      cast: f.cast,
     };
   }
 
@@ -357,7 +362,19 @@
     remember();
     if (target === "script") readScript(path);
     else if (target === "audio") readAudio(path);
+    else if (target === "cast") lookAtCast();
     else draw();
+  }
+
+  function lookAtCast() {
+    var path = state.form.cast;
+    remember();
+    if (!path) { setState({ cast: null, castError: "" }); return; }
+    get("/api/cast?path=" + encodeURIComponent(path))
+      .then(function (data) { setState({ cast: data, castError: "" }); })
+      .catch(function (err) {
+        setState({ cast: null, castError: String(err.message || err) });
+      });
   }
 
   function choose(path) {
@@ -862,6 +879,29 @@
         : "",
       pickAudio: function () { choosePath("audio", "audio"); },
 
+      timingsText: f.timings,
+      setTimings: function (ev) { f.timings = ev.target.value; setQuiet({}); },
+      // Counted here rather than asked of the server: the box is read as it
+      // is typed, and a round trip per keystroke to be told "3 lines" is a
+      // round trip nobody needed.
+      timingsCount: (function () {
+        var n = (f.timings || "").split("\n").filter(function (line) {
+          return /\d+\s*[:x]\s*\d+/i.test(line) && /\d+\s*:\s*\d+/.test(line);
+        }).length;
+        return n ? n + " episode ki timing di hai" : "";
+      })(),
+
+      castPath: f.cast,
+      setCast: function (ev) { f.cast = ev.target.value.trim(); lookAtCast(); },
+      pickCast: function () { choosePath("folder", "cast"); },
+      castSummary: !!(state.cast && (state.cast.people || []).length),
+      castPeople: state.cast
+        ? (state.cast.people || []).map(function (p) {
+            return p.name + " · " + p.images;
+          })
+        : [],
+      castError: state.castError,
+
       videoTitle: f.name,
       setVideoTitle: function (ev) { f.name = ev.target.value; setQuiet({}); },
       outFolder: f.out,
@@ -892,6 +932,7 @@
         + (running ? " opacity:.5; pointer-events:none;" : ""),
       clearForm: function () {
         state.form = { title: "", script: "", audio: "", name: "", out: "",
+                       timings: "", cast: "",
                        preset: "auto", quality: "1080", pace: "normal",
                        clip: 4.0 };
         remember();
@@ -926,6 +967,8 @@
                  icon: c.ok ? "✓" : (c.fatal ? "✗" : "!"),
                  mark: "flex:0 0 16px; text-align:center; font-size:12px; font-weight:700; color:var(--" + tint + ");" };
       }),
+      hasNeedsTiming: !!report && (report.needs_timing || []).length > 0,
+      needsTiming: report ? (report.needs_timing || []) : [],
       hasWeak: !!report && (report.weak_scenes || []).length > 0,
       weakScenes: report ? report.weak_scenes : [],
       builtOk: !!t && t.kind === "build" && t.status === "done",

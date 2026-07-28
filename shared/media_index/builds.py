@@ -163,10 +163,30 @@ def job_from(spec: dict, db: str) -> jobs_mod.Job:
         stills_per_scene=int(spec.get("stills") or 2),
         extras={k: v for k, v in spec.items()
                 if k in ("pace", "quality", "captions", "preset", "after",
-                         "transitions", "filters", "animation", "title")})
+                         "transitions", "filters", "animation", "title",
+                         "timings", "cast")})
 
 
-def report_dict(rep) -> dict:
+def timing_advice(rep, typed: str = "") -> list:
+    """Which runs still need a time typed into the box, worst first.
+
+    The single most useful thing a pre-flight can say. "40% of shots are
+    guesses" tells someone their video will be bad; "type a time for these
+    four episodes and it will not be" tells them what to do about it, in the
+    two minutes before they start a build rather than the two hours after.
+    """
+    from . import timings
+
+    beats = getattr(rep, "beats", None) or []
+    said = timings.from_script(beats) + timings.parse_lines(typed or "")
+    out = []
+    for shots, label, key in timings.unstated(beats, said):
+        out.append({"label": label, "shots": shots,
+                    "example": f"{key} 29:30-33:40"})
+    return out
+
+
+def report_dict(rep, typed: str = "") -> dict:
     """A pre-flight as the Check panel draws it.
 
     The order is the order it is read in: the verdict, then what was
@@ -186,6 +206,8 @@ def report_dict(rep) -> dict:
                     "fatal": c.fatal} for c in rep.checks],
         "weak_scenes": sorted({r.beat for r in weak if getattr(r, "beat", None)}),
         "episodes": sorted({r.title for r in rep.requirements}),
+        # Last, because it is the one line worth acting on.
+        "needs_timing": timing_advice(rep, typed),
     }
 
 
@@ -281,7 +303,7 @@ def check(runner: Runner, spec: dict, db: str) -> Task:
     def work(task, log):
         log(f"checking {job.name!r}")
         rep = jobs_mod.preflight(job, log=log)
-        task.report = report_dict(rep)
+        task.report = report_dict(rep, spec.get("timings") or "")
         task.out = job.out
         task.status = "blocked" if rep.status == "BLOCKED" else "done"
         task.stage = f"{rep.status} · {task.report['percent']}% shots placeable"
@@ -306,7 +328,7 @@ def build(runner: Runner, spec: dict, db: str) -> Task:
         task.out = job.out
         log(f"pre-flight for {job.name!r}")
         rep = jobs_mod.preflight(job, log=log)
-        task.report = report_dict(rep)
+        task.report = report_dict(rep, spec.get("timings") or "")
         if rep.status == "BLOCKED":
             task.status = "blocked"
             task.stage = "blocked — " + "; ".join(

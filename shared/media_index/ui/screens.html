@@ -319,6 +319,42 @@
             </div>
           </div>
 
+          <!-- Scene timings ............................................ -->
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
+            <div style="display:flex; align-items:center; gap:9px; padding-bottom:6px;">
+              <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em;">Scene timings</div>
+              <div style="font-size:9px; font-weight:700; letter-spacing:0.06em; color:var(--accent); background:var(--accent-soft); padding:2px 6px; border-radius:4px;">SABSE ZAROORI</div>
+            </div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.65; padding-bottom:12px;">Har episode ka scene kahan hai — ek line per episode. Ye tool ke har guess se upar hai. Jis episode ki line yahan hai, uske shots sirf usi stretch se aayenge, script ke order me.</div>
+            <textarea data-keep="timings" onInput="{{ setTimings }}" placeholder="S04E01 29:30-33:40&#10;S03E13 30:05-30:35&#10;S04E08 43:40-46:30" style="width:100%; box-sizing:border-box; min-height:104px; resize:vertical; background:var(--raised); border:1px solid var(--border-strong); border-radius:10px; padding:11px 13px; color:var(--text); font-size:12.5px; line-height:1.7; outline:none; font-family:'Cascadia Code', Consolas, monospace;" style-focus="border-color:var(--accent);">{{ timingsText }}</textarea>
+            <div style="padding-top:9px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <sc-if value="{{ timingsCount }}">
+                <div style="font-size:11.5px; font-weight:600; color:var(--ok);">{{ timingsCount }}</div>
+              </sc-if>
+              <div style="font-size:11.5px; color:var(--faint); line-height:1.6;">Range likho ya sirf ek time — dono chalte hain. Check chalao to niche bata dega kis episode ki line abhi baaki hai.</div>
+            </div>
+          </div>
+
+          <!-- Characters ............................................... -->
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
+            <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em; padding-bottom:6px;">Characters</div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.65; padding-bottom:12px;">Har character ki 3-10 reference photos ek folder me — <span style="font-family:'Cascadia Code', Consolas, monospace; color:var(--text);">cast\Gus\1.jpg</span>, <span style="font-family:'Cascadia Code', Consolas, monospace; color:var(--text);">cast\Walter\1.jpg</span>. Script me shot ke <span style="font-family:'Cascadia Code', Consolas, monospace; color:var(--text);">characters</span> field ka naam isi folder se milta hai, aur us shot ke liye sirf wahi frames chune jaate hain jinme wo dikhta hai.</div>
+            <div style="display:flex; gap:7px;">
+              <input type="text" value="{{ castPath }}" data-keep="cast" onChange="{{ setCast }}" placeholder="D:\Library\cast — optional" style="{{ pathInput }}" style-focus="border-color:var(--accent);">
+              <div onClick="{{ pickCast }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Browse</div>
+            </div>
+            <sc-if value="{{ castSummary }}">
+              <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:5px;">
+                <sc-for list="{{ castPeople }}" as="p">
+                  <div style="font-size:11px; font-weight:600; color:var(--accent); background:var(--accent-soft); padding:3px 8px; border-radius:6px;">{{ p }}</div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{ castError }}">
+              <div style="margin-top:8px; font-size:11.5px; color:var(--warn); line-height:1.6;">{{ castError }}</div>
+            </sc-if>
+          </div>
+
           <!-- Look ..................................................... -->
           <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
             <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em; padding-bottom:18px;">Look</div>
@@ -407,6 +443,21 @@
                   </div>
                 </sc-for>
               </div>
+
+              <sc-if value="{{ hasNeedsTiming }}">
+                <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--accent-soft); border:1px solid var(--accent); border-radius:10px;">
+                  <div style="font-size:12px; color:var(--accent); font-weight:600; line-height:1.6;">Ye line Scene timings me daal do — iske baad in shots ka guess khatam:</div>
+                  <div style="padding-top:9px; display:flex; flex-direction:column; gap:5px;">
+                    <sc-for list="{{ needsTiming }}" as="t">
+                      <div style="display:flex; align-items:center; gap:9px;">
+                        <div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--text); background:var(--surface); border:1px solid var(--border-strong); padding:3px 8px; border-radius:5px; white-space:nowrap;">{{ t.example }}</div>
+                        <div style="font-size:11px; color:var(--muted);">{{ t.shots }} shots</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="padding-top:9px; font-size:11px; color:var(--muted); line-height:1.6;">Time apne player me scene chala ke dekh lo — jo dikhe wahi likh do.</div>
+                </div>
+              </sc-if>
 
               <sc-if value="{{ hasWeak }}">
                 <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--warn-soft); border:1px solid var(--warn-line); border-radius:10px;">

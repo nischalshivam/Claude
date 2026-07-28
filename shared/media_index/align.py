@@ -164,6 +164,31 @@ def runs(beats: list) -> list[Run]:
 # 2. anchors — the handful of lines that really do match
 # ---------------------------------------------------------------------------
 
+def stated_anchors(db_path: str, run: Run, con=None) -> list[tuple]:
+    """Anchors from times somebody typed, in the same shape as matched ones.
+
+    A stated time is the only evidence in this package that was never
+    inferred, so it enters as the strongest kind of anchor there is and the
+    subtitle search is not run for that shot at all. Nothing downstream needs
+    to know the difference: interpolation, ordering and the picture check all
+    work on anchors, and these are anchors.
+    """
+    from . import timings                                  # noqa: PLC0415
+    want = [(i, timings.shot_time(e.data or {}))
+            for i, e in enumerate(run.entries)]
+    want = [(i, at) for i, at in want if at is not None]
+    if not want:
+        return []
+    home = episode_file(db_path, run, con=con)
+    if not home:
+        return []
+    out = []
+    for i, at in want:
+        hold = max(0.5, run.entries[i].target_seconds)
+        out.append((i, int(at * 1000), int((at + hold) * 1000), home, "high"))
+    return out
+
+
 def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
     """[(index_in_run, start_ms, end_ms, path, confidence)] sorted by time.
 
@@ -178,9 +203,10 @@ def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
     key = subtitles.episode_key(run.season_episode or "")
     season, episode = key if key else (None, None)
 
-    found = []
+    found = stated_anchors(db_path, run, con=con)
+    spoken_for = {a[0] for a in found}
     for i, e in enumerate(run.entries):
-        if not e.query or e.is_hook:
+        if i in spoken_for or not e.query or e.is_hook:
             continue
         hits = find(db_path, e.query, show=run.source or None,
                     season=season, episode=episode, limit=1, con=con)

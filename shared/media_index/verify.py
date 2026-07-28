@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from . import align, embed, visual
+from . import align, cast, embed, visual
 
 # How much the alignment prior is worth, in the same units as visual lift.
 # Deliberately small. A shot 90 seconds from where alignment expected it pays
@@ -790,7 +790,8 @@ WINDOW_PAD = 0.35
 
 
 def locate_run(index: visual.VisualIndex, captions: list, backend,
-               wanted_seconds: float = 0.0) -> tuple:
+               wanted_seconds: float = 0.0,
+               faces: np.ndarray | None = None) -> tuple:
     """Which stretch of this episode the whole run happens in.
 
     Asking each shot on its own is what a search does, and on a wordless
@@ -815,6 +816,13 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
     sims = np.stack([index.similarities(v) for v in vecs])   # shots x frames
     if not np.any(sims):
         return (0.0, 0.0, 0.0)
+
+    # Who is on screen, added to what the descriptions say. This is the
+    # cheapest large win available: twenty captions from one scene agree
+    # weakly about where it is, and "the two people the scene is about are
+    # both in these four minutes" agrees strongly.
+    if faces is not None and len(faces) == sims.shape[1]:
+        sims = sims + faces[None, :] * cast.CAST_WEIGHT * float(np.std(sims))
 
     times = np.asarray(index.times, dtype=np.float64)
     length = float(times[-1] - times[0]) or 1.0
@@ -859,7 +867,8 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
             strength)
 
 
-def locate_runs(db_path: str, beats: list, log=lambda *a: None) -> dict:
+def locate_runs(db_path: str, beats: list, people: dict | None = None,
+                log=lambda *a: None) -> dict:
     """{beat number: (lo, hi)} — where each run happens in its episode."""
     if embed.loaded() is None:
         ok, _why = embed.available()
@@ -894,7 +903,8 @@ def locate_runs(db_path: str, beats: list, log=lambda *a: None) -> dict:
                     wanted += 4.0
             if len(captions) < 2:
                 continue                 # two agreements are the minimum
-            lo, hi, strength = locate_run(index, captions, backend, wanted)
+            lo, hi, strength = locate_run(index, captions, backend, wanted,
+                                          faces=_faces_for(index, run, people))
             if hi <= lo:
                 log(f"      {run.label}: the picture has no opinion about "
                     "where this run happens")
@@ -909,9 +919,25 @@ def locate_runs(db_path: str, beats: list, log=lambda *a: None) -> dict:
     return found
 
 
+def _faces_for(index, run, people: dict | None):
+    """A per-frame bonus for everybody this run names, or None."""
+    if not people or index is None or not len(index):
+        return None
+    wanted, seen = [], set()
+    for entry in run.entries:
+        for person in cast.named_in(entry.data or {}, people):
+            if person.key not in seen:
+                wanted.append(person)
+                seen.add(person.key)
+    if not wanted:
+        return None
+    return cast.frames_with(index, wanted)
+
+
 def place_by_picture(db_path: str, beats: list, placements: list,
                      episodes: dict | None = None,
                      windows: dict | None = None,
+                     people: dict | None = None,
                      log=lambda *a: None) -> int:
     """Find a home for every shot that dialogue could not place.
 
@@ -993,9 +1019,18 @@ def place_by_picture(db_path: str, beats: list, placements: list,
             # across the four minutes the scene actually occupies, it is
             # competing with the scene.
             span = (windows or {}).get(p.beat)
-            match = (visual.best_in(index, vec, lo=span[0], hi=span[1])
+            # ...and only among the frames the people this shot names are
+            # actually in, where the script says who they are. A sentence
+            # about Gus and Walter landing on Skyler and Walt Jr. is the
+            # complaint this answers, and no description can answer it: the
+            # kitchen looks like the kitchen either way.
+            here = cast.named_in(shot, people) if people else []
+            bonus = (cast.frames_with(index, here) * cast.CAST_WEIGHT
+                     if here else None)
+            match = (visual.best_in(index, vec, lo=span[0], hi=span[1],
+                                    bonus=bonus)
                      if span and span[1] > span[0]
-                     else visual.best_in(index, vec))
+                     else visual.best_in(index, vec, bonus=bonus))
             if match.lift < floors[path]:
                 continue
             hold = max(1, p.end_ms - p.start_ms)
@@ -1082,7 +1117,12 @@ def pace_runs(db_path: str, beats: list, placements: list,
         # standing clear of the episode's noise. That is a real measurement
         # and it outranks the middle of a window: hang the sequence off it
         # rather than off a guess, as long as the run still fits the window.
-        firm = [(i, p) for i, p in enumerate(mine) if p.ok and p.path == path]
+        # ...but only a shot that was found INSIDE the window. One that
+        # landed outside it disagrees with the window, and when the window
+        # came from a person who typed it, the window is the one that was
+        # not inferred from anything.
+        firm = [(i, p) for i, p in enumerate(mine)
+                if p.ok and p.path == path and lo <= p.start_ms / 1000.0 <= hi]
         if firm:
             i, p = firm[len(firm) // 2]
             start = (p.start_ms / 1000.0) - (ax[i] - ax[0]) * squeeze

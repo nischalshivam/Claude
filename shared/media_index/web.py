@@ -37,8 +37,8 @@ import threading
 import urllib.parse
 import webbrowser
 
-from . import builds, editor, jobs as jobs_mod, libraries, library, \
-    sources, term
+from . import builds, cast, editor, jobs as jobs_mod, libraries, \
+    library, sources, term
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "web_ui.html")
@@ -458,6 +458,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # a build fails, and it fails here rather than forty minutes
                 # in. The message is the parser's own, which names the line.
                 self._json({"error": str(exc)[:300]}, 400)
+            return
+
+        if route == "/api/cast":
+            # Counting folders and files only — no model, no encoding. A
+            # misspelt character folder should surface the moment it is
+            # chosen, not forty minutes into a build.
+            path = (query.get("path") or [""])[0].strip()
+            try:
+                self._json({"people": cast.look(path)})
+            except cast.CastError as exc:
+                self._json({"error": str(exc)}, 400)
             return
 
         if route == "/api/audio":

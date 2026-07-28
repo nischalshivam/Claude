@@ -15,6 +15,8 @@ script run against a real 62-episode library — not because it sounded sensible
 | planned 47% of the video's length | a duration budget |
 | "real-world press photo" searched for as if it were a film | `type` decides where an image comes from |
 | 274 of 287 assets placed by inference from 13 that were checked | `visual` is now searched against the picture — Rule 0 |
+| a run of **85 shots with no quoted line**, where only 2 of 84 descriptions beat what a caption about *nothing* scores in the same episode, and the picture had "no opinion" about where the run happens | `scene_range` — Rule 1B |
+| a sentence about Gus and Walter playing over Walt's wife and son | `characters` is now matched against reference photographs — Rule 6 |
 
 ---
 
@@ -38,9 +40,12 @@ The two check each other. A quoted line says WHEN. A visual description says
 WHAT, and it is the only thing that can catch a quote that matched the wrong
 moment.
 
-You have NO access to any video. Never output a URL, a video ID, or a
-timestamp — you would have to invent them, and the tool would cut the wrong
-footage with nothing to reveal the mistake.
+You have NO access to any video. Never output a URL or a video ID.
+
+Timestamps are the one exception, and they have their own rule — see Rule
+1B. Read it before you write one. The short version: an APPROXIMATE RANGE
+for a whole scene is wanted and useful; an exact per-shot timestamp is not,
+because you would be inventing it.
 
 ## RULE 0 — `visual` is a caption, not a note to yourself
 
@@ -118,6 +123,52 @@ Spread them. A line at shot 1 and nothing after gives that run one fixed
 point. One near the start, one near the middle and one near the end gives it
 a shape that cannot drift.
 
+## RULE 1B — `scene_range`: where in the episode the scene is
+
+**This is now the single most valuable field in the file, ahead of the
+quoted lines.** Give it for every run.
+
+    "scene_range": "29:30-33:40"
+
+It means: everything this run draws from that episode happens between those
+two times. The tool then takes the run's shots, in your order, and lays them
+across that stretch — so the scene plays through instead of being searched
+for shot by shot.
+
+Why it beats everything else you can write: on a real build, a 85-shot run
+from a scene where nobody speaks had no quoted line to anchor to, and the
+picture model placed **2 of 84** shots better than chance. There was nothing
+left for the tool to work with. A single range would have placed all 85.
+
+### How to write it
+
+  - **Approximate is fine, and expected.** The tool pads what you give it.
+    Within a minute is plenty. Do not agonise.
+  - **Err WIDE, never narrow.** "28:00-35:00" for a four-minute scene costs
+    almost nothing. "31:00-31:30" for the same scene throws most of it away.
+  - **One range per run**, written on the run's FIRST shot. Repeating it on
+    every shot of the run is harmless.
+  - **Say how sure you are:**
+
+        "range_confidence": "high" | "medium" | "low"
+
+    `high` = a famous scene you know the position of. `low` = a guess from
+    the shape of the episode. Write `low` freely; it is still useful, and it
+    tells the person whether to check it.
+  - **If you genuinely do not know, OMIT THE FIELD.** An empty field is
+    honest and the tool has other ways to try. A number you made up is a
+    confident wrong answer, and it will move an entire run to the wrong
+    place with nothing to reveal the mistake. This is the one field where
+    inventing is worse than leaving blank.
+
+### What NOT to do
+
+  - **Never put a timestamp on an individual shot** (`at`, `timestamp`).
+    The tool accepts that field, and it is for a HUMAN who has scrubbed to
+    the exact frame in their player. You have not. Shot-level precision is
+    beyond anything you can know.
+  - Never state a range for an episode you are not drawing shots from.
+
 ## RULE 2 — a hook quote is not part of the scene
 
 Essays open by quoting the ending. That is good writing, and it breaks the
@@ -154,6 +205,27 @@ the narration argues about his motive" — the search cannot see a narration
 argument. Write "a calm man in glasses and a yellow shirt, close on his face,
 saying nothing". A held face under an argument is what a real editor cuts,
 and it is always available.
+
+## RULE 6 — `characters` is now matched against photographs
+
+`characters` used to be decoration. It is now read: the person can supply a
+folder of reference stills per character, and a shot naming them is placed
+only among frames those people are actually in.
+
+That makes it the fix for a specific, common and very visible failure — a
+sentence about Gus and Walter playing over Walter's wife and son, because
+the tool had no notion of who anybody was.
+
+So:
+
+  - **name every character visible in the shot**, using the name the show
+    uses. First name alone is fine and preferred: `"Gus"`, `"Walter"`,
+    `"Jesse"`, `"Mike"`, `"Hector"`.
+  - name only who is ON SCREEN in that shot, not who the sentence is about.
+    A shot of Walt listening while Gus speaks names Walt.
+  - leave it empty for a shot with no people in it — an object, a room, a
+    landscape. An empty list is read as "no opinion", never as "nobody".
+  - it does NOT replace `visual`. Rule 0 still applies in full.
 
 ## RULE 5 — the duration budget
 
@@ -197,6 +269,8 @@ repeating near-identical entries.
         "source": "Breaking Bad",
         "season_episode": "S04E01",
         "se_confidence": "high",
+        "scene_range": "29:30-33:40",
+        "range_confidence": "medium",
 
         "exact_dialogue": "Well? Get back to work.",
         "speaker": "Gus Fring",
@@ -252,6 +326,18 @@ a film of that name, reported it missing, and the beats came out empty. A
 shot from the film and a shot of the world are different searches, and the
 only thing that tells them apart is this field.
 
+**scene_range** — "MM:SS-MM:SS" into the episode, on the first shot of every
+run. See Rule 1B. Approximate and wide beats precise and narrow; omitted
+beats invented.
+
+**range_confidence** — "high", "medium" or "low". How sure you are of
+`scene_range`. Write "low" freely — it is still worth having, and it tells
+the person which ranges to check in their own player before building.
+
+**characters** — everyone visible IN THAT SHOT, by the name the show uses.
+See Rule 6. Matched against reference photographs, so a first name is enough
+and an empty list is read as "no opinion".
+
 **count** — stills only. How many distinct frames to take from that moment.
 
 **exact_dialogue** — spoken during this shot, word for word, or empty.
@@ -302,6 +388,9 @@ Append one final JSON object:
     "runs_without_any_verbatim_line": 0,
     "runs_with_only_one_verbatim_line": 0,
     "shots_with_a_visible_caption": 0,
+    "shots_with_characters_named": 0,
+    "runs_total": 0,
+    "runs_with_a_scene_range": 0,
     "shots_total": 0
   }
 }
@@ -312,6 +401,11 @@ Fix and re-answer if any of these is true:
   - runs_without_any_verbatim_line above 0
   - runs_with_only_one_verbatim_line above 0
   - shots_with_a_visible_caption below shots_total
+  - runs_with_a_scene_range below runs_total, UNLESS you genuinely do not
+    know where that scene falls — in which case leave the field out and say
+    so in one line after the JSON, naming the episode. Never fill it in to
+    make this number go up. A made-up range is the most damaging thing you
+    can put in this file.
 
 Now here is my script:
 ````

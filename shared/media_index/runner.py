@@ -32,7 +32,8 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import align, cutter, frames, jobs as jobs_mod, probe, term, verify
+from . import (align, cast, cutter, frames, jobs as jobs_mod, probe, term,
+               timings, verify)
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -574,6 +575,19 @@ def write_manifest(job, result: JobResult) -> str:
 # How far past the shots a run DID place its filler may sit. A run whose
 # anchors cover ninety seconds is describing a sequence, not a whole episode.
 RUN_SPAN_PAD_S = 120.0
+# ...but never tighter than the run itself needs. A span is a hint about
+# WHERE, and it must not become a statement about how much room there is.
+# One placed shot out of eighty-five collapsed a whole run to four minutes,
+# filler could not fit inside it, and eighteen scenes of a real build came
+# out empty — which the renderer covered by holding their neighbours across
+# them. Every second of screen time the run asks for gets at least this much
+# episode to find it in.
+RUN_SPAN_PER_SHOT_S = 8.0
+
+
+def _run_needs(run) -> float:
+    """The least amount of episode a run's shots can be spread across."""
+    return max(RUN_SPAN_PAD_S * 2.0, len(run.entries) * RUN_SPAN_PER_SHOT_S)
 
 
 def _spans_by_beat(beats: list, placements: list) -> dict:
@@ -601,6 +615,10 @@ def _spans_by_beat(beats: list, placements: list) -> dict:
             continue
         lo = min(a for a, _b in real) - RUN_SPAN_PAD_S
         hi = max(b for _a, b in real) + RUN_SPAN_PAD_S
+        short = _run_needs(run) - (hi - lo)
+        if short > 0:
+            lo -= short / 2.0
+            hi += short / 2.0
         for entry in run.entries:
             out[entry.beat] = (max(0.0, lo), hi)
     return out
@@ -677,9 +695,21 @@ def run_job(job, report, log=print) -> JobResult:
         # from one scene agreeing a little is worth far more than one of
         # them being confident, and on a scene nobody speaks in it is the
         # only signal there is.
-        windows = verify.locate_runs(job.db, report.beats, log=log)
+        # Who the script says is on screen, from the reference photographs.
+        # Empty unless somebody supplied a cast folder, and everything below
+        # behaves exactly as it did before when it is.
+        people = cast.load(job.extras.get("cast") or "", log=log)
+        windows = verify.locate_runs(job.db, report.beats, people=people,
+                                     log=log)
+        # And a time somebody stated overrules all of it. The model gets an
+        # opinion only where nobody has told it the answer.
+        said = (timings.from_script(report.beats)
+                + timings.parse_lines(job.extras.get("timings") or ""))
+        stated = timings.windows_for(report.beats, said, log=log)
+        windows.update(stated)
         verify.place_by_picture(job.db, report.beats, placements,
-                                episodes=owns, windows=windows, log=log)
+                                episodes=owns, windows=windows,
+                                people=people, log=log)
         # And whatever is still homeless after that is not homeless at all: it
         # is a shot with a known position in a known sequence inside a known
         # stretch of the episode. Laying those out in order is the difference
@@ -692,7 +722,12 @@ def run_job(job, report, log=print) -> JobResult:
         # out after place_by_picture so it sees everything that got placed.
         found = _spans_by_beat(report.beats, placements)
         for beat_no, span in found.items():
-            windows[beat_no] = span
+            # ...except where somebody stated the time. That is not an
+            # opinion to be improved on, and widening it to whatever the
+            # run's own shots happen to cover would quietly undo the one
+            # instruction the tool was actually given.
+            if beat_no not in stated:
+                windows[beat_no] = span
         if found:
             log(f"    {len(set(found.values()))} run(s) bounded by their own "
                 "placed shots; filler stays inside those")

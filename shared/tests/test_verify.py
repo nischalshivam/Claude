@@ -1712,3 +1712,14 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         beats, places = self._beats(), self._loose(path="")
         self.assertEqual(
             verify.pace_runs("db", beats, places, {1: (600.0, 900.0)}), 0)
+
+    def test_a_shot_found_outside_the_window_does_not_drag_the_run_out(self):
+        """A stated window was typed by a person; a picture match was
+        inferred. When the two disagree, the one that was not inferred from
+        anything wins."""
+        beats, places = self._beats(), self._loose()
+        places[0].method = "picture"
+        places[0].start_ms, places[0].end_ms = 60_000, 66_000
+        verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        laid = [p.start_ms / 1000.0 for p in places if p.method == "paced"]
+        self.assertTrue(all(1800.0 <= at <= 2100.0 for at in laid))

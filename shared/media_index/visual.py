@@ -223,14 +223,33 @@ def lift_of(sims: np.ndarray, value: float) -> float:
     return min(LIFT_CEILING, excess / spread)
 
 
+def lifts_of(sims: np.ndarray) -> np.ndarray:
+    """`lift_of` for every frame at once, and agreeing with it frame by frame."""
+    if sims.size < 8:
+        return np.zeros_like(sims)
+    med = float(np.median(sims))
+    spread = float(np.percentile(sims, 95)) - med
+    if spread <= 1e-6:
+        # Same reading as `lift_of`: every frame alike says nothing, and the
+        # one frame that is not alike says everything.
+        return np.where(sims - med > 1e-6, LIFT_CEILING, 0.0).astype(sims.dtype)
+    return np.clip((sims - med) / spread, -LIFT_CEILING, LIFT_CEILING)
+
+
 def best_in(index: VisualIndex, text_vec: np.ndarray,
-            lo: float | None = None, hi: float | None = None) -> Match:
+            lo: float | None = None, hi: float | None = None,
+            bonus: np.ndarray | None = None) -> Match:
     """The frame that best answers this description, optionally in a range.
 
     The lift is always measured against the WHOLE episode even when the
     search was limited to a window, and that is the important part: a window
     of twenty frames has no distribution worth comparing against, so a
     window-local score would call the least bad of twenty frames a match.
+
+    `bonus` is a per-frame number in lift units — what somebody knows that
+    the description does not say, at the moment this is written that means
+    which characters are in the frame. It is added, not multiplied, so a
+    frame with nobody recognisable in it is left exactly where it was.
     """
     if not len(index):
         return Match(note="nothing indexed for this video")
@@ -248,11 +267,13 @@ def best_in(index: VisualIndex, text_vec: np.ndarray,
         if not pool.size:
             return Match(scope=scope, note="no indexed frame in that window")
 
-    local = sims[pool]
-    winner = int(pool[int(np.argmax(local))])
+    scored = lifts_of(sims)
+    if bonus is not None and len(bonus) == len(sims):
+        scored = scored + np.asarray(bonus, dtype=np.float32)
+    winner = int(pool[int(np.argmax(scored[pool]))])
     return Match(time=float(index.times[winner]),
                  similarity=float(sims[winner]),
-                 lift=lift_of(sims, sims[winner]),
+                 lift=float(scored[winner]),
                  searched=int(pool.size), scope=scope)
 
 
