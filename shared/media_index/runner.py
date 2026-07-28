@@ -279,11 +279,22 @@ def _filler_moment(used: dict | None, path: str, duration: float,
                 if lo <= at <= hi and not _repeated(used, path, at,
                                                     apart=FILLER_APART_S):
                     return at
-    for i in range(96):
-        frac = ((k + i) * 0.618033988749895) % 1.0
-        at = lo + frac * (hi - lo)
-        if not _repeated(used, path, at, apart=FILLER_APART_S):
-            return at
+    # Twenty seconds apart was chosen for spreading filler across a whole
+    # episode, where two shots that close really are the same moment. Inside
+    # a four-minute scene it is the wrong number entirely: eighty-five shots
+    # cannot fit, the walk finds nothing, and thirty beats of a real build
+    # came out EMPTY — which the renderer then covered by holding their
+    # neighbours for 323 seconds.
+    #
+    # So the distance gives way, not the window. Within one scene, shots
+    # three seconds apart are three different shots; an empty beat is never
+    # better than a close one.
+    for apart in (FILLER_APART_S, 10.0, 5.0, REPEAT_APART_S):
+        for i in range(96):
+            frac = ((k + i) * 0.618033988749895) % 1.0
+            at = lo + frac * (hi - lo)
+            if not _repeated(used, path, at, apart=apart):
+                return at
     return None
 
 
