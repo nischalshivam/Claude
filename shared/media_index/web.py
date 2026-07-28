@@ -37,7 +37,8 @@ import threading
 import urllib.parse
 import webbrowser
 
-from . import builds, jobs as jobs_mod, libraries, library, sources, term
+from . import builds, editor, jobs as jobs_mod, libraries, library, \
+    sources, term
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PAGE = os.path.join(HERE, "web_ui.html")
@@ -171,6 +172,69 @@ def audio_facts(path: str) -> dict:
     return {"path": os.path.abspath(path), "seconds": round(info.duration, 1)}
 
 
+# The real Windows "Open file" box, asked for by name.
+#
+# A browser cannot open one: `<input type=file>` hands back a name and never
+# a path, which is exactly the thing this tool needs. But the server IS the
+# machine, so it can open the dialog itself and answer with the full path.
+#
+# In a subprocess on purpose. tkinter wants to own a thread's event loop and
+# does not take kindly to being started inside a web server's worker; a
+# separate short-lived process cannot destabilise anything, and if tkinter
+# is missing altogether the process simply exits and the page falls back to
+# the folder list it already has.
+_DIALOG = r'''
+import sys
+try:
+    import tkinter
+    from tkinter import filedialog
+except Exception:
+    sys.exit(3)
+kind, start = sys.argv[1], (sys.argv[2] or None)
+root = tkinter.Tk()
+root.withdraw()
+try:
+    root.attributes("-topmost", True)   # in front of the browser, not behind
+except Exception:
+    pass
+if kind == "folder":
+    got = filedialog.askdirectory(title="Folder chuno", initialdir=start,
+                                  mustexist=False)
+elif kind == "audio":
+    got = filedialog.askopenfilename(
+        title="Voiceover chuno", initialdir=start,
+        filetypes=[("Audio", "*.m4a *.mp3 *.wav *.aac *.flac *.ogg"),
+                   ("All files", "*.*")])
+else:
+    got = filedialog.askopenfilename(
+        title="Script chuno", initialdir=start,
+        filetypes=[("Visual script", "*.json"), ("All files", "*.*")])
+sys.stdout.write(got or "")
+'''
+DIALOG_TIMEOUT_S = 600          # someone may go and look for the file
+
+
+def native_pick(kind: str, start: str = "") -> dict:
+    """Open the machine's own file dialog. Returns what was chosen."""
+    import subprocess
+    import sys
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _DIALOG, kind, start or ""],
+            capture_output=True, timeout=DIALOG_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"available": False, "path": "", "why": str(exc)[:200]}
+    if done.returncode == 3:
+        return {"available": False, "path": "",
+                "why": "tkinter is not installed with this Python"}
+    if done.returncode != 0:
+        return {"available": False, "path": "",
+                "why": (done.stderr or b"")[-200:].decode("utf-8", "replace")}
+    chosen = done.stdout.decode("utf-8", "replace").strip()
+    return {"available": True, "path": os.path.abspath(chosen) if chosen else "",
+            "cancelled": not chosen}
+
+
 def browse(path: str, kind: str = "folder") -> dict:
     """One folder's worth of somewhere to go next.
 
@@ -192,15 +256,22 @@ def browse(path: str, kind: str = "folder") -> dict:
     wanted = PICK.get(kind, ())
     folders, files = [], []
     try:
-        for name in sorted(os.listdir(here), key=str.lower):
-            full = os.path.join(here, name)
+        # scandir, and every question about an entry wrapped: a Windows
+        # user folder is full of junctions, OneDrive placeholders and
+        # things the account cannot read, and one of them must not cost
+        # the whole listing.
+        for entry in sorted(os.scandir(here), key=lambda e: e.name.lower()):
             try:
-                if os.path.isdir(full):
-                    if not name.startswith("."):
-                        folders.append({"name": name, "path": full})
-                elif wanted and os.path.splitext(name)[1].lower() in wanted:
-                    files.append({"name": name, "path": full,
-                                  "size": os.path.getsize(full)})
+                if entry.is_dir():
+                    if not entry.name.startswith("."):
+                        folders.append({"name": entry.name, "path": entry.path})
+                elif wanted and os.path.splitext(entry.name)[1].lower() in wanted:
+                    try:
+                        size = entry.stat().st_size
+                    except OSError:
+                        size = 0
+                    files.append({"name": entry.name, "path": entry.path,
+                                  "size": size})
             except OSError:
                 continue                    # a permission wall is not an error
     except OSError as exc:
@@ -237,6 +308,24 @@ def library_facts(db_path: str) -> dict:
     return stats
 
 
+def _render_work(out: str, audio: str):
+    """Make the video from a folder that has already been edited."""
+    def work(task, log):
+        from . import render
+        task.out = out
+        task.stage = "rendering"
+        res = render.render_folder(out, audio=audio, log=log)
+        log(render.describe(res))
+        if not res.ok:
+            task.status = "failed"
+            task.error = "; ".join(f"{w}: {why}" for w, why in res.failed[:3]) \
+                or "the render produced no file"
+            return
+        task.video = res.path
+        task.stage = f"done — {os.path.basename(res.path)}"
+    return work
+
+
 # One runner for the process. Builds are serialised inside it: two at once
 # would fight over ffmpeg and the disk and finish slower than one after the
 # other.
@@ -267,6 +356,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
     def do_GET(self) -> None:               # noqa: N802 (stdlib spelling)
+        self._guard(self._get)
+
+    def do_POST(self) -> None:              # noqa: N802 (stdlib spelling)
+        self._guard(self._post)
+
+    def _guard(self, work) -> None:
+        """Answer every request, even the ones that go wrong.
+
+        An exception escaping a handler drops the connection, and a dropped
+        connection reaches the page as "Failed to fetch" — a message that
+        names nothing and looks like the tool being down. A 500 carrying the
+        actual error is the difference between a bug you can read and a bug
+        you have to guess at.
+        """
+        try:
+            work()
+        except (BrokenPipeError, ConnectionResetError):
+            pass                            # the tab was closed mid-answer
+        except Exception as exc:
+            try:
+                self._json({"error": f"{type(exc).__name__}: {exc}"[:400]}, 500)
+            except Exception:
+                pass                        # nothing left to answer down
+
+    def _get(self) -> None:
         parts = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parts.query)
         route = parts.path
@@ -325,6 +439,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                               (query.get("kind") or ["folder"])[0]))
             return
 
+        if route == "/api/pick":
+            self._json(native_pick((query.get("kind") or ["folder"])[0],
+                                   (query.get("path") or [""])[0]))
+            return
+
+        if route == "/api/summary":
+            out = (query.get("out") or [""])[0].strip()
+            if not os.path.isdir(out):
+                self._json({"error": f"no such folder: {out}"}, 404)
+                return
+            self._json(editor.summary(out))
+            return
+
         if route == "/api/task":
             task = RUNNER.get((query.get("id") or [""])[0])
             if not task:
@@ -363,7 +490,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         self._send(404, b"not found", "text/plain")
 
-    def do_POST(self) -> None:              # noqa: N802 (stdlib spelling)
+    def _post(self) -> None:
         route = urllib.parse.urlsplit(self.path).path
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -381,7 +508,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route == "/api/build":
             self._json(builds.build(RUNNER, spec, self.db_path).as_dict())
             return
+        if route in ("/api/alternatives", "/api/replace", "/api/edit",
+                     "/api/render"):
+            self._edit(route, spec)
+            return
         self._send(404, b"not found", "text/plain")
+
+    def _edit(self, route: str, spec: dict) -> None:
+        """One shot changed, or the video made. Editing is deliberately
+        synchronous except for the render: swapping a frame is seconds, and a
+        task id for something that fast is ceremony nobody benefits from."""
+        out = (spec.get("out") or "").strip()
+        if not os.path.isdir(out):
+            self._json({"error": f"no such folder: {out}"}, 404)
+            return
+        db = spec.get("db") or self.db_path
+        scene = int(spec.get("scene") or 0)
+        name = spec.get("file") or ""
+        try:
+            if route == "/api/alternatives":
+                self._json(editor.alternatives(out, db, scene, name,
+                                               spec.get("query") or ""))
+            elif route == "/api/replace":
+                self._json(editor.replace(out, db, scene, name,
+                                          float(spec.get("at") or 0.0)))
+            elif route == "/api/edit":
+                if spec.get("remove"):
+                    self._json(editor.remove(out, scene, name))
+                else:
+                    self._json(editor.set_duration(
+                        out, scene, name, float(spec.get("duration") or 0.0)))
+            else:
+                self._json(RUNNER.start(
+                    "render", os.path.basename(out),
+                    _render_work(out, spec.get("audio") or "")).as_dict())
+        except editor.EditError as exc:
+            # An edit that cannot be done is an answer, not a fault: the
+            # episode is not indexed, or the scene has one shot left.
+            self._json({"error": str(exc)}, 400)
 
     def _serve_asset(self, name: str) -> None:
         """The app's own files, by name from a fixed list.
@@ -425,12 +589,63 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         kind = TYPES.get(os.path.splitext(target)[1].lower(),
                          "application/octet-stream")
         try:
-            with open(target, "rb") as f:
-                body = f.read()
+            self._send_range(target, kind)
         except OSError as exc:
             self._send(500, str(exc).encode(), "text/plain")
-            return
-        self._send(200, body, kind)
+
+    def _send_range(self, target: str, kind: str) -> None:
+        """Serve a file, honouring Range — which video is not optional about.
+
+        A browser will not play a `<video>` from a server that answers the
+        whole file to a range request: Chromium reports MEDIA_ERR_SRC_NOT_
+        SUPPORTED and shows a grey rectangle, which looks exactly like a
+        broken clip rather than a missing feature. Every thumbnail in the
+        editor and the finished video itself go through here.
+        """
+        size = os.path.getsize(target)
+        asked = (self.headers.get("Range") or "").strip()
+        start, end = 0, size - 1
+        partial = False
+        if asked.lower().startswith("bytes=") and size:
+            first, _, last = asked[6:].partition("-")
+            try:
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                else:                       # "bytes=-500": the last 500 bytes
+                    start = max(0, size - int(last))
+                partial = True
+            except ValueError:
+                partial = False             # unreadable range: send it all
+            if partial and (start >= size or start > end):
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            end = min(end, size - 1)
+
+        length = end - start + 1
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            with open(target, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(256 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass                            # scrubbed away mid-download
 
 
 class Server(socketserver.ThreadingTCPServer):

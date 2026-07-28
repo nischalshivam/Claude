@@ -256,6 +256,49 @@ def best_in(index: VisualIndex, text_vec: np.ndarray,
                  searched=int(pool.size), scope=scope)
 
 
+def top_in(index: VisualIndex, text_vec: np.ndarray, n: int = 10,
+           apart: float = 8.0, lo: float | None = None,
+           hi: float | None = None) -> list:
+    """The n best frames for one description — but n DIFFERENT ones.
+
+    `best_in` answers "where is this?", which is what a build needs. A person
+    looking at a wrong shot needs something else: a choice. Taking the ten
+    highest scores would hand them ten frames of the same two seconds, which
+    is one choice wearing ten hats.
+
+    So each pick suppresses everything within `apart` seconds of it. Ten
+    genuinely different moments beat ten samples of the best one, even when
+    some of them score lower — the score is a guess and the eye is not.
+    """
+    if not len(index):
+        return []
+    sims = index.similarities(text_vec)
+    if not np.any(sims):
+        return []
+    if lo is None and hi is None:
+        pool = np.arange(len(index))
+        scope = "episode"
+    else:
+        pool = index.window(lo if lo is not None else -1e9,
+                            hi if hi is not None else 1e9)
+        scope = "window"
+    if not pool.size:
+        return []
+
+    order = pool[np.argsort(-sims[pool])]
+    picked: list = []
+    for i in order:
+        when = float(index.times[int(i)])
+        if any(abs(when - m.time) < apart for m in picked):
+            continue
+        picked.append(Match(time=when, similarity=float(sims[int(i)]),
+                            lift=lift_of(sims, sims[int(i)]),
+                            searched=int(pool.size), scope=scope))
+        if len(picked) >= n:
+            break
+    return picked
+
+
 # ---------------------------------------------------------------------------
 # storage
 # ---------------------------------------------------------------------------

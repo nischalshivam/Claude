@@ -300,6 +300,47 @@ class TestTheServer(_Built):
             code = exc.code
         self.assertEqual(code, 400)
 
+    def test_a_video_can_be_asked_for_in_pieces(self):
+        """A browser will not play a <video> from a server that answers the
+        whole file to a range request — Chromium reports the source as
+        unsupported and shows a grey rectangle, which looks exactly like a
+        broken clip rather than a missing feature."""
+        clip = os.path.join(self.tmp, "scene_001", "clip.mp4")
+        with open(clip, "wb") as f:
+            f.write(bytes(range(256)) * 8)          # 2048 bytes
+        url = ("/file?out=" + urllib.parse.quote(self.tmp)
+               + "&rel=" + urllib.parse.quote("scene_001/clip.mp4"))
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{url}",
+                                     headers={"Range": "bytes=10-19"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            self.assertEqual(r.status, 206)
+            self.assertEqual(r.headers["Content-Range"], "bytes 10-19/2048")
+            self.assertEqual(r.read(), bytes(range(10, 20)))
+
+    def test_the_whole_file_still_comes_back_when_no_range_is_asked_for(self):
+        clip = os.path.join(self.tmp, "scene_001", "clip.mp4")
+        with open(clip, "wb") as f:
+            f.write(b"abcdef")
+        code, body = self._get("/file?out=" + urllib.parse.quote(self.tmp)
+                               + "&rel=" + urllib.parse.quote("scene_001/clip.mp4"))
+        self.assertEqual(code, 200)
+        self.assertEqual(body, b"abcdef")
+
+    def test_a_range_past_the_end_is_refused_rather_than_guessed_at(self):
+        clip = os.path.join(self.tmp, "scene_001", "clip.mp4")
+        with open(clip, "wb") as f:
+            f.write(b"abcdef")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/file?out="
+            + urllib.parse.quote(self.tmp) + "&rel="
+            + urllib.parse.quote("scene_001/clip.mp4"),
+            headers={"Range": "bytes=900-999"})
+        try:
+            code = urllib.request.urlopen(req, timeout=5).status
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        self.assertEqual(code, 416)
+
     def test_a_missing_database_is_reported_rather_than_raised(self):
         code, body = self._get("/api/library")
         self.assertEqual(code, 200)

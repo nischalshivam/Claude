@@ -35,6 +35,15 @@
     panelDismissed: false,
 
     picker: null,           // {kind, target, path, data}
+
+    // --- Editor ------------------------------------------------------
+    edFolder: localStorage.getItem("me.edFolder") || "",
+    edBuild: null,          // what /api/build says about that folder
+    edError: "",
+    edNote: "",             // the last thing an edit said, good or bad
+    edNoteBad: false,
+    sel: null,              // {scene, file}
+    find: null,             // {busy, query, error, data}
   };
 
   var screens = "";
@@ -277,6 +286,26 @@
 
   /* ------------------------------------------------------------ the picker */
 
+  /* Ask the machine to open its own file dialog. Falling back to the page's
+   * own folder list only when it cannot — a Python without tkinter, or a
+   * dialog that failed to appear. What must never happen is a Choose button
+   * that does nothing. */
+  function choosePath(kind, target) {
+    var at = state.form[target] || localStorage.getItem("me.browsedAt") || "";
+    setState({ picking: target });
+    get("/api/pick?kind=" + encodeURIComponent(kind)
+        + "&path=" + encodeURIComponent(at))
+      .then(function (got) {
+        setState({ picking: "" });
+        if (!got.available) { openPicker(kind, target); return; }
+        if (got.path) accept(target, got.path);
+      })
+      .catch(function () {
+        setState({ picking: "" });
+        openPicker(kind, target);
+      });
+  }
+
   function openPicker(kind, target) {
     // Where this field already points, then wherever the picker was last
     // left. Somebody choosing a script and then an output folder is almost
@@ -285,14 +314,6 @@
     var at = state.form[target] || localStorage.getItem("me.browsedAt") || "";
     setState({ picker: { kind: kind, target: target, path: at, data: null } });
     walk(at);
-  }
-
-  // The tail of a long path, which is the end that says where you are. An
-  // ellipsis on the left is the honest way to shorten it; CSS `direction:rtl`
-  // looks right until a path starting with a slash renders as "root/".
-  function tail(path, keep) {
-    var text = String(path || "");
-    return text.length <= keep ? text : "…" + text.slice(-(keep - 1));
   }
 
   function walk(path) {
@@ -314,13 +335,18 @@
       });
   }
 
-  function choose(path) {
-    var target = state.picker.target;
+  function accept(target, path) {
     state.form[target] = path;
-    setState({ picker: null });
     remember();
     if (target === "script") readScript(path);
-    if (target === "audio") readAudio(path);
+    else if (target === "audio") readAudio(path);
+    else draw();
+  }
+
+  function choose(path) {
+    var target = state.picker.target;
+    setState({ picker: null });
+    accept(target, path);
   }
 
   function readScript(path) {
@@ -344,19 +370,22 @@
     setState({ audio: null });
     get("/api/audio?path=" + encodeURIComponent(path))
       .then(function (data) { setState({ audio: data }); })
-      .catch(function () { setState({ audio: null }); });
+      .catch(function (err) {
+        setState({ audio: { error: String(err.message || err) } });
+      });
   }
 
   function pickerScope() {
     var p = state.picker;
     if (!p) {
       return { pickerOpen: false, pickerRows: [], pickerDrives: [],
-               pickerPath: "", pickerShown: "", pickerTitle: "",
+               pickerPath: "", pickerTitle: "",
                pickerError: "",
                pickerEmpty: false, pickerEmptyWhy: "", pickerHint: "",
                pickingFolder: false, hasDrives: false,
                closePicker: function () {}, swallow: function () {},
-               pickerUpGo: function () {}, useThisFolder: function () {} };
+               pickerUpGo: function () {}, useThisFolder: function () {},
+               goToTyped: function () {} };
     }
     var d = p.data || { folders: [], files: [], drives: [] };
     var rows = [];
@@ -379,7 +408,6 @@
       pickerTitle: { script: "Script chuno", audio: "Voiceover chuno",
                      folder: "Folder chuno" }[p.kind] || "Chuno",
       pickerPath: p.path || "",
-      pickerShown: tail(p.path || "", 62),
       pickerRows: rows,
       pickerDrives: (d.drives || []).map(function (dr) {
         return { name: dr.name, go: function () { walk(dr.path); } };
@@ -395,9 +423,232 @@
       pickingFolder: folderMode,
       upBtn: "font-size:12px; font-weight:550; color:var(--muted); background:var(--raised); padding:7px 12px; border-radius:8px; cursor:pointer; white-space:nowrap;",
       pickerUpGo: function () { if (d.up) walk(d.up); },
+      goToTyped: function (ev) { walk(ev.target.value.trim()); },
       useThisFolder: function () { choose(p.path); },
       closePicker: function () { setState({ picker: null }); },
       swallow: function (ev) { ev.stopPropagation(); },
+    };
+  }
+
+  /* ---------------------------------------------------------- the Editor */
+
+  function loadFolder(path) {
+    var at = (path || "").trim();
+    if (!at) { setState({ edBuild: null, edError: "" }); return; }
+    localStorage.setItem("me.edFolder", at);
+    setState({ edFolder: at, edError: "", edBuild: null });
+    get("/api/build?out=" + encodeURIComponent(at))
+      .then(function (data) { setState({ edBuild: data, sel: null }); })
+      .catch(function (err) {
+        setState({ edError: String(err.message || err) });
+      });
+  }
+
+  function selected() {
+    var b = state.edBuild, s = state.sel;
+    if (!b || !s) return null;
+    for (var i = 0; i < b.scenes.length; i++) {
+      if (b.scenes[i].scene !== s.scene) continue;
+      for (var j = 0; j < b.scenes[i].items.length; j++) {
+        if (b.scenes[i].items[j].file === s.file) {
+          return { scene: b.scenes[i], item: b.scenes[i].items[j] };
+        }
+      }
+    }
+    return null;
+  }
+
+  function edit(url, payload, said) {
+    post(url, Object.assign({ out: state.edFolder }, payload))
+      .then(function () {
+        setState({ edNote: said, edNoteBad: false });
+        loadFolder(state.edFolder);
+      })
+      .catch(function (err) {
+        setState({ edNote: String(err.message || err), edNoteBad: true });
+      });
+  }
+
+  function search(query) {
+    var got = selected();
+    if (!got) return;
+    setState({ find: { busy: true, query: query, error: "", data: null,
+                       chosen: -1 } });
+    post("/api/alternatives", {
+      out: state.edFolder, scene: got.scene.scene, file: got.item.file,
+      query: query,
+    }).then(function (data) {
+      setState({ find: { busy: false, query: data.query, error: "",
+                         data: data, chosen: -1 } });
+    }).catch(function (err) {
+      setState({ find: { busy: false, query: query, chosen: -1,
+                         error: String(err.message || err), data: null } });
+    });
+  }
+
+  function editorScope() {
+    var b = state.edBuild;
+    var got = selected();
+    var f = state.find;
+    var cands = (f && f.data && f.data.candidates) || [];
+    var best = cands.reduce(function (m, c) { return Math.max(m, c.score); }, 0);
+
+    return {
+      onEditor: state.nav === "Editor",
+      edFolder: state.edFolder,
+      setEdFolder: function (ev) { loadFolder(ev.target.value); },
+      pickEdFolder: function () {
+        var at = state.edFolder || localStorage.getItem("me.browsedAt") || "";
+        get("/api/pick?kind=folder&path=" + encodeURIComponent(at))
+          .then(function (r) {
+            if (!r.available) { openPicker("folder", "out"); return; }
+            if (r.path) loadFolder(r.path);
+          })
+          .catch(function () { openPicker("folder", "out"); });
+      },
+      exportBigBtn: "display:flex; align-items:center; gap:7px; background:var(--accent); color:var(--on-accent); font-size:13px; font-weight:600; padding:10px 18px; border-radius:9px; cursor:pointer; white-space:nowrap; box-shadow:var(--shadow-sm);"
+        + (b ? "" : " opacity:.45; pointer-events:none;"),
+      startRender: function () {
+        post("/api/render", { out: state.edFolder,
+                              audio: (b && b.audio) || "" })
+          .then(function (task) { setState({ nav: "New Video" }); watch(task); })
+          .catch(function (err) {
+            setState({ edNote: String(err.message || err), edNoteBad: true });
+          });
+      },
+
+      edHeadline: b
+        ? (b.video || "video") + " · " + clock(b.total_seconds) + " · "
+          + b.scenes.length + " scenes"
+        : "Ek bani hui video ka folder do.",
+      edEmpty: !b,
+      edEmptyTitle: state.edError ? "Ye folder khula nahi" : "Koi video khuli nahi",
+      edEmptyWhy: state.edError
+        || "Upar folder ka path daalo — wahi jo New Video me output folder tha. Ya New Video se ek video banao.",
+      edHasScenes: !!b && b.scenes.length > 0,
+      edCounts: b ? Object.keys(b.counts).sort().map(function (k) {
+        var tone = { anchor: "ok", verified: "busy", interpolated: "warn",
+                     filler: "muted", chosen: "accent" }[k] || "muted";
+        return { label: k + " " + b.counts[k], style: badgeStyle(
+                   tone === "accent" ? "busy" : tone),
+                 dot: dot(tone === "accent" ? "busy" : tone) };
+      }) : [],
+
+      edScenes: b ? b.scenes.map(function (sc) {
+        return {
+          label: "scene " + ("00" + sc.scene).slice(-3),
+          narration: sc.narration || sc.note || "—",
+          span: clock(sc.start) + " → " + clock(sc.end),
+          bare: sc.items.length === 0,
+          items: sc.items.map(function (it) {
+            var on = state.sel && state.sel.scene === sc.scene
+                     && state.sel.file === it.file;
+            var tone = { anchor: "ok", verified: "busy",
+                         interpolated: "warn", filler: "muted",
+                         chosen: "ok" }[it.placed_by] || "muted";
+            return {
+              // #t makes the browser seek one frame in and actually paint
+              // it. Without it a <video> thumbnail is a grey rectangle, and
+              // a wall of grey rectangles is the opposite of the point.
+              url: it.kind === "video" ? it.url + "#t=0.1" : it.url,
+              at: clock(it.source_start || 0),
+              isVideo: it.kind === "video", isImage: it.kind !== "video",
+              hold: (it.duration || 0).toFixed(1) + "s",
+              placed_by: it.placed_by || "?",
+              style: "position:relative; flex:0 0 132px; width:132px; border-radius:9px; overflow:hidden; cursor:pointer; transition:box-shadow .13s ease; border:"
+                + (on ? "2px solid var(--accent); box-shadow:0 0 0 3px var(--accent-soft);"
+                      : "1px solid var(--border-strong);"),
+              badge: "position:absolute; top:4px; left:4px; font-size:9px; font-weight:650; padding:1.5px 5px; border-radius:4px; "
+                + (tone === "muted"
+                   ? "color:var(--muted); background:var(--raised);"
+                   : "color:var(--" + tone + "); background:var(--" + tone
+                     + "-soft); border:1px solid var(--" + tone + "-line);"),
+              pick: function () {
+                setState({ sel: { scene: sc.scene, file: it.file },
+                           edNote: "" });
+              },
+            };
+          }),
+        };
+      }) : [],
+
+      edPicked: !!got,
+      sel: got ? {
+        scene: got.scene.scene,
+        narration: got.scene.narration || "—",
+        url: got.item.url,
+        isVideo: got.item.kind === "video",
+        isImage: got.item.kind !== "video",
+        source: got.item.source || "—",
+        at: "at " + clock(got.item.source_start || 0),
+        duration: (got.item.duration || 0).toFixed(1),
+        placed_by: got.item.placed_by || "?",
+        badge: badgeStyle({ anchor: "ok", verified: "busy",
+                            interpolated: "warn", filler: "muted",
+                            chosen: "ok" }[got.item.placed_by] || "muted"),
+      } : { scene: "", narration: "", url: "", source: "", at: "",
+            duration: "", placed_by: "", badge: "",
+            isVideo: false, isImage: false },
+      setDuration: function (ev) {
+        edit("/api/edit", { scene: got.scene.scene, file: got.item.file,
+                            duration: parseFloat(ev.target.value) },
+             "duration badal di");
+      },
+      removeShot: function () {
+        edit("/api/edit", { scene: got.scene.scene, file: got.item.file,
+                            remove: true }, "shot hata diya");
+      },
+      edNote: state.edNote,
+      edNoteStyle: "margin-top:14px; padding:10px 12px; border-radius:9px; font-size:11.5px; line-height:1.6; "
+        + (state.edNoteBad
+           ? "background:var(--bad-soft); border:1px solid var(--bad-line); color:var(--bad);"
+           : "background:var(--ok-soft); border:1px solid var(--ok-line); color:var(--ok);"),
+
+      // --- Find another ---------------------------------------------
+      openFind: function () { search(got.scene.narration || ""); },
+      closeFind: function () { setState({ find: null }); },
+      findOpen: !!f,
+      findBusy: !!f && f.busy,
+      findError: (f && f.error) || "",
+      findQuery: (f && f.query) || "",
+      runFind: function (ev) { search(ev.target.value); },
+      searchAgain: function () {
+        var box = document.querySelector('[data-keep="findQuery"]');
+        search(box ? box.value : (f && f.query) || "");
+      },
+      findWhere: f && f.data
+        ? f.data.episode + " · " + f.data.searched + " frames dekhe"
+        : "",
+      findHasResults: cands.length > 0,
+      findNone: !!f && !f.busy && !f.error && !!f.data && cands.length === 0,
+      candidates: cands.map(function (c, n) {
+        var on = f.chosen === n;
+        return {
+          url: "/file?out=" + encodeURIComponent(state.edFolder)
+               + "&rel=" + encodeURIComponent(f.data.folder + "/" + c.file),
+          at: clock(c.at),
+          current: !!c.current,
+          bar: Math.max(6, Math.round((best ? c.score / best : 0) * 100)),
+          tone: c.confidence === "high" ? "ok"
+                : (c.confidence === "medium" ? "busy" : "muted"),
+          style: "border-radius:10px; overflow:hidden; cursor:pointer; background:var(--surface); transition:box-shadow .12s ease; border:"
+            + (on ? "2px solid var(--accent); box-shadow:0 0 0 3px var(--accent-soft);"
+                  : "1px solid var(--border-strong);"),
+          pick: function () { f.chosen = n; draw(); },
+        };
+      }),
+      useLabel: (f && f.chosen >= 0) ? "Use this shot" : "Ek shot chuno",
+      useBtn: "font-size:12.5px; font-weight:600; padding:9px 16px; border-radius:9px; white-space:nowrap; "
+        + ((f && f.chosen >= 0)
+           ? "background:var(--accent); color:var(--on-accent); cursor:pointer; box-shadow:var(--shadow-sm);"
+           : "background:var(--raised); color:var(--faint); cursor:not-allowed;"),
+      useChosen: function () {
+        if (!f || f.chosen < 0) return;
+        var at = cands[f.chosen].at;
+        setState({ find: null });
+        edit("/api/replace", { scene: got.scene.scene, file: got.item.file,
+                               at: at }, "shot badal diya — " + clock(at));
+      },
     };
   }
 
@@ -456,10 +707,10 @@
         };
       }),
 
-      scriptName: f.script ? baseName(f.script) : "koi script nahi chuni",
-      scriptNameStyle: "font-family:'Cascadia Code', Consolas, monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:"
-        + (f.script ? "var(--text)" : "var(--faint)") + ";",
-      pickScript: function () { openPicker("script", "script"); },
+      pathInput: "flex:1; min-width:0; box-sizing:border-box; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:9px 12px; color:var(--text); font-size:12px; outline:none; font-family:'Cascadia Code', Consolas, monospace;",
+      scriptPath: f.script,
+      setScript: function (ev) { accept("script", ev.target.value.trim()); },
+      pickScript: function () { choosePath("script", "script"); },
       scriptOk: !!state.script && !state.scriptError,
       script: state.script || { beats: 0, shots: 0 },
       scriptEpisodes: state.script
@@ -471,18 +722,19 @@
         : "",
       scriptError: state.scriptError,
 
-      audioName: f.audio ? baseName(f.audio) : "koi voiceover nahi",
-      audioNameStyle: "flex:1; min-width:0; font-family:'Cascadia Code', Consolas, monospace; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:"
-        + (f.audio ? "var(--text)" : "var(--faint)") + ";",
-      audioLength: state.audio && state.audio.seconds
-        ? clock(state.audio.seconds) : "",
-      pickAudio: function () { openPicker("audio", "audio"); },
+      audioPath: f.audio,
+      setAudio: function (ev) { accept("audio", ev.target.value.trim()); },
+      audioLength: state.audio
+        ? (state.audio.error ? "padhi nahi ja rahi: " + state.audio.error
+                             : clock(state.audio.seconds))
+        : "",
+      pickAudio: function () { choosePath("audio", "audio"); },
 
       videoTitle: f.name,
       setVideoTitle: function (ev) { f.name = ev.target.value; setQuiet({}); },
       outFolder: f.out,
       setOutFolder: function (ev) { f.out = ev.target.value; setQuiet({}); },
-      pickOut: function () { openPicker("folder", "out"); },
+      pickOut: function () { choosePath("folder", "out"); },
 
       presets: PRESETS.map(function (p) {
         return { name: p.name, why: p.why, recommended: !!p.rec,
@@ -538,6 +790,10 @@
       hasWeak: !!report && (report.weak_scenes || []).length > 0,
       weakScenes: report ? report.weak_scenes : [],
       builtOk: !!t && t.kind === "build" && t.status === "done",
+      openBuilt: function () {
+        loadFolder((t && t.out) || state.form.out);
+        setState({ nav: "Editor" });
+      },
       hasLines: !!t && (t.lines || []).length > 0,
       taskLines: t ? (t.lines || []) : [],
     };
@@ -547,7 +803,6 @@
 
   var STUB = {
     "Queue": "Yahan saari videos ki list hogi — jo ban rahi hai aur jo ban chuki.",
-    "Editor": "Yahan timeline khulegi — shot badalna, duration, export.",
     "Settings": "Folders, default quality, ffmpeg ka path.",
   };
 
@@ -597,14 +852,12 @@
       goLibrary: go("Library"), goSettings: go("Settings"),
 
       onLibrary: state.nav === "Library",
-      onStub: state.nav !== "Library" && state.nav !== "New Video",
+      onStub: state.nav !== "Library" && state.nav !== "New Video"
+              && state.nav !== "Editor",
       stubTitle: state.nav,
       stubWhy: STUB[state.nav] || "Abhi ban raha hai.",
-      stubGoLabel: state.nav === "Editor" ? "Purana shot page kholo"
-                                          : "Library kholo",
-      stubGo: state.nav === "Editor"
-        ? function () { window.location.href = "/shots"; }
-        : go("Library"),
+      stubGoLabel: "Library kholo",
+      stubGo: go("Library"),
 
       loading: state.loading,
       failed: state.failed,
@@ -633,7 +886,8 @@
       chooseBtn: SECONDARY,
     };
 
-    return Object.assign(common, newVideoScope(), pickerScope());
+    return Object.assign(common, newVideoScope(), editorScope(),
+                         pickerScope());
   }
 
   function applyTheme(name) {
@@ -682,6 +936,7 @@
       .then(function (text) {
         screens = text;
         applyTheme(state.theme);
+        if (state.edFolder) loadFolder(state.edFolder);
         if (state.form.script) readScript(state.form.script);
         if (state.form.audio) readAudio(state.form.audio);
         return loadLibrary();
