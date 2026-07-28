@@ -766,8 +766,140 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     return out
 
 
+# A run covers one stretch of one episode, not the whole of it. How long a
+# stretch is guessed from how much screen time the run asks for: a scene
+# breakdown of eight shots is not spread over half an hour.
+WINDOW_SPAN = 2.5               # of the run's own screen time
+WINDOW_MIN_S = 90.0
+WINDOW_MAX_S = 600.0
+# How far past an ordinary window the best one has to stand before it is
+# believed. Below this the episode has no opinion and the whole of it is
+# fairer than a confident wrong quarter of it.
+WINDOW_EDGE = 1.25
+# The chosen window is widened by this much on each side. The window is a
+# hint for filler, not a boundary: picking the highest-scoring START can
+# clip the tail of the very run it just found, and losing the last two shots
+# of a scene to an off-by-one is a worse failure than being slightly loose.
+WINDOW_PAD = 0.35
+
+
+def locate_run(index: visual.VisualIndex, captions: list, backend,
+               wanted_seconds: float = 0.0) -> tuple:
+    """Which stretch of this episode the whole run happens in.
+
+    Asking each shot on its own is what a search does, and on a wordless
+    scene it mostly fails: one description of one dim interior against
+    fourteen hundred frames is a coin toss, and the tool then spread the run
+    across thirty-eight minutes of an episode that contained it in four.
+
+    Asking all of them together is a different question, and a much easier
+    one. Twenty descriptions from the same scene all score a little higher
+    in the part of the episode where that scene actually is, and twenty
+    little agreements are worth more than one confident guess. So this
+    slides a window over the episode and keeps the one the run as a whole
+    likes best.
+
+    Returns (lo, hi, strength), or (0, 0, 0) when the episode has no opinion
+    — in which case the whole of it stays available, because a confident
+    wrong quarter is worse than an honest whole.
+    """
+    if not len(index) or not captions:
+        return (0.0, 0.0, 0.0)
+    vecs = backend.encode_texts(captions)
+    sims = np.stack([index.similarities(v) for v in vecs])   # shots x frames
+    if not np.any(sims):
+        return (0.0, 0.0, 0.0)
+
+    times = np.asarray(index.times, dtype=np.float64)
+    length = float(times[-1] - times[0]) or 1.0
+    span = min(WINDOW_MAX_S,
+               max(WINDOW_MIN_S, WINDOW_SPAN * float(wanted_seconds or 0.0)))
+    if span >= length:
+        return (0.0, 0.0, 0.0)          # the window is the episode
+
+    step = max(1, int(len(times) / 240))         # ~240 windows, whatever the length
+    scores, starts = [], []
+    lo = times[0]
+    while lo + span <= times[-1]:
+        inside = (times >= lo) & (times <= lo + span)
+        if inside.any():
+            # Each shot contributes its own best frame in this window. A run
+            # is well placed when MANY of its shots are happy here, not when
+            # one of them is ecstatic.
+            scores.append(float(np.median(sims[:, inside].max(axis=1))))
+            starts.append(lo)
+        lo += (times[step] - times[0]) if step < len(times) else span
+    if len(scores) < 4:
+        return (0.0, 0.0, 0.0)
+
+    scores = np.asarray(scores)
+    best = int(np.argmax(scores))
+    middle = float(np.median(scores))
+    spread = float(np.percentile(scores, 90)) - middle
+    if spread <= 1e-6:
+        return (0.0, 0.0, 0.0)          # every part of the episode alike
+    strength = (float(scores[best]) - middle) / spread
+    if strength < WINDOW_EDGE:
+        return (0.0, 0.0, 0.0)
+    pad = span * WINDOW_PAD
+    return (max(float(times[0]), float(starts[best]) - pad),
+            min(float(times[-1]), float(starts[best] + span) + pad),
+            strength)
+
+
+def locate_runs(db_path: str, beats: list, log=lambda *a: None) -> dict:
+    """{beat number: (lo, hi)} — where each run happens in its episode."""
+    if embed.loaded() is None:
+        ok, _why = embed.available()
+        if not ok:
+            return {}
+    from .library import connect
+
+    con = connect(db_path)
+    try:
+        backend = embed.load(log=log)
+    except embed.EmbedError:
+        con.close()
+        return {}
+
+    found: dict = {}
+    try:
+        for run in align.runs(beats):
+            path = align.episode_file(db_path, run)
+            if not path:
+                continue
+            index = visual.load(con, db_path, path)
+            if index is None or not len(index):
+                continue
+            captions, wanted = [], 0.0
+            for entry in run.entries:
+                caption = describe(entry.data or {})
+                if caption:
+                    captions.append(caption)
+                try:
+                    wanted += float(entry.data.get("duration_target_sec") or 4.0)
+                except (TypeError, ValueError, AttributeError):
+                    wanted += 4.0
+            if len(captions) < 2:
+                continue                 # two agreements are the minimum
+            lo, hi, strength = locate_run(index, captions, backend, wanted)
+            if hi <= lo:
+                log(f"      {run.label}: the picture has no opinion about "
+                    "where this run happens")
+                continue
+            for entry in run.entries:
+                found[entry.beat] = (lo, hi)
+            log(f"      {run.label}: happens around "
+                f"{lo/60:.0f}-{hi/60:.0f} min of "
+                f"{os.path.basename(path)} (x{strength:.1f})")
+    finally:
+        con.close()
+    return found
+
+
 def place_by_picture(db_path: str, beats: list, placements: list,
                      episodes: dict | None = None,
+                     windows: dict | None = None,
                      log=lambda *a: None) -> int:
     """Find a home for every shot that dialogue could not place.
 
@@ -843,7 +975,15 @@ def place_by_picture(db_path: str, beats: list, placements: list,
                                    noise_floor(index, backend))
             tried += 1
             vec = backend.encode_texts([caption])[0]
-            match = visual.best_in(index, vec)
+            # Inside the stretch the run was located to, when there is one.
+            # A description searched across a whole episode competes with
+            # fourteen hundred frames of everything else in it; searched
+            # across the four minutes the scene actually occupies, it is
+            # competing with the scene.
+            span = (windows or {}).get(p.beat)
+            match = (visual.best_in(index, vec, lo=span[0], hi=span[1])
+                     if span and span[1] > span[0]
+                     else visual.best_in(index, vec))
             if match.lift < floors[path]:
                 continue
             hold = max(1, p.end_ms - p.start_ms)

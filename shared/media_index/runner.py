@@ -231,7 +231,7 @@ def _free_moment(used: dict | None, path: str, at: float,
 
 
 def _filler_moment(used: dict | None, path: str, duration: float,
-                   k: int) -> float | None:
+                   k: int, window: tuple | None = None) -> float | None:
     """Somewhere in this episode nobody has been yet, for a shot with no
     placement at all.
 
@@ -249,6 +249,16 @@ def _filler_moment(used: dict | None, path: str, duration: float,
     if duration <= 0:
         return None
     lo, hi = FILLER_SPREAD[0] * duration, FILLER_SPREAD[1] * duration
+    if window and window[1] > window[0]:
+        # The picture index worked out which stretch of the episode this run
+        # actually happens in. Filler stays inside it. Scattered across the
+        # whole episode instead, a video about one four-minute scene pulled
+        # sixty-five shots from thirty-eight minutes of it — which is why
+        # the footage looked unrelated: it was.
+        lo, hi = max(0.0, window[0]), min(duration, window[1])
+        if hi - lo < 8.0:
+            lo, hi = (FILLER_SPREAD[0] * duration,
+                      FILLER_SPREAD[1] * duration)
     # Near where the video already is in this episode, not anywhere in it.
     #
     # Scattered across the whole film, filler found the title cards — a real
@@ -277,7 +287,8 @@ def _mark_used(used: dict | None, path: str, at: float) -> None:
         used.setdefault(path, []).append(at)
 
 
-def _filler_for(episode: str, used: dict | None, log) -> tuple:
+def _filler_for(episode: str, used: dict | None, log,
+                window: tuple | None = None) -> tuple:
     """(seconds, path) somewhere in the episode a beat names, or (None, '')."""
     if not episode or not os.path.isfile(episode):
         return None, ""
@@ -286,12 +297,14 @@ def _filler_for(episode: str, used: dict | None, log) -> tuple:
     except (ProbeError, OSError):
         return None, ""
     taken = len(used.get(episode, ())) if used else 0
-    return _filler_moment(used, episode, float(length or 0.0), taken), episode
+    return (_filler_moment(used, episode, float(length or 0.0), taken, window),
+            episode)
 
 
 def build_scene(job, index: int, beat: dict, placements: list,
                 seen: list | None = None, log=lambda *a: None,
-                used: dict | None = None, episode: str = "") -> SceneResult:
+                used: dict | None = None, episode: str = "",
+                window: tuple | None = None) -> SceneResult:
     """Cut every shot of one beat. Never raises — a bad scene is reported.
 
     Driven by alignment rather than by dialogue matches alone. On a real
@@ -325,7 +338,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
         if not p.ok or not p.path:
             # No line, no picture — but the script named the episode, and
             # showing the right episode beats showing nothing at all.
-            at, path = _filler_for(episode, used, log)
+            at, path = _filler_for(episode, used, log, window)
             if at is None:
                 unplaced += 1
                 continue
@@ -598,11 +611,18 @@ def run_job(job, report, log=print) -> JobResult:
         # actually happens — which is the only thing that works on a scene
         # nobody speaks in, and those are the scenes worth making videos
         # about. Runs after verify so it only sees what is genuinely homeless.
+        # Which stretch of its episode each run happens in. Asked of the
+        # whole run at once rather than shot by shot: twenty descriptions
+        # from one scene agreeing a little is worth far more than one of
+        # them being confident, and on a scene nobody speaks in it is the
+        # only signal there is.
+        windows = verify.locate_runs(job.db, report.beats, log=log)
         verify.place_by_picture(job.db, report.beats, placements,
-                                episodes=owns, log=log)
+                                episodes=owns, windows=windows, log=log)
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
-                                owns.get(beat.get("beat", i), ""))
+                                owns.get(beat.get("beat", i), ""),
+                                window=windows.get(beat.get("beat", i)))
             result.scenes.append(scene)
             mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
             log(f"    scene {i:03d} {mark[scene.status]} "

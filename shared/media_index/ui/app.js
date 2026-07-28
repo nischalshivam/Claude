@@ -57,8 +57,19 @@
   var where = null;
   var timer = null;
 
+  // Bumped whenever what the form means changes. An update that leaves
+  // yesterday's script, voiceover and folder sitting in the boxes looks
+  // exactly like a form somebody filled in — and the first thing anyone
+  // does with a filled-in form is press the button.
+  var FORM_VERSION = "3";
+
   function load(key, fallback) {
     try {
+      if (localStorage.getItem("me.formVersion") !== FORM_VERSION) {
+        localStorage.setItem("me.formVersion", FORM_VERSION);
+        localStorage.removeItem(key);
+        return fallback;
+      }
       var kept = JSON.parse(localStorage.getItem(key) || "null");
       return kept ? Object.assign({}, fallback, kept) : fallback;
     } catch (e) { return fallback; }
@@ -103,12 +114,10 @@
   function loadLibrary() {
     setState({ loading: true, failed: "" });
     return get("/api/titles").then(function (data) {
-      var form = state.form;
-      // Pick the obvious title rather than making someone choose between one
-      // option and nothing.
-      if (!form.title && (data.titles || []).length) {
-        form.title = data.titles[0].name;
-      }
+      // The title is chosen, not assumed. Filling it in silently means a
+      // build can run against the wrong series without anyone having
+      // touched the field — and with two titles in the library that is a
+      // coin toss nobody was asked to call.
       setState({ library: data, loading: false });
     }).catch(function (err) {
       setState({ loading: false, failed: String(err.message || err) });
@@ -154,6 +163,7 @@
 
   function missingField() {
     var f = state.form;
+    if (!f.title) return "Pehle title chuno";
     if (!f.script) return "Script chuno";
     if (!f.out) return "Output folder do";
     if (state.scriptError) return "Script padhi nahi ja rahi";
@@ -810,8 +820,10 @@
     return {
       onNewVideo: state.nav === "New Video",
 
-      pickedName: f.title || "koi title nahi",
-      pickedDetail: chosen ? chosen.detail : "Library me jaake ek banao",
+      pickedName: f.title || "title chuno",
+      pickedDetail: chosen ? chosen.detail
+        : ((state.library && (state.library.titles || []).length)
+           ? "yahan click karo" : "Library me jaake ek banao"),
       pickedDot: dot(tone),
       srcOpen: state.srcOpen,
       toggleSrc: function () { setState({ srcOpen: !state.srcOpen }); },
@@ -878,6 +890,13 @@
         + (running ? " opacity:.5; pointer-events:none;" : ""),
       buildBtn: "display:flex; align-items:center; gap:7px; background:var(--accent); color:var(--on-accent); font-size:13px; font-weight:600; padding:10px 16px; border-radius:9px; cursor:pointer; white-space:nowrap; box-shadow:var(--shadow-sm); transition:background .15s ease;"
         + (running ? " opacity:.5; pointer-events:none;" : ""),
+      clearForm: function () {
+        state.form = { title: "", script: "", audio: "", name: "", out: "",
+                       preset: "auto", quality: "1080", pace: "normal",
+                       clip: 4.0 };
+        remember();
+        setState({ script: null, scriptError: "", audio: null, task: null });
+      },
       runCheck: function () { run("/api/check"); },
       buildEditor: function () { run("/api/build", { after: "editor" }); },
       buildExport: function () { run("/api/build", { after: "export" }); },

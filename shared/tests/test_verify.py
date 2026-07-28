@@ -1473,3 +1473,102 @@ class TestPlacingWhatDialogueCouldNot(unittest.TestCase):
                                     episodes={1: "/nowhere/other.mkv"})
         self.assertEqual(n, 0)
         self.assertEqual(homeless.method, "none")
+
+
+class TestFindingWhereARunHappens(unittest.TestCase):
+    """The fix for footage that looked unrelated, because it was.
+
+    A video about one four-minute scene pulled sixty-five shots from
+    thirty-eight minutes of the episode containing it. Asked one shot at a
+    time, the picture index answered a coin toss — one description of one
+    dim interior against fourteen hundred frames. Asked about the whole run
+    at once, it answers confidently, because twenty descriptions from the
+    same scene all score a little higher in the same place.
+    """
+
+    def setUp(self):
+        self.backend = embed.Deterministic(dim=96)
+
+    def _episode(self, scene_at, scene_captions, minutes=47):
+        """An episode of unrelated frames with one real scene inside it."""
+        rng = np.random.default_rng(7)
+        times = np.arange(0, minutes * 60, 2.0, dtype=np.float32)
+        filler = [f"an unrelated room number {i}" for i in range(len(times))]
+        vecs = self.backend.encode_texts(filler).astype(np.float32)
+        # The scene itself: its own captions, in order, two seconds apart.
+        for n, caption in enumerate(scene_captions):
+            at = int((scene_at + n * 6.0) / 2.0)
+            if at < len(times):
+                vecs[at] = self.backend.encode_texts([caption])[0]
+                # and its neighbours look a little like it, as frames of one
+                # continuous scene do
+                for near in (at - 1, at + 1):
+                    if 0 <= near < len(times):
+                        vecs[near] = 0.75 * vecs[at] + 0.25 * vecs[near]
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
+        del rng
+        return visual.VisualIndex(path="ep.mkv", times=times, vecs=vecs,
+                                  model=self.backend.name)
+
+    def test_a_run_is_located_to_the_stretch_it_belongs_to(self):
+        captions = [f"Gus in the red hazmat suit, moment {i}" for i in range(14)]
+        index = self._episode(1930.0, captions)
+        lo, hi, strength = locate = verify.locate_run(
+            index, captions, self.backend, wanted_seconds=60.0)
+        self.assertGreater(strength, 0.0, "the run was not located at all")
+        self.assertLessEqual(lo, 1930.0)
+        self.assertGreaterEqual(hi, 1930.0 + 13 * 6.0)
+        # And it is a stretch, not the whole episode.
+        self.assertLess(hi - lo, 47 * 60 * 0.5)
+        del locate
+
+    def test_an_episode_with_no_opinion_keeps_the_whole_of_itself(self):
+        """A confident wrong quarter of an episode is worse than an honest
+        whole one: filler at least spreads out. An episode whose frames all
+        look alike has nothing to say about where anything is."""
+        times = np.arange(0, 47 * 60, 2.0, dtype=np.float32)
+        one = self.backend.encode_texts(["a corridor"])[0].astype(np.float32)
+        vecs = np.repeat(one[None, :], len(times), axis=0)
+        flat = visual.VisualIndex(path="ep.mkv", times=times, vecs=vecs,
+                                  model=self.backend.name)
+        lo, hi, strength = verify.locate_run(
+            flat, [f"shot {i}" for i in range(14)], self.backend,
+            wanted_seconds=60.0)
+        self.assertEqual((lo, hi, strength), (0.0, 0.0, 0.0))
+
+    def test_one_caption_is_not_enough_to_locate_anything(self):
+        index = self._episode(1930.0, ["a red doorway"])
+        lo, hi, _s = verify.locate_run(index, [], self.backend,
+                                       wanted_seconds=10.0)
+        self.assertEqual((lo, hi), (0.0, 0.0))
+
+    def test_a_window_wider_than_the_episode_is_refused(self):
+        index = self._episode(60.0, [f"shot {i}" for i in range(4)], minutes=3)
+        lo, hi, _s = verify.locate_run(index, [f"shot {i}" for i in range(4)],
+                                       self.backend, wanted_seconds=600.0)
+        self.assertEqual((lo, hi), (0.0, 0.0))
+
+
+class TestFillerStaysInsideTheRunsOwnStretch(unittest.TestCase):
+    def test_filler_is_taken_from_the_window_when_there_is_one(self):
+        from media_index import runner
+        used: dict = {}
+        for k in range(6):
+            at = runner._filler_moment(used, "ep.mkv", duration=2800.0, k=k,
+                                       window=(1900.0, 2150.0))
+            self.assertIsNotNone(at)
+            self.assertGreaterEqual(at, 1900.0)
+            self.assertLessEqual(at, 2150.0)
+            used.setdefault("ep.mkv", []).append(at)
+
+    def test_without_a_window_it_spreads_across_the_episode_as_before(self):
+        from media_index import runner
+        at = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0)
+        self.assertIsNotNone(at)
+        self.assertGreaterEqual(at, 0.10 * 2800.0)
+
+    def test_a_window_too_small_to_hold_anything_falls_back(self):
+        from media_index import runner
+        at = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0,
+                                   window=(1000.0, 1002.0))
+        self.assertIsNotNone(at)
