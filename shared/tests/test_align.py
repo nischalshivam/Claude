@@ -593,3 +593,62 @@ class TestCountingTheQuotesTheScriptClaims(unittest.TestCase):
         rep = align.quote_report(self.db, [])
         self.assertEqual((rep.given, rep.matched, rep.runs), (0, 0, 0))
         self.assertEqual(rep.advice(), [])
+
+
+class TestManyAnchorsThatDisagree(unittest.TestCase):
+    """`_longest_increasing` asks the wrong question once there are many
+    anchors: it keeps the longest chain that runs forwards in time, which a
+    handful of scattered wrong matches can win — they are in order too, just
+    in order across the whole episode.
+
+    Measured: one model wrote 48 quotes for an 88-shot run, plenty matched,
+    and the pipeline kept ONE. The run then hung off that single point and
+    landed nine minutes early."""
+
+    def _run(self, shots=20):
+        beats = [{"beat": 1, "shots": [
+            {"source": "Show", "season_episode": "S01E01",
+             "visual": f"shot {i}", "duration_target_sec": 5}
+            for i in range(shots)]}]
+        return align.runs(beats)[0]
+
+    def _anchors(self, pairs):
+        return [(i, int(at * 1000), int(at * 1000) + 2000, "/lib/ep.mkv",
+                 "high") for i, at in pairs]
+
+    def test_the_cluster_wins_over_a_tidy_line_of_strays(self):
+        # Forty shots is 195 seconds of script, so the window this run is
+        # allowed to occupy is a few minutes — the real case was 88 shots.
+        run = self._run(shots=40)
+        # six lines agreeing about 30-33 minutes...
+        cluster = [(4, 1800.0), (6, 1830.0), (8, 1900.0), (10, 1950.0),
+                   (12, 1980.0), (14, 2000.0)]
+        # ...and three strays that also happen to increase
+        strays = [(0, 300.0), (2, 700.0), (18, 2700.0)]
+        kept = align._densest(self._anchors(sorted(cluster + strays)), run)
+        times = sorted(a[1] / 1000.0 for a in kept)
+        self.assertEqual(len(kept), 6)
+        self.assertGreaterEqual(times[0], 1800.0)
+        self.assertLessEqual(times[-1], 2000.0)
+
+    def test_too_few_anchors_to_cluster_are_all_kept(self):
+        run = self._run()
+        got = self._anchors([(0, 300.0), (5, 1800.0), (9, 2500.0)])
+        self.assertEqual(align._densest(got, run), got)
+
+    def test_when_nothing_has_a_majority_everything_is_kept(self):
+        """Four lines in four different places is not evidence of a scene.
+        Throwing three of them away would be inventing a cluster."""
+        run = self._run()
+        got = self._anchors([(0, 200.0), (4, 900.0), (8, 1700.0),
+                             (12, 2500.0)])
+        self.assertEqual(align._densest(got, run), got)
+
+    def test_the_whole_pipeline_keeps_the_cluster(self):
+        run = self._run()
+        found = align._densest(
+            self._anchors([(0, 300.0), (2, 1800.0), (4, 1850.0),
+                           (6, 1900.0), (8, 1950.0), (10, 2600.0)]), run)
+        kept = align._longest_increasing(align._last_of_each_moment(found))
+        self.assertEqual(len(kept), 4)
+        self.assertTrue(all(1800.0 <= a[1] / 1000.0 <= 1950.0 for a in kept))

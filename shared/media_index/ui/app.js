@@ -1008,6 +1008,30 @@
                  icon: c.ok ? "✓" : (c.fatal ? "✗" : "!"),
                  mark: "flex:0 0 16px; text-align:center; font-size:12px; font-weight:700; color:var(--" + tint + ");" };
       }),
+      hasLearnedTiming: !!report && (report.learned_timing || []).length > 0,
+      learnedTiming: report ? (report.learned_timing || []) : [],
+      useLearned: function () {
+        // The derived lines replace only the episodes they cover. A line
+        // somebody typed for a run that quoted nothing is the one thing
+        // here that was not worked out, and it must survive being helped.
+        var mine = {}, order = [];
+        (f.timings || "").split("\n").forEach(function (line) {
+          var key = (line.match(/s\d{1,2}\s*e\d{1,3}/i) || [""])[0].toUpperCase();
+          if (!key) return;
+          if (!(key in mine)) order.push(key);
+          mine[key] = line.trim();
+        });
+        (report.learned_timing || []).forEach(function (t) {
+          var key = (t.line.match(/S\d{1,2}E\d{1,3}/i) || [""])[0].toUpperCase();
+          if (!key) return;
+          if (!(key in mine)) order.push(key);
+          mine[key] = t.line;
+        });
+        f.timings = order.map(function (k) { return mine[k]; }).join("\n");
+        f.timingsFrom = "";
+        remember();
+        setState({ edNote: "" });
+      },
       hasNeedsTiming: !!report && (report.needs_timing || []).length > 0,
       needsTiming: report ? (report.needs_timing || []) : [],
       hasWeak: !!report && (report.weak_scenes || []).length > 0,

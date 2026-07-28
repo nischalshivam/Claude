@@ -796,6 +796,16 @@ def run_job(job, report, log=print) -> JobResult:
             log(f"    scene {i:03d} {mark[scene.status]} "
                 f"{len(scene.clips)} clip(s), {len(scene.stills)} still(s)"
                 + (f"   {scene.note}" if scene.note else ""))
+        # What the build worked out for itself, in the form the Scene
+        # timings box takes. A run that quoted a line has already said where
+        # it is to the millisecond; printing that back is the difference
+        # between "look it up in your player" and "paste this in".
+        learned = timings.derive(report.beats, placements)
+        if learned:
+            log("  Scene timings, worked out from the lines that matched — "
+                "inhe box me paste kar do:")
+            for shots, line, count in learned:
+                log(f"      {line:<22} ({shots} shots, {count} matched line(s))")
         write_manifest(job, result)
         result.status = "done" if result.gaps == 0 else "partial"
     except Exception as exc:                    # one job must never kill the queue

@@ -305,3 +305,59 @@ class TestWhatCanBeGivenATime(unittest.TestCase):
         said = (timings.parse_lines("S03E13 40:00-47:00")
                 + timings.parse_lines("S03E13 40:00-47:00"))
         self.assertEqual(len(timings.too_wide(beats, said)), 1)
+
+
+class TestTimingsTheBuildWorksOutForItself(unittest.TestCase):
+    """The answer to "how will I know the times for the next video". Mostly
+    you will not have to: a run that quoted a line has already said where it
+    is, exactly, and that can be written back in the box's own form."""
+
+    def _beats(self, shots=6, se="S04E01"):
+        return [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": se,
+             "visual": f"shot {i}", "duration_target_sec": 5}
+            for i in range(shots)]}]
+
+    def _places(self, anchors_at=()):
+        out = [align.Placement(beat=1, shot=i + 1, path="/lib/ep.mkv",
+                               start_ms=1_800_000, end_ms=1_805_000,
+                               method="interpolated") for i in range(6)]
+        for i, at in anchors_at:
+            out[i].method = "anchor"
+            out[i].start_ms = int(at * 1000)
+            out[i].end_ms = out[i].start_ms + 3000
+        return out
+
+    def test_the_line_is_the_span_of_the_lines_that_matched(self):
+        got = timings.derive(self._beats(),
+                             self._places([(1, 1836.0), (4, 2280.0)]))
+        self.assertEqual(len(got), 1)
+        shots, line, count = got[0]
+        self.assertEqual(shots, 6)
+        self.assertEqual(count, 2)
+        self.assertEqual(line, "S04E01 29:36-39:00")     # one minute either side
+
+    def test_a_run_with_no_matched_line_produces_nothing_to_paste(self):
+        self.assertEqual(timings.derive(self._beats(), self._places()), [])
+
+    def test_a_press_portrait_never_produces_a_line(self):
+        beats = [{"beat": 1, "shots": [
+            {"source": "Vince Gilligan press portrait", "type": "real_world",
+             "season_episode": "", "visual": "a man at a desk"}]}]
+        places = [align.Placement(beat=1, shot=1, path="x", start_ms=1000,
+                                  end_ms=4000, method="anchor")]
+        self.assertEqual(timings.derive(beats, places), [])
+
+    def test_the_biggest_run_comes_first(self):
+        beats = (self._beats(shots=6, se="S03E13")
+                 + [{"beat": 2, "shots": [
+                     {"source": "Breaking Bad", "season_episode": "S04E01",
+                      "visual": f"x {i}", "duration_target_sec": 5}
+                     for i in range(20)]}])
+        places = self._places([(0, 1790.0)]) + [
+            align.Placement(beat=2, shot=1, path="/lib/a.mkv",
+                            start_ms=1_836_000, end_ms=1_839_000,
+                            method="anchor")]
+        got = timings.derive(beats, places)
+        self.assertEqual(got[0][0], 20)
+        self.assertIn("S04E01", got[0][1])

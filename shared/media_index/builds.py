@@ -203,6 +203,26 @@ def _seconds(value: float) -> str:
     return f"{value/60:.1f} min"
 
 
+def learned_timings(rep) -> list:
+    """Timings the pre-flight worked out from lines that really matched.
+
+    The point of showing these is that they cost the person nothing. A run
+    with a quoted line has already stated where it is, exactly; there is no
+    reason to make somebody scrub a player for a number the tool is holding.
+    """
+    from . import align, timings
+
+    beats = getattr(rep, "beats", None) or []
+    if not beats:
+        return []
+    try:
+        places = align.align(rep.job.db, beats)
+    except Exception:                   # a pre-flight must never fail here
+        return []
+    return [{"line": line, "shots": shots, "lines_matched": count}
+            for shots, line, count in timings.derive(beats, places)]
+
+
 def report_dict(rep, typed: str = "") -> dict:
     """A pre-flight as the Check panel draws it.
 
@@ -225,6 +245,7 @@ def report_dict(rep, typed: str = "") -> dict:
         "episodes": sorted({r.title for r in rep.requirements}),
         # Last, because it is the one line worth acting on.
         "needs_timing": timing_advice(rep, typed),
+        "learned_timing": learned_timings(rep),
     }
 
 

@@ -181,6 +181,37 @@ de do.
 - **Stated timings** — sab kuch ke upar.
 - **Characters** — reference photos se frame chunav.
 
+## Har nayi video ke liye timings kaise milengi
+
+Sabse zaroori jawab: **zyada tar tumhe dhoondhni hi nahi padegi.**
+
+Jis run me ek bhi quoted line mil gayi, us run ka time tool ko **exact pata
+hai** — millisecond tak. Ab wo use wapas likh ke deta hai, box ke usi format
+me. Check panel me hara box aata hai:
+
+    Ye timings tool ne khud nikaal li — quoted lines se, exact:
+        S04E01 29:36-39:00     99 shots · 7 line(s) mili
+        S04E13 31:45-38:40     17 shots · 2 line(s) mili
+        S04E08 43:23-44:53     11 shots · 1 line mili
+
+Ek button — **"Sab box me daal do"** — aur wo box me chali jaati hain.
+Tumhari khud ki type ki hui lines nahi hatti, sirf jo episodes ye cover
+karta hai wo replace hote hain.
+
+**To har nayi video ka process:**
+
+1. Script + voiceover + narration do. Timings box khaali chhod do.
+2. **Check** chalao.
+3. Hara box aayega — button daba do. Zyada tar episodes ki timing ho gayi.
+4. Neela box bataayega kis episode me **ek bhi line nahi mili**. Sirf wo 1-2
+   episodes player me dekhne padenge — poori list nahi.
+5. Build.
+
+Matlab pehli baar me hi tumhe sirf un runs ke liye time dhoondhna hai jinme
+koi dialogue hi nahi. Baaki sab tool khud bata deta hai.
+
+---
+
 ## Model ki di hui timing par bharosa mat karo
 
 Ek asli script par model ne 8 runs ke `scene_range` bhare. Jin 5 ko quoted

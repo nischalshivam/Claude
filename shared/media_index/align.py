@@ -229,7 +229,60 @@ def anchors_for(db_path: str, run: Run, con=None) -> list[tuple]:
     # point. Keeping the longest run that IS in order throws out the odd
     # misplaced line instead of everything after it.
     found.sort(key=lambda a: a[0])
-    return _longest_increasing(_last_of_each_moment(found))
+    return _longest_increasing(_densest(_last_of_each_moment(found), run))
+
+
+# A run's anchors are only useful if they are talking about the same scene.
+# Below this many there is nothing to cluster and every one is kept.
+CLUSTER_MIN = 4
+# How much film one run's worth of script may plausibly cover.
+CLUSTER_SPAN = 1.5
+CLUSTER_MIN_S = 180.0
+CLUSTER_MAX_S = 900.0
+
+
+def _densest(anchors: list, run: Run) -> list:
+    """The anchors that agree with each other about where this scene is.
+
+    `_longest_increasing` asks the wrong question when there are many
+    anchors. It keeps the longest chain that runs forwards in time, which a
+    handful of scattered wrong matches can easily win — they are in order
+    too, they are just in order across the whole episode.
+
+    A scene is a contiguous stretch of film. Lines that really belong to it
+    CLUSTER. Lines that matched the wrong moment scatter. So the largest
+    cluster is the scene, and everything outside it is noise, however neatly
+    ordered the noise happens to be.
+
+    Measured on a real script: one model wrote 48 quotes for an 88-shot run,
+    plenty of them matched, and the pipeline came out with **one** anchor —
+    "two lines put this run across 40 minutes of the episode, which is more
+    than one sequence". The whole run then hung off that single point and
+    landed nine minutes early. Keeping the cluster instead keeps the thirty
+    that agreed.
+    """
+    if len(anchors) < CLUSTER_MIN:
+        return anchors
+    ax = axis(run)
+    span = (ax[-1] - ax[0]) if len(ax) > 1 else 0.0
+    width = min(CLUSTER_MAX_S, max(CLUSTER_MIN_S, span * CLUSTER_SPAN)) * 1000.0
+
+    order = sorted(range(len(anchors)), key=lambda i: anchors[i][1])
+    best, lo = (0, 0.0), 0
+    for start in range(len(order)):
+        stop = start
+        while (stop + 1 < len(order)
+               and anchors[order[stop + 1]][1] - anchors[order[start]][1] <= width):
+            stop += 1
+        # Most anchors wins; a tie goes to the tighter group, because two
+        # windows holding the same lines are not equally good evidence.
+        held = stop - start + 1
+        tight = -(anchors[order[stop]][1] - anchors[order[start]][1])
+        if (held, tight) > (best[0], best[1]):
+            best, lo = (held, tight), anchors[order[start]][1]
+    if best[0] <= len(anchors) // 2:
+        return anchors                  # no majority agrees; keep everything
+    return [a for a in anchors if lo <= a[1] <= lo + width]
 
 
 def _last_of_each_moment(anchors: list) -> list:

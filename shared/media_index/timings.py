@@ -382,6 +382,43 @@ def honour(beats: list, placements: list, windows: dict,
     return out
 
 
+def derive(beats: list, placements: list, pad: float = 60.0) -> list:
+    """The timings the build WORKED OUT, as lines for the box.
+
+    This is the answer to "how will I know the times for the next video".
+    Mostly, you will not have to: a run with quoted lines has already told
+    the tool where it is, to the millisecond, and those milliseconds can be
+    written back out in the same form the box takes.
+
+    So the loop is: build once, read the derived lines, paste them in, and
+    every run that had an anchor is now stated exactly rather than guessed.
+    The only runs left to look up by hand are the ones with no line at all —
+    and the pre-flight names those separately.
+
+    Returns [(shots, "S04E01 30:20-38:10", how many lines it rests on)],
+    biggest run first.
+    """
+    by_key = {(p.beat, p.shot): p for p in placements or []}
+    out = []
+    for run in align.runs(beats or []):
+        key = subtitles.episode_key(run.season_episode or "")
+        if not key:
+            continue
+        found = [by_key[(e.beat, e.shot)].start_ms / 1000.0
+                 for e in run.entries
+                 if (e.beat, e.shot) in by_key
+                 and by_key[(e.beat, e.shot)].method == "anchor"]
+        if not found:
+            continue
+        lo, hi = max(0.0, min(found) - pad), max(found) + pad
+        out.append((len(run.entries),
+                    f"S{key[0]:02d}E{key[1]:02d} "
+                    f"{int(lo//60)}:{int(lo%60):02d}-{int(hi//60)}:{int(hi%60):02d}",
+                    len(found)))
+    out.sort(reverse=True)
+    return out
+
+
 def unstated(beats: list, stated: list) -> list:
     """Runs nobody has stated a time for, worst first.
 
