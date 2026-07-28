@@ -36,6 +36,13 @@
 
     picker: null,           // {kind, target, path, data}
 
+    // --- Library ------------------------------------------------------
+    addOpen: false,
+    addRoot: "",
+    addLook: null,          // what look_at_folder said
+    addError: "",
+    libTask: null,          // a scan/index that is running
+
     // --- Editor ------------------------------------------------------
     edFolder: localStorage.getItem("me.edFolder") || "",
     edBuild: null,          // what /api/build says about that folder
@@ -383,7 +390,7 @@
                pickerError: "",
                pickerEmpty: false, pickerEmptyWhy: "", pickerHint: "",
                pickingFolder: false, hasDrives: false,
-               closePicker: function () {}, swallow: function () {},
+               closePicker: function () {},
                pickerUpGo: function () {}, useThisFolder: function () {},
                goToTyped: function () {} };
     }
@@ -426,7 +433,119 @@
       goToTyped: function (ev) { walk(ev.target.value.trim()); },
       useThisFolder: function () { choose(p.path); },
       closePicker: function () { setState({ picker: null }); },
-      swallow: function (ev) { ev.stopPropagation(); },
+    };
+  }
+
+  /* --------------------------------------------------------- the Library */
+
+  function watchLibrary(task) {
+    setState({ libTask: task, addOpen: false });
+    var tick = setInterval(function () {
+      get("/api/task?id=" + encodeURIComponent(task.id)).then(function (now) {
+        setState({ libTask: now });
+        if (now.status !== "running") {
+          clearInterval(tick);
+          loadLibrary();            // the counts on screen just changed
+        }
+      }).catch(function () { clearInterval(tick); });
+    }, 1500);
+  }
+
+  function startIndexing(root, force) {
+    post("/api/library/index", { root: root, force: !!force })
+      .then(watchLibrary)
+      .catch(function (err) {
+        setState({ addError: String(err.message || err) });
+      });
+  }
+
+  function libraryScope() {
+    var t = state.libTask;
+    var look = state.addLook;
+    var running = !!t && t.status === "running";
+    var rows = [];
+    if (look) {
+      rows.push({ ok: true, text: look.files + " video file(s) mile",
+                  detail: (look.shows || []).map(function (p) {
+                    return p[0] + " (" + p[1] + ")"; }).join(", ") });
+      rows.push({ ok: look.subtitled === look.files,
+                  text: look.subtitled + " episodes — subtitles theek" });
+      if ((look.bitmap_subs || []).length) {
+        rows.push({ warn: true,
+                    text: look.bitmap_subs.length + " episodes — subtitle "
+                          + "image-based hai (.srt chahiye)",
+                    detail: look.bitmap_subs.join(", ") });
+      }
+      if ((look.missing_subs || []).length) {
+        rows.push({ bad: true,
+                    text: look.missing_subs.length + " episodes — subtitle "
+                          + "hai hi nahi",
+                    detail: look.missing_subs.join(", ") });
+      }
+    }
+    return {
+      openAdd: function () {
+        setState({ addOpen: true, addLook: null, addError: "" });
+      },
+      closeAdd: function () { setState({ addOpen: false }); },
+      addOpen: state.addOpen,
+      addRoot: state.addRoot,
+      setAddRoot: function (ev) {
+        setState({ addRoot: ev.target.value.trim(), addLook: null });
+      },
+      pickAddRoot: function () {
+        get("/api/pick?kind=folder&path="
+            + encodeURIComponent(state.addRoot || ""))
+          .then(function (r) {
+            if (!r.available) { openPicker("folder", "out"); return; }
+            if (r.path) setState({ addRoot: r.path, addLook: null });
+          })
+          .catch(function () { openPicker("folder", "out"); });
+      },
+      runLook: function () {
+        setState({ addError: "", addLook: null });
+        post("/api/library/look", { root: state.addRoot })
+          .then(function (data) { setState({ addLook: data }); })
+          .catch(function (err) {
+            setState({ addError: String(err.message || err) });
+          });
+      },
+      startIndex: function () {
+        if (!look) return;
+        startIndexing(state.addRoot, false);
+      },
+      lookBtn: SECONDARY,
+      indexBtn: "background:var(--accent); color:var(--on-accent); font-size:13px; font-weight:600; padding:9px 16px; border-radius:9px; white-space:nowrap; "
+        + (look ? "cursor:pointer; box-shadow:var(--shadow-sm);"
+                : "opacity:.4; pointer-events:none;"),
+      addNotChecked: !look,
+      addChecked: !!look,
+      addError: state.addError,
+      addRows: rows.map(function (r) {
+        var tint = r.bad ? "bad" : (r.warn ? "warn" : (r.ok ? "ok" : "warn"));
+        return { text: r.text, detail: r.detail || "",
+                 icon: r.bad ? "✗" : (r.warn ? "!" : (r.ok ? "✓" : "!")),
+                 mark: "flex:0 0 16px; text-align:center; font-size:12px; font-weight:700; color:var(--" + tint + ");" };
+      }),
+      addEstimate: look
+        ? ("Picture index me lagega: lagbhag " + Math.max(1, Math.round(look.minutes / 60))
+           + " ghanta. Raat bhar chhod do — beech me band ho jaaye to dobara "
+           + "chalane pe wahin se shuru hoga.")
+        : "",
+
+      libBusy: !!t,
+      libState: running ? "WORKING" : (t && t.status === "failed" ? "FAILED" : "DONE"),
+      libBadge: badgeStyle(running ? "busy" : (t && t.status === "failed" ? "bad" : "ok")),
+      libDot: dot(running ? "busy" : (t && t.status === "failed" ? "bad" : "ok")),
+      libStage: t ? (t.error || t.stage || "") : "",
+      libElapsed: t ? clock(t.seconds) : "",
+      libCount: (t && t.scenes_total)
+        ? ("episode " + t.scenes_done + " / " + t.scenes_total) : "",
+      libBar: (running && !(t && t.scenes_total))
+        ? "height:100%; border-radius:99px; background:linear-gradient(90deg,var(--border) 0%,var(--busy) 50%,var(--border) 100%); background-size:220px 100%; animation:shimmer 1.1s linear infinite;"
+        : "width:" + (t ? t.percent : 0) + "%; height:100%; background:var(--busy); border-radius:99px; transition:width .4s ease;",
+      libLines: t ? (t.lines || []) : [],
+      rowBtn: "padding:6px 10px; border-radius:8px; font-size:12px; font-weight:500; color:var(--muted); cursor:pointer; transition:all .12s ease;",
     };
   }
 
@@ -881,13 +1000,25 @@
       filterMovie: function () { setState({ filter: "movie" }); },
       filterIssue: function () { setState({ filter: "issue" }); },
 
-      shown: rows.map(titleView),
+      // Stops a click inside a panel from reaching the backdrop behind it,
+      // which closes on purpose. Defined once, in the scope every screen
+      // shares: when it lived in the picker's own scope, the closed-picker
+      // stub quietly replaced it with a no-op and every other panel started
+      // dismissing itself the moment it was touched.
+      swallow: function (ev) { ev.stopPropagation(); },
+
+      shown: rows.map(function (t) {
+        var view = titleView(t);
+        view.update = function () { startIndexing(t.media_root, false); };
+        view.rebuild = function () { startIndexing(t.media_root, true); };
+        return view;
+      }),
       databases: lib.databases || [],
       chooseBtn: SECONDARY,
     };
 
-    return Object.assign(common, newVideoScope(), editorScope(),
-                         pickerScope());
+    return Object.assign(common, libraryScope(), newVideoScope(),
+                         editorScope(), pickerScope());
   }
 
   function applyTheme(name) {
@@ -913,8 +1044,53 @@
     window.DCX.render(where, screens, scope());
   }
 
+  /* A file dragged onto the page arrives as its name and its CONTENTS —
+   * never its path, which is the browser refusing on purpose. So the
+   * contents are sent to the server, written down somewhere real, and that
+   * path is used. Same outcome, different road, and the only road that
+   * works when a file is somewhere awkward to navigate to. */
+  function dropped(file) {
+    var target = /\.(json|txt)$/i.test(file.name) ? "script"
+               : (/\.(m4a|mp3|wav|aac|flac|ogg|mp4)$/i.test(file.name)
+                  ? "audio" : "");
+    if (!target) {
+      setState({ scriptError: file.name + " — ye na script hai na voiceover. "
+                              + ".json / .txt ya .m4a / .mp3 / .wav chahiye." });
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      post("/api/upload", { name: file.name, data: reader.result })
+        .then(function (saved) { accept(target, saved.path); })
+        .catch(function (err) {
+          setState({ scriptError: String(err.message || err) });
+        });
+    };
+    reader.onerror = function () {
+      setState({ scriptError: file.name + " padhi nahi ja saki" });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function acceptDrops() {
+    ["dragenter", "dragover"].forEach(function (name) {
+      document.addEventListener(name, function (ev) {
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "copy";
+      });
+    });
+    document.addEventListener("drop", function (ev) {
+      ev.preventDefault();
+      var files = ev.dataTransfer && ev.dataTransfer.files;
+      if (!files || !files.length) return;
+      setState({ nav: "New Video" });
+      for (var i = 0; i < Math.min(files.length, 2); i++) dropped(files[i]);
+    });
+  }
+
   function start() {
     where = document.getElementById("app");
+    acceptDrops();
     fetch("/ui/design").then(function (r) { return r.text(); })
       .then(function (text) {
         var style = document.createElement("style");

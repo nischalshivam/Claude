@@ -29,7 +29,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 
-from . import jobs as jobs_mod
+from . import jobs as jobs_mod, term
 
 # How many log lines a task keeps. Enough to see what went wrong, bounded so
 # a forty-minute render cannot grow without limit.
@@ -187,6 +187,91 @@ def report_dict(rep) -> dict:
         "weak_scenes": sorted({r.beat for r in weak if getattr(r, "beat", None)}),
         "episodes": sorted({r.title for r in rep.requirements}),
     }
+
+
+def look_at_folder(media_root: str) -> dict:
+    """What a folder of episodes holds, before anything slow is started.
+
+    Counting files and finding their subtitles takes seconds. Reading every
+    frame takes hours. Someone should learn that two episodes have no
+    subtitles in the first minute, not the fifth hour — because subtitles
+    are the one thing the slow step cannot fix.
+    """
+    from . import naming, subtitles
+
+    files = list(naming.walk_media(media_root))
+    subbed, missing, bitmap = 0, [], []
+    shows: dict = {}
+    for path in files:
+        mid = naming.parse(path)
+        shows[mid.show] = shows.get(mid.show, 0) + 1
+        try:
+            kind, _sub, cues = subtitles.load_for_video(path)
+        except Exception:
+            kind, cues = "", []
+        if cues:
+            subbed += 1
+        elif kind == "bitmap_only":
+            bitmap.append(mid.label)
+        else:
+            missing.append(mid.label)
+    guess = len(files) * 6.0                # ~6 minutes an episode, measured
+    return {"root": os.path.abspath(media_root), "files": len(files),
+            "subtitled": subbed, "missing_subs": sorted(missing)[:40],
+            "bitmap_subs": sorted(bitmap)[:40],
+            "shows": sorted(shows.items(), key=lambda kv: -kv[1])[:8],
+            "minutes": int(guess)}
+
+
+def index_title(runner: Runner, media_root: str, db: str,
+                pictures: bool = True, force: bool = False) -> Task:
+    """Scan a folder into the library, then read its frames.
+
+    Two steps, in this order and never merged: the first is minutes and can
+    fail in ways a person must fix, the second is hours and cannot start
+    until the first succeeded.
+    """
+    from . import library as library_mod, visual
+
+    def work(task, log):
+        task.stage = "reading subtitles"
+        log(f"scanning {media_root}")
+        res = library_mod.build(media_root, db, log=log)
+        log(f"  {res.added} added {term.sym('dot')} {res.updated} updated "
+            f"{term.sym('dot')} {res.skipped} unchanged")
+        if res.no_subs:
+            log(f"  {len(res.no_subs)} file(s) have no usable subtitles")
+        if not pictures:
+            task.stage = f"{res.added + res.updated + res.skipped} file(s) in "\
+                         "the library"
+            return
+
+        from . import naming
+        only = list(naming.walk_media(media_root))
+        task.scenes_total = len(only)       # the bar counts episodes here
+        task.stage = f"reading frames from {len(only)} file(s)"
+        log(task.stage)
+        seen = {"n": 0}
+
+        def watch(*parts):
+            text = " ".join(str(p) for p in parts)
+            log(text)
+            # visual.build names each file as it starts on it. Counting those
+            # is what turns "this is slow" into "23 of 73".
+            if "frames in" in text:
+                seen["n"] += 1
+                task.scenes_done = seen["n"]
+
+        got = visual.build(db, only=only, force=force, log=watch)
+        task.scenes_done = task.scenes_total
+        done, total = visual.coverage(db)
+        task.stage = f"{done} of {total} file(s) can be checked by picture"
+        log(task.stage)
+        if got.failed:
+            log(f"  {len(got.failed)} file(s) could not be read")
+
+    return runner.start("library", os.path.basename(media_root.rstrip("\\/")),
+                        work)
 
 
 def check(runner: Runner, spec: dict, db: str) -> Task:

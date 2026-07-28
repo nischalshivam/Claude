@@ -138,7 +138,7 @@ def build_folder(out: str) -> dict:
 # Folders and files a picker will show. A browser cannot open a native file
 # dialog from a page, so the tool has to do the walking itself — and it
 # should only ever offer the kinds of file the field is actually for.
-PICK = {"script": (".json",),
+PICK = {"script": (".json", ".txt"),
         "audio": (".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg"),
         "folder": ()}
 
@@ -203,12 +203,13 @@ if kind == "folder":
 elif kind == "audio":
     got = filedialog.askopenfilename(
         title="Voiceover chuno", initialdir=start,
-        filetypes=[("Audio", "*.m4a *.mp3 *.wav *.aac *.flac *.ogg"),
+        filetypes=[("Audio", "*.m4a *.mp3 *.wav *.aac *.flac *.ogg *.mp4"),
                    ("All files", "*.*")])
 else:
     got = filedialog.askopenfilename(
         title="Script chuno", initialdir=start,
-        filetypes=[("Visual script", "*.json"), ("All files", "*.*")])
+        filetypes=[("Visual script", "*.json *.txt"),
+                   ("All files", "*.*")])
 sys.stdout.write(got or "")
 '''
 DIALOG_TIMEOUT_S = 600          # someone may go and look for the file
@@ -299,6 +300,38 @@ def _drives() -> list:
     return found
 
 
+def save_upload(spec: dict, folder: str) -> dict:
+    """Keep a file that was dragged onto the page.
+
+    A dropped file arrives as its NAME and its CONTENTS — never its path,
+    which is the browser refusing on purpose. So the contents are written
+    somewhere real and that path is used, which is the same outcome by a
+    different road, and the one road that works when a file is somewhere
+    awkward to navigate to.
+    """
+    import base64
+
+    name = os.path.basename((spec.get("name") or "dropped").replace("\\", "/"))
+    if not name or name in (".", ".."):
+        return {"error": "that file has no usable name"}
+    data = spec.get("data") or ""
+    try:
+        raw = base64.b64decode(data.split(",")[-1], validate=False)
+    except Exception:
+        return {"error": "the file could not be read"}
+    if not raw:
+        return {"error": "that file is empty"}
+    here = os.path.abspath(folder or os.path.join(os.getcwd(), "dropped"))
+    os.makedirs(here, exist_ok=True)
+    target = os.path.join(here, name)
+    try:
+        with open(target, "wb") as f:
+            f.write(raw)
+    except OSError as exc:
+        return {"error": str(exc)[:200]}
+    return {"path": target, "name": name, "bytes": len(raw)}
+
+
 def library_facts(db_path: str) -> dict:
     try:
         stats = library.stats(db_path)
@@ -336,6 +369,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     db_path = "library.db"
     out_path = ""
     libraries_root = ""
+    uploads = ""
 
     def log_message(self, *_a):             # the terminal stays readable
         pass
@@ -444,6 +478,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                    (query.get("path") or [""])[0]))
             return
 
+        if route == "/api/tasks":
+            self._json({"tasks": RUNNER.all()})
+            return
+
         if route == "/api/summary":
             out = (query.get("out") or [""])[0].strip()
             if not os.path.isdir(out):
@@ -508,6 +546,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if route == "/api/build":
             self._json(builds.build(RUNNER, spec, self.db_path).as_dict())
             return
+        if route == "/api/library/look":
+            root = (spec.get("root") or "").strip()
+            if not os.path.isdir(root):
+                self._json({"error": f"no such folder: {root}"}, 404)
+                return
+            self._json(builds.look_at_folder(root))
+            return
+
+        if route == "/api/library/index":
+            root = (spec.get("root") or "").strip()
+            if not os.path.isdir(root):
+                self._json({"error": f"no such folder: {root}"}, 404)
+                return
+            self._json(builds.index_title(
+                RUNNER, root, spec.get("db") or self.db_path,
+                pictures=spec.get("pictures", True),
+                force=bool(spec.get("force"))).as_dict())
+            return
+
+        if route == "/api/upload":
+            self._json(save_upload(spec, self.uploads))
+            return
+
         if route in ("/api/alternatives", "/api/replace", "/api/edit",
                      "/api/render"):
             self._edit(route, spec)
@@ -673,6 +734,10 @@ def serve(db_path: str = "library.db", out: str = "", port: int = 0,
     Handler.db_path = db_path
     Handler.out_path = os.path.abspath(out) if out else ""
     Handler.libraries_root = libraries_root
+    # Dropped files land beside the database, which is a folder the tool
+    # already owns and already backs up.
+    Handler.uploads = os.path.join(
+        os.path.dirname(os.path.abspath(db_path)) or ".", "dropped")
     port = port or free_port()
     url = f"http://127.0.0.1:{port}/"
     d = term.sym("dot")

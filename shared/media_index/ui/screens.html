@@ -106,9 +106,12 @@
           <div style="font-size:30px; font-weight:700; letter-spacing:-0.035em; line-height:1.1;">Library.</div>
           <div style="font-size:14px; color:var(--muted); padding-top:8px; max-width:460px; line-height:1.55;">Har title ek baar index hota hai — uske baad har video me kaam aata hai.</div>
         </div>
-        <div onClick="{{ refresh }}" style="display:flex; align-items:center; gap:7px; background:var(--surface); border:1px solid var(--border-strong); color:var(--text); font-size:13px; font-weight:550; padding:9px 15px; border-radius:9px; cursor:pointer; user-select:none; white-space:nowrap; transition:background .15s ease;" style-hover="background:var(--hover);">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.7-3.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M13.6 2v3.1h-3.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-          Refresh
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div onClick="{{ refresh }}" style="display:flex; align-items:center; gap:7px; background:var(--surface); border:1px solid var(--border-strong); color:var(--text); font-size:13px; font-weight:550; padding:9px 15px; border-radius:9px; cursor:pointer; user-select:none; white-space:nowrap; transition:background .15s ease;" style-hover="background:var(--hover);">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.7-3.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path><path d="M13.6 2v3.1h-3.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            Refresh
+          </div>
+          <div onClick="{{ openAdd }}" style="display:flex; align-items:center; gap:7px; background:var(--accent); color:var(--on-accent); font-size:13px; font-weight:600; padding:10px 16px; border-radius:9px; cursor:pointer; user-select:none; white-space:nowrap; box-shadow:var(--shadow-sm);" style-hover="background:var(--accent-hover);">+ Add title</div>
         </div>
       </div>
 
@@ -148,8 +151,12 @@
                 <div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--faint); padding-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ t.media_root }}</div>
               </div>
               <div style="width:170px; flex:0 0 170px; font-size:12.5px; color:var(--muted); white-space:nowrap;">{{ t.counted }}</div>
-              <div style="width:190px; flex:0 0 190px;">
+              <div style="width:180px; flex:0 0 180px;">
                 <div style="{{ t.badgeStyle }}"><div style="{{ t.dotStyle }}"></div>{{ t.detail }}</div>
+              </div>
+              <div style="flex:0 0 auto; display:flex; gap:4px; white-space:nowrap;">
+                <div onClick="{{ t.update }}" style="{{ rowBtn }}" style-hover="background:var(--hover); color:var(--text);" title="naye episodes scan karo, phir unki tasveerein">Update</div>
+                <div onClick="{{ t.rebuild }}" style="{{ rowBtn }}" style-hover="background:var(--hover); color:var(--text);" title="sab kuch dobara — ghanton ka kaam">Rebuild</div>
               </div>
             </div>
 
@@ -185,6 +192,25 @@
         <div style="margin-top:26px; border:1px dashed var(--border-strong); border-radius:14px; padding:52px 30px; text-align:center;">
           <div style="font-size:15px; font-weight:600;">Abhi koi title nahi</div>
           <div style="font-size:13px; color:var(--muted); padding-top:9px; line-height:1.6; max-width:440px; margin:0 auto;">{{ emptyWhy }}</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ libBusy }}">
+        <div style="margin-top:20px; background:var(--surface); border:1px solid var(--border); border-radius:13px; padding:16px 18px; box-shadow:var(--shadow-sm);">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="{{ libBadge }}"><div style="{{ libDot }}"></div>{{ libState }}</div>
+            <div style="flex:1; font-size:12.5px; color:var(--text);">{{ libStage }}</div>
+            <div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--faint);">{{ libElapsed }}</div>
+          </div>
+          <div style="margin-top:12px; height:5px; border-radius:99px; background:var(--border); overflow:hidden;">
+            <div style="{{ libBar }}"></div>
+          </div>
+          <sc-if value="{{ libCount }}">
+            <div style="margin-top:9px; font-size:11.5px; color:var(--muted);">{{ libCount }}</div>
+          </sc-if>
+          <div style="margin-top:12px; max-height:150px; overflow:auto; font-family:'Cascadia Code', Consolas, monospace; font-size:10.5px; color:var(--faint); line-height:1.7;">
+            <sc-for list="{{ libLines }}" as="l"><div style="white-space:pre-wrap; word-break:break-word;">{{ l }}</div></sc-for>
+          </div>
         </div>
       </sc-if>
 
@@ -530,6 +556,50 @@
     </sc-if>
 
   </div>
+
+  <sc-if value="{{ addOpen }}">
+  <div onClick="{{ closeAdd }}" style="position:fixed; inset:0; background:rgba(10,14,20,.45); display:flex; justify-content:flex-end; z-index:55; animation:fadein .12s ease;">
+    <div onClick="{{ swallow }}" style="width:480px; max-width:94vw; height:100%; overflow:auto; background:var(--surface); border-left:1px solid var(--border-strong); box-shadow:var(--shadow-lg); padding:24px 24px 40px 24px; animation:slidein .16s ease;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="flex:1; font-size:17px; font-weight:650;">Add title</div>
+        <div onClick="{{ closeAdd }}" style="color:var(--faint); cursor:pointer; font-size:18px; line-height:1;" style-hover="color:var(--text);">×</div>
+      </div>
+      <div style="font-size:12.5px; color:var(--muted); padding-top:9px; line-height:1.6;">Poori series ka top folder do — Season 1, Season 2 andar ho to bhi chalega. Har episode ke saath uski .srt honi chahiye.</div>
+
+      <div style="padding-top:20px; font-size:12px; font-weight:550; color:var(--muted);">Video folder</div>
+      <div style="display:flex; gap:7px; padding-top:6px;">
+        <input type="text" value="{{ addRoot }}" data-keep="addRoot" onChange="{{ setAddRoot }}" placeholder="E:\Game of Thrones" style="flex:1; min-width:0; box-sizing:border-box; background:var(--surface); border:1px solid var(--border-strong); border-radius:9px; padding:9px 12px; color:var(--text); font-size:12px; outline:none; font-family:'Cascadia Code', Consolas, monospace;" style-focus="border-color:var(--accent);">
+        <div onClick="{{ pickAddRoot }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Browse</div>
+      </div>
+
+      <div style="display:flex; gap:8px; padding-top:18px;">
+        <div onClick="{{ runLook }}" style="{{ lookBtn }}" style-hover="background:var(--hover);">Check</div>
+        <div onClick="{{ startIndex }}" style="{{ indexBtn }}">Build index</div>
+      </div>
+      <sc-if value="{{ addNotChecked }}">
+        <div style="padding-top:9px; font-size:11.5px; color:var(--faint);">Pehle Check chalao — kuch second lagta hai.</div>
+      </sc-if>
+
+      <sc-if value="{{ addError }}">
+        <div style="margin-top:18px; background:var(--bad-soft); border:1px solid var(--bad-line); color:var(--bad); border-radius:11px; padding:13px 15px; font-size:12.5px; line-height:1.6;">{{ addError }}</div>
+      </sc-if>
+
+      <sc-if value="{{ addChecked }}">
+        <div style="margin-top:20px; background:var(--raised); border-radius:12px; padding:15px 16px; display:flex; flex-direction:column; gap:9px;">
+          <sc-for list="{{ addRows }}" as="r">
+            <div style="display:flex; align-items:flex-start; gap:9px;">
+              <div style="{{ r.mark }}">{{ r.icon }}</div>
+              <div style="flex:1; min-width:0; font-size:12.5px; color:var(--text); line-height:1.55;">{{ r.text }}
+                <sc-if value="{{ r.detail }}"><div style="font-family:'Cascadia Code', Consolas, monospace; font-size:11px; color:var(--muted); padding-top:3px; word-break:break-word;">{{ r.detail }}</div></sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="padding-top:14px; font-size:11.5px; color:var(--faint); line-height:1.6;">{{ addEstimate }}</div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
 
   <!-- Find another: the same episode, searched again by description. This is
        the screen the whole editor exists for. -->

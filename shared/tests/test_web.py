@@ -341,6 +341,44 @@ class TestTheServer(_Built):
             code = exc.code
         self.assertEqual(code, 416)
 
+    def test_a_dropped_file_is_kept_and_its_path_handed_back(self):
+        """A browser hands a dropped file its name and its contents, never
+        its path — on purpose. Writing the contents down somewhere real is
+        the only road that works when a file is awkward to navigate to."""
+        import base64
+        payload = base64.b64encode(b'[{"beat": 1}]').decode()
+        code, got = self._post("/api/upload", {
+            "name": "gus4.json", "data": "data:application/json;base64," + payload})
+        self.assertEqual(code, 200)
+        self.assertTrue(os.path.isfile(got["path"]))
+        with open(got["path"], "rb") as f:
+            self.assertEqual(f.read(), b'[{"beat": 1}]')
+
+    def test_a_dropped_file_cannot_be_written_outside_its_folder(self):
+        import base64
+        code, got = self._post("/api/upload", {
+            "name": "../../escaped.json",
+            "data": base64.b64encode(b"{}").decode()})
+        self.assertEqual(code, 200)
+        self.assertEqual(os.path.basename(got["path"]), "escaped.json")
+        self.assertIn("dropped", got["path"])
+
+    def test_a_script_saved_as_txt_is_offered_too(self):
+        """A script copied out of a chat page is often saved as .txt, and
+        read_beats only cares that the contents are JSON."""
+        open(os.path.join(self.tmp, "essay.txt"), "w").close()
+        data = json.loads(self._get("/api/browse?kind=script&path="
+                                    + urllib.parse.quote(self.tmp))[1])
+        self.assertIn("essay.txt", [f["name"] for f in data["files"]])
+
+    def test_a_folder_of_episodes_is_looked_at_before_anything_slow_starts(self):
+        code, got = self._post("/api/library/look", {"root": self.tmp})
+        self.assertEqual(code, 200)
+        self.assertIn("files", got)
+        self.assertIn("missing_subs", got)
+        self.assertEqual(self._post("/api/library/look",
+                                    {"root": "/nowhere"})[0], 404)
+
     def test_a_missing_database_is_reported_rather_than_raised(self):
         code, body = self._get("/api/library")
         self.assertEqual(code, 200)
