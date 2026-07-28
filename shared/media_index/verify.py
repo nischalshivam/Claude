@@ -1014,6 +1014,100 @@ def place_by_picture(db_path: str, beats: list, placements: list,
     return placed
 
 
+# ---------------------------------------------------------------------------
+# pacing — a run is a sequence even when nothing in it can be matched
+# ---------------------------------------------------------------------------
+
+# Fewer than this and the run is a cutaway, not a walk through a scene:
+# there is no order worth preserving and filler is as good an answer.
+PACE_MIN_SHOTS = 4
+
+
+def pace_runs(db_path: str, beats: list, placements: list,
+              windows: dict | None = None, log=lambda *a: None) -> int:
+    """Lay a run with no quoted line in ORDER across the stretch it belongs to.
+
+    This is the answer to the loudest complaint about the whole tool — "the
+    clips are random" — and the reason it was true is not that the matching
+    was bad. It is that a run nothing could match never had an ORDER applied
+    to it at all.
+
+    Alignment already builds the right shape for such a run: the script says
+    how long each shot is, so the shots are seconds apart in a known
+    sequence. But with no anchor there was nowhere to put that shape, so it
+    was parked at the middle of the episode and left as method "none" —
+    correct, and unusable. Every shot then fell through to filler, and filler
+    walks the episode by the golden ratio: eighty-five consecutive shots of
+    one four-minute scene came back in eighty-five unrelated orders. Shot 3
+    from the end of the scene, shot 4 from the start. That is what "random"
+    looked like, and no amount of better matching would have fixed it,
+    because nothing was being matched.
+
+    Once `locate_run` has said WHERE the scene is, the shape has somewhere to
+    go. Slide it there, keep the script's own spacing, and the scene plays
+    through in the order it happens — which is what an editor with the
+    footage and the script would do without thinking about it.
+
+    The spacing is compressed to fit and never stretched to fill. A window is
+    wider than the run on purpose; spreading the run to the edges of it would
+    invent gaps the script never asked for.
+
+    Returns how many shots were laid out this way.
+    """
+    if not placements or not windows:
+        return 0
+    by_key = {(p.beat, p.shot): p for p in placements}
+    moved = 0
+    for run in align.runs(beats):
+        mine = [by_key.get((e.beat, e.shot)) for e in run.entries]
+        if len(mine) < PACE_MIN_SHOTS or any(p is None for p in mine):
+            continue
+        loose = [p for p in mine if not p.ok]
+        if len(loose) < PACE_MIN_SHOTS:
+            continue                # dialogue placed this run; leave it alone
+        span = windows.get(run.entries[0].beat)
+        if not span or span[1] <= span[0]:
+            continue                # the picture has no opinion — filler, then
+        path = next((p.path for p in mine if p.path), "")
+        if not path:
+            continue
+
+        lo, hi = float(span[0]), float(span[1])
+        ax = align.axis(run)
+        reach = max(1e-6, ax[-1] - ax[0])
+        squeeze = min(1.0, (hi - lo) / reach)
+        start = lo + max(0.0, ((hi - lo) - reach * squeeze) / 2.0)
+
+        # One shot in the run WAS found — by a quoted line, or by its picture
+        # standing clear of the episode's noise. That is a real measurement
+        # and it outranks the middle of a window: hang the sequence off it
+        # rather than off a guess, as long as the run still fits the window.
+        firm = [(i, p) for i, p in enumerate(mine) if p.ok and p.path == path]
+        if firm:
+            i, p = firm[len(firm) // 2]
+            start = (p.start_ms / 1000.0) - (ax[i] - ax[0]) * squeeze
+            start = min(max(start, lo), max(lo, hi - reach * squeeze))
+
+        for i, p in enumerate(mine):
+            if p.ok:
+                continue
+            hold = max(1, p.end_ms - p.start_ms)
+            p.path = path
+            p.start_ms = int(max(0.0, start + (ax[i] - ax[0]) * squeeze) * 1000)
+            p.end_ms = p.start_ms + hold
+            p.method = "paced"
+            p.confidence = "low"
+            p.note = "laid in script order across the scene this run was found in"
+            moved += 1
+        log(f"      {run.label}: {len(loose)} shot(s) laid in order across "
+            f"{start/60:.0f}-{(start + reach * squeeze)/60:.0f} min"
+            + (" (hung off the one shot that was found)" if firm else ""))
+    if moved:
+        log(f"      paced: {moved} shot(s) placed in script order rather than "
+            "scattered as filler")
+    return moved
+
+
 def apply(db_path: str, beats: list, placements: list,
           log=lambda *a: None) -> Report:
     """Check and correct a whole script's placements. Never raises.

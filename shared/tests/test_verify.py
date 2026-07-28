@@ -1624,3 +1624,91 @@ class TestARunIsBoundedByItsOwnPlacedShots(unittest.TestCase):
         late = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0,
                                      window=(2700.0, 2800.0))
         self.assertLessEqual(late, runner.FILLER_SPREAD[1] * 2800.0)
+
+
+class TestPacingARunNothingCouldMatch(unittest.TestCase):
+    """The fix for "the clips are random", which they were, on purpose.
+
+    Eighty-five consecutive shots of one wordless scene quote no line, so
+    alignment leaves every one of them method "none", and every one of them
+    falls through to filler. Filler walks the episode by the golden ratio —
+    deliberately, so that unrelated shots do not pile up in one corner. Used
+    on a whole run it destroys the only thing that run had: its order.
+    """
+
+    def _beats(self, shots=8, seconds=6.0):
+        return [{"beat": 1, "shots": [
+            {"kind": "clip", "source": "Show", "season_episode": "S04E01",
+             "visual": f"shot number {i}", "duration_target_sec": seconds}
+            for i in range(shots)]}]
+
+    def _loose(self, shots=8, seconds=6.0, path="/lib/ep.mkv"):
+        return [align.Placement(beat=1, shot=i + 1, path=path,
+                                start_ms=0, end_ms=int(seconds * 1000),
+                                method="none") for i in range(shots)]
+
+    def test_the_run_is_laid_out_in_order_inside_its_window(self):
+        beats, places = self._beats(), self._loose()
+        n = verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        self.assertEqual(n, 8)
+        starts = [p.start_ms for p in places]
+        self.assertEqual(starts, sorted(starts))
+        self.assertTrue(all(p.method == "paced" for p in places))
+        self.assertTrue(all(1800.0 <= p.start_ms / 1000.0 <= 2100.0
+                            for p in places))
+
+    def test_the_script_s_own_spacing_is_kept_not_stretched_to_fill(self):
+        """A window is wider than the run on purpose. Spreading the run to
+        its edges would invent gaps the script never asked for."""
+        beats, places = self._beats(shots=6, seconds=5.0), self._loose(6, 5.0)
+        verify.pace_runs("db", beats, places, {1: (600.0, 1200.0)})
+        gaps = [(b.start_ms - a.start_ms) / 1000.0
+                for a, b in zip(places, places[1:])]
+        for gap in gaps:
+            self.assertAlmostEqual(gap, 5.0, delta=0.2)
+
+    def test_a_run_longer_than_its_window_is_squeezed_not_spilled(self):
+        beats, places = self._beats(shots=10, seconds=20.0), self._loose(10, 20.0)
+        verify.pace_runs("db", beats, places, {1: (300.0, 360.0)})
+        self.assertTrue(all(299.0 <= p.start_ms / 1000.0 <= 361.0
+                            for p in places))
+        starts = [p.start_ms for p in places]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_the_one_shot_that_was_found_holds_the_sequence_in_place(self):
+        beats, places = self._beats(), self._loose()
+        places[4].method = "picture"
+        places[4].start_ms, places[4].end_ms = 1900_000, 1906_000
+        verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        self.assertEqual(places[4].start_ms, 1900_000)
+        self.assertEqual(places[4].method, "picture")
+        # its neighbours sit one shot-length either side of it
+        self.assertAlmostEqual(places[3].start_ms / 1000.0, 1894.0, delta=0.5)
+        self.assertAlmostEqual(places[5].start_ms / 1000.0, 1906.0, delta=0.5)
+
+    def test_a_run_dialogue_already_placed_is_left_alone(self):
+        beats, places = self._beats(), self._loose()
+        for p in places[:6]:
+            p.method = "anchor"
+        n = verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        self.assertEqual(n, 0)
+        self.assertTrue(all(p.method == "none" for p in places[6:]))
+
+    def test_without_a_window_nothing_is_paced(self):
+        """No window means the picture had no opinion about where this run
+        happens. Laying it out confidently in a place nobody checked would be
+        the same randomness with a better label on it."""
+        beats, places = self._beats(), self._loose()
+        self.assertEqual(verify.pace_runs("db", beats, places, {}), 0)
+        self.assertEqual(verify.pace_runs("db", beats, places, None), 0)
+        self.assertTrue(all(p.method == "none" for p in places))
+
+    def test_a_cutaway_too_short_to_have_an_order_is_left_for_filler(self):
+        beats, places = self._beats(shots=2), self._loose(shots=2)
+        self.assertEqual(
+            verify.pace_runs("db", beats, places, {1: (600.0, 900.0)}), 0)
+
+    def test_a_run_with_no_episode_on_it_is_skipped_not_crashed(self):
+        beats, places = self._beats(), self._loose(path="")
+        self.assertEqual(
+            verify.pace_runs("db", beats, places, {1: (600.0, 900.0)}), 0)

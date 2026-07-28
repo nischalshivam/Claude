@@ -85,6 +85,15 @@ class SceneResult:
         return sum(1 for m in self.methods.values() if m == "interpolated")
 
     @property
+    def paced(self) -> int:
+        """Assets laid in script order across the scene the run was found in.
+
+        Not checked against anything, like filler — but unlike filler it is
+        in the right place relative to its neighbours, so a scene made of
+        these plays through instead of jumping about."""
+        return sum(1 for m in self.methods.values() if m == "paced")
+
+    @property
     def filler(self) -> int:
         """Assets from the right episode but no particular moment of it.
 
@@ -539,6 +548,7 @@ def write_manifest(job, result: JobResult) -> str:
             "anchored": s.anchored,
             "verified": s.verified,
             "interpolated": s.interpolated,
+            "paced": s.paced,
             "filler": s.filler,
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
@@ -670,6 +680,13 @@ def run_job(job, report, log=print) -> JobResult:
         windows = verify.locate_runs(job.db, report.beats, log=log)
         verify.place_by_picture(job.db, report.beats, placements,
                                 episodes=owns, windows=windows, log=log)
+        # And whatever is still homeless after that is not homeless at all: it
+        # is a shot with a known position in a known sequence inside a known
+        # stretch of the episode. Laying those out in order is the difference
+        # between a scene that plays and eighty-five clips in eighty-five
+        # unrelated places. Runs last, so it only ever fills what neither the
+        # dialogue nor the picture could speak for.
+        verify.pace_runs(job.db, report.beats, placements, windows, log=log)
         # A run's own placed shots outrank any model's opinion about where it
         # belongs — they are measurements, and the window is a guess. Worked
         # out after place_by_picture so it sees everything that got placed.

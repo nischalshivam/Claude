@@ -657,7 +657,7 @@
       edHasScenes: !!b && b.scenes.length > 0,
       edCounts: b ? Object.keys(b.counts).sort().map(function (k) {
         var tone = { anchor: "ok", verified: "busy", picture: "busy",
-                     interpolated: "warn", filler: "muted",
+                     interpolated: "warn", paced: "warn", filler: "muted",
                      chosen: "accent" }[k] || "muted";
         return { label: k + " " + b.counts[k], style: badgeStyle(
                    tone === "accent" ? "busy" : tone),
@@ -674,7 +674,7 @@
             var on = state.sel && state.sel.scene === sc.scene
                      && state.sel.file === it.file;
             var tone = { anchor: "ok", verified: "busy", picture: "busy",
-                         interpolated: "warn", filler: "muted",
+                         interpolated: "warn", paced: "warn", filler: "muted",
                          chosen: "ok" }[it.placed_by] || "muted";
             return {
               // #t makes the browser seek one frame in and actually paint
@@ -714,7 +714,7 @@
         duration: (got.item.duration || 0).toFixed(1),
         placed_by: got.item.placed_by || "?",
         badge: badgeStyle({ anchor: "ok", verified: "busy", picture: "busy",
-                            interpolated: "warn", filler: "muted",
+                            interpolated: "warn", paced: "warn", filler: "muted",
                             chosen: "ok" }[got.item.placed_by] || "muted"),
       } : { scene: "", narration: "", url: "", source: "", at: "",
             duration: "", placed_by: "", badge: "",
