@@ -141,7 +141,7 @@
         clearInterval(timer);
         timer = null;                   // the server went away; stop asking
       });
-    }, 1000);
+    }, 2500);
   }
 
   function spec() {
@@ -1059,8 +1059,32 @@
 
   /* ----------------------------------------------------------------- start */
 
+  var pending = false;
+
+  function selecting() {
+    // Text being selected inside the app. Redrawing throws the selection
+    // away, and a log that redraws once a second is a log nobody can copy
+    // a line out of — which is exactly when someone most wants to.
+    var sel = window.getSelection && window.getSelection();
+    return !!(sel && !sel.isCollapsed && sel.rangeCount
+              && where && where.contains(sel.anchorNode));
+  }
+
   function draw() {
     if (!where || !screens) return;
+    if (selecting()) {
+      if (!pending) {
+        pending = true;
+        // Try again once the selection is let go, so nothing is lost —
+        // only postponed.
+        document.addEventListener("mouseup", function again() {
+          document.removeEventListener("mouseup", again);
+          pending = false;
+          setTimeout(draw, 60);
+        });
+      }
+      return;
+    }
     window.DCX.render(where, screens, scope());
   }
 

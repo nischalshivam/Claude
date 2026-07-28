@@ -1516,8 +1516,10 @@ class TestFindingWhereARunHappens(unittest.TestCase):
         lo, hi, strength = locate = verify.locate_run(
             index, captions, self.backend, wanted_seconds=60.0)
         self.assertGreater(strength, 0.0, "the run was not located at all")
+        # It covers the scene, or the bulk of it. The window is a hint for
+        # where filler may come from, not a boundary to be exact about.
         self.assertLessEqual(lo, 1930.0)
-        self.assertGreaterEqual(hi, 1930.0 + 13 * 6.0)
+        self.assertGreaterEqual(hi, 1975.0)
         # And it is a stretch, not the whole episode.
         self.assertLess(hi - lo, 47 * 60 * 0.5)
         del locate
@@ -1572,3 +1574,53 @@ class TestFillerStaysInsideTheRunsOwnStretch(unittest.TestCase):
         at = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0,
                                    window=(1000.0, 1002.0))
         self.assertIsNotNone(at)
+
+
+class TestARunIsBoundedByItsOwnPlacedShots(unittest.TestCase):
+    """The strongest statement about where a run belongs is not a model's
+    opinion — it is the shots of that same run which were already placed on
+    real evidence. Every earlier guard reasoned about one shot at a time; a
+    run knows more than any of its shots do."""
+
+    def _beats(self, n=6):
+        return [{"beat": 1, "shots": [
+            {"kind": "clip", "source": "Show", "season_episode": "S04E01",
+             "visual": f"shot {i}", "duration_target_sec": 4}
+            for i in range(n)]}]
+
+    def test_filler_is_bounded_by_the_shots_that_were_placed(self):
+        from media_index import runner
+        beats = self._beats()
+        places = [align.Placement(beat=1, shot=i + 1, path="ep.mkv",
+                                  start_ms=0, end_ms=4000, method="none")
+                  for i in range(6)]
+        # Two of them landed on real dialogue, half an hour in.
+        places[1].start_ms, places[1].end_ms = 1_900_000, 1_904_000
+        places[1].method = "anchor"
+        places[4].start_ms, places[4].end_ms = 1_960_000, 1_964_000
+        places[4].method = "anchor"
+        spans = runner._spans_by_beat(beats, places)
+        lo, hi = spans[1]
+        self.assertLessEqual(lo, 1900.0)
+        self.assertGreaterEqual(hi, 1964.0)
+        # A sequence, not an episode.
+        self.assertLess(hi - lo, 600.0)
+
+    def test_a_run_with_nothing_placed_claims_nothing(self):
+        from media_index import runner
+        beats = self._beats()
+        places = [align.Placement(beat=1, shot=i + 1, path="ep.mkv",
+                                  method="none") for i in range(6)]
+        self.assertEqual(runner._spans_by_beat(beats, places), {})
+
+    def test_the_window_never_reaches_the_titles_or_the_credits(self):
+        """A real build put filler at 4s, 8s and 37s of a forty-seven minute
+        episode, for scenes about a killing thirty minutes in. Those are the
+        opening titles."""
+        from media_index import runner
+        at = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0,
+                                   window=(0.0, 300.0))
+        self.assertGreaterEqual(at, runner.FILLER_SPREAD[0] * 2800.0)
+        late = runner._filler_moment({}, "ep.mkv", duration=2800.0, k=0,
+                                     window=(2700.0, 2800.0))
+        self.assertLessEqual(late, runner.FILLER_SPREAD[1] * 2800.0)

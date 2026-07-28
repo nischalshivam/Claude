@@ -775,7 +775,13 @@ WINDOW_MAX_S = 600.0
 # How far past an ordinary window the best one has to stand before it is
 # believed. Below this the episode has no opinion and the whole of it is
 # fairer than a confident wrong quarter of it.
-WINDOW_EDGE = 1.25
+WINDOW_EDGE = 1.9
+# Never the titles, never the recap, never the credits. Those are the most
+# visually distinctive frames in any episode — hard cuts, captions, a
+# montage — so a search for "the part that stands out" walks straight into
+# them. A real build put filler at 4s, 8s and 37s of a forty-seven minute
+# episode for scenes about a killing thirty minutes in.
+WINDOW_KEEP_OUT = (0.06, 0.97)
 # The chosen window is widened by this much on each side. The window is a
 # hint for filler, not a boundary: picking the highest-scoring START can
 # clip the tail of the very run it just found, and losing the last two shots
@@ -812,6 +818,8 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
 
     times = np.asarray(index.times, dtype=np.float64)
     length = float(times[-1] - times[0]) or 1.0
+    floor = times[0] + WINDOW_KEEP_OUT[0] * length
+    ceiling = times[0] + WINDOW_KEEP_OUT[1] * length
     span = min(WINDOW_MAX_S,
                max(WINDOW_MIN_S, WINDOW_SPAN * float(wanted_seconds or 0.0)))
     if span >= length:
@@ -819,14 +827,18 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
 
     step = max(1, int(len(times) / 240))         # ~240 windows, whatever the length
     scores, starts = [], []
-    lo = times[0]
-    while lo + span <= times[-1]:
+    lo = floor
+    while lo + span <= ceiling:
         inside = (times >= lo) & (times <= lo + span)
         if inside.any():
-            # Each shot contributes its own best frame in this window. A run
-            # is well placed when MANY of its shots are happy here, not when
-            # one of them is ecstatic.
-            scores.append(float(np.median(sims[:, inside].max(axis=1))))
+            # The best quarter of the shots, not all of them. Two shots in
+            # three carry a description no model can place — "he thinks about
+            # what he has done" is not a picture — and averaging those in
+            # means the handful that CAN be placed never move the number.
+            # The median over sixty such shots is a measure of the noise.
+            best = np.sort(sims[:, inside].max(axis=1))[::-1]
+            keep = max(2, int(round(len(best) * 0.25)))
+            scores.append(float(best[:keep].mean()))
             starts.append(lo)
         lo += (times[step] - times[0]) if step < len(times) else span
     if len(scores) < 4:
@@ -842,8 +854,8 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
     if strength < WINDOW_EDGE:
         return (0.0, 0.0, 0.0)
     pad = span * WINDOW_PAD
-    return (max(float(times[0]), float(starts[best]) - pad),
-            min(float(times[-1]), float(starts[best] + span) + pad),
+    return (max(floor, float(starts[best]) - pad),
+            min(ceiling, float(starts[best] + span) + pad),
             strength)
 
 

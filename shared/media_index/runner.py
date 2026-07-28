@@ -250,12 +250,17 @@ def _filler_moment(used: dict | None, path: str, duration: float,
         return None
     lo, hi = FILLER_SPREAD[0] * duration, FILLER_SPREAD[1] * duration
     if window and window[1] > window[0]:
-        # The picture index worked out which stretch of the episode this run
-        # actually happens in. Filler stays inside it. Scattered across the
-        # whole episode instead, a video about one four-minute scene pulled
-        # sixty-five shots from thirty-eight minutes of it — which is why
-        # the footage looked unrelated: it was.
-        lo, hi = max(0.0, window[0]), min(duration, window[1])
+        # The stretch of the episode this run actually occupies. Filler stays
+        # inside it. Scattered across the whole episode instead, a video
+        # about one four-minute scene pulled eighty-one shots from the whole
+        # forty-seven minutes of it — which is why the footage looked
+        # unrelated: it was.
+        #
+        # Clamped to the same bounds as the spread, never past them. A window
+        # that reaches the titles is a window that puts "Previously on" under
+        # a sentence about a killing.
+        lo = max(lo, min(window[0], hi - 8.0))
+        hi = min(hi, max(window[1], lo + 8.0))
         if hi - lo < 8.0:
             lo, hi = (FILLER_SPREAD[0] * duration,
                       FILLER_SPREAD[1] * duration)
@@ -545,6 +550,41 @@ def write_manifest(job, result: JobResult) -> str:
     return path
 
 
+# How far past the shots a run DID place its filler may sit. A run whose
+# anchors cover ninety seconds is describing a sequence, not a whole episode.
+RUN_SPAN_PAD_S = 120.0
+
+
+def _spans_by_beat(beats: list, placements: list) -> dict:
+    """{beat: (lo, hi)} — the stretch each run's placed shots actually cover.
+
+    The strongest statement about where a run belongs is not a model's
+    opinion; it is the shots of that same run which were already placed on
+    real evidence. A run with four anchors between 31 and 36 minutes is
+    describing that sequence, and its unplaced shots belong beside them —
+    not spread across the episode by a golden-ratio walk that has never
+    heard of the scene.
+
+    This is what was missing. Every other guard reasoned about one shot at a
+    time; a run knows more than any of its shots do.
+    """
+    out: dict = {}
+    by_key = {(p.beat, p.shot): p for p in placements}
+    for run in align.runs(beats):
+        real = []
+        for entry in run.entries:
+            p = by_key.get((entry.beat, entry.shot))
+            if p is not None and p.ok and p.path:
+                real.append((p.start_ms / 1000.0, p.end_ms / 1000.0))
+        if not real:
+            continue
+        lo = min(a for a, _b in real) - RUN_SPAN_PAD_S
+        hi = max(b for _a, b in real) + RUN_SPAN_PAD_S
+        for entry in run.entries:
+            out[entry.beat] = (max(0.0, lo), hi)
+    return out
+
+
 def _episodes_by_beat(db_path: str, beats: list) -> dict:
     """{beat number: episode file} for every run in the script.
 
@@ -619,6 +659,15 @@ def run_job(job, report, log=print) -> JobResult:
         windows = verify.locate_runs(job.db, report.beats, log=log)
         verify.place_by_picture(job.db, report.beats, placements,
                                 episodes=owns, windows=windows, log=log)
+        # A run's own placed shots outrank any model's opinion about where it
+        # belongs — they are measurements, and the window is a guess. Worked
+        # out after place_by_picture so it sees everything that got placed.
+        found = _spans_by_beat(report.beats, placements)
+        for beat_no, span in found.items():
+            windows[beat_no] = span
+        if found:
+            log(f"    {len(set(found.values()))} run(s) bounded by their own "
+                "placed shots; filler stays inside those")
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
                                 owns.get(beat.get("beat", i), ""),
