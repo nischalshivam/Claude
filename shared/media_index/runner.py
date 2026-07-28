@@ -593,6 +593,13 @@ def run_job(job, report, log=print) -> JobResult:
         # could be placed. A beat nobody could place still names its episode,
         # and that is enough to show the right show rather than nothing.
         owns = _episodes_by_beat(job.db, report.beats)
+        # Shots dialogue could not place used to fall straight through to
+        # filler. Now the picture index is asked where the description
+        # actually happens — which is the only thing that works on a scene
+        # nobody speaks in, and those are the scenes worth making videos
+        # about. Runs after verify so it only sees what is genuinely homeless.
+        verify.place_by_picture(job.db, report.beats, placements,
+                                episodes=owns, log=log)
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
                                 owns.get(beat.get("beat", i), ""))

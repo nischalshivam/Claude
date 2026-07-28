@@ -646,8 +646,9 @@
         || "Upar folder ka path daalo — wahi jo New Video me output folder tha. Ya New Video se ek video banao.",
       edHasScenes: !!b && b.scenes.length > 0,
       edCounts: b ? Object.keys(b.counts).sort().map(function (k) {
-        var tone = { anchor: "ok", verified: "busy", interpolated: "warn",
-                     filler: "muted", chosen: "accent" }[k] || "muted";
+        var tone = { anchor: "ok", verified: "busy", picture: "busy",
+                     interpolated: "warn", filler: "muted",
+                     chosen: "accent" }[k] || "muted";
         return { label: k + " " + b.counts[k], style: badgeStyle(
                    tone === "accent" ? "busy" : tone),
                  dot: dot(tone === "accent" ? "busy" : tone) };
@@ -662,7 +663,7 @@
           items: sc.items.map(function (it) {
             var on = state.sel && state.sel.scene === sc.scene
                      && state.sel.file === it.file;
-            var tone = { anchor: "ok", verified: "busy",
+            var tone = { anchor: "ok", verified: "busy", picture: "busy",
                          interpolated: "warn", filler: "muted",
                          chosen: "ok" }[it.placed_by] || "muted";
             return {
@@ -702,7 +703,7 @@
         at: "at " + clock(got.item.source_start || 0),
         duration: (got.item.duration || 0).toFixed(1),
         placed_by: got.item.placed_by || "?",
-        badge: badgeStyle({ anchor: "ok", verified: "busy",
+        badge: badgeStyle({ anchor: "ok", verified: "busy", picture: "busy",
                             interpolated: "warn", filler: "muted",
                             chosen: "ok" }[got.item.placed_by] || "muted"),
       } : { scene: "", narration: "", url: "", source: "", at: "",

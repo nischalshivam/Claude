@@ -1364,3 +1364,112 @@ class TestWhatAnUnrelatedCaptionScoresHereAnyway(unittest.TestCase):
         with mock.patch.object(verify, "lift_matrix",
                                side_effect=AssertionError("recomputed")):
             self.assertEqual(verify.noise_floor(index, self.backend), first)
+
+
+class TestPlacingWhatDialogueCouldNot(unittest.TestCase):
+    """The step that was missing, and cost a whole video.
+
+    A build that anchors only on speech placed three shots out of a hundred
+    and eighteen on a script about the box-cutter scene — because almost
+    nobody speaks in it — and filled the rest by walking through the episode.
+    Every complaint about random footage came from exactly that. The picture
+    index can answer "where does this description happen?" without any
+    dialogue at all; until now nothing asked it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="pbp_")
+        self.db = os.path.join(self.tmp, "library.db")
+        self.con = library.connect(self.db)
+        self.video = os.path.join(self.tmp, "ep.mkv")
+        open(self.video, "wb").close()
+        self.backend = embed.Deterministic(dim=64)
+        embed.set_backend(self.backend)
+
+        # Forty different frames, one per second, so the episode has a real
+        # spread to measure a noise floor against — an index of forty
+        # identical frames has no distribution and every score looks
+        # extraordinary, which is a fixture problem, not a tool one.
+        words = ["kitchen", "desert", "car", "bathroom", "diner", "office",
+                 "hospital", "street", "garage", "pool"]
+        captions = [f"a {words[i % len(words)]} in daylight, shot {i}"
+                    for i in range(40)]
+        captions[25] = "a red doorway at night"
+        times = np.arange(0, 40, 1.0, dtype=np.float32)
+        vecs = self.backend.encode_texts(captions).astype(np.float32)
+        out = os.path.join(visual.store_dir(self.db), "x.npz")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        np.savez_compressed(out, times=times,
+                            vecs=vecs.astype(np.float16))
+        size, mtime = visual._stamp(self.video)
+        self.con.execute(
+            "INSERT OR REPLACE INTO visual VALUES (?,?,?,?,?,?,?,?,?)",
+            (os.path.abspath(self.video), size, mtime, self.backend.name,
+             visual.DEFAULT_FPS, len(times), vecs.shape[1], out, 0))
+        self.con.commit()
+
+    def tearDown(self):
+        self.con.close()
+        embed.set_backend(None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _beats(self):
+        return [{"beat": 1, "shots": [
+            {"kind": "clip", "source": "Show", "season_episode": "S01E01",
+             "visual": "a red doorway at night", "duration_target_sec": 4}]}]
+
+    def test_a_shot_with_no_quoted_line_is_found_in_the_picture(self):
+        homeless = align.Placement(beat=1, shot=1, start_ms=0, end_ms=4000,
+                                   method="none")
+        n = verify.place_by_picture(self.db, self._beats(), [homeless],
+                                    episodes={1: self.video})
+        self.assertEqual(n, 1)
+        self.assertEqual(homeless.method, "picture")
+        self.assertEqual(homeless.path, self.video)
+        self.assertAlmostEqual(homeless.start_ms / 1000.0, 25.0, delta=1.5)
+        self.assertEqual(homeless.end_ms - homeless.start_ms, 4000)
+
+    def test_a_shot_the_picture_cannot_find_is_left_for_filler(self):
+        """Below the episode's own noise floor the picture is saying
+        nothing, and filler — which at least spreads out — is the better
+        answer. Placing on a non-match would be the same randomness with a
+        more confident label on it."""
+        beats = [{"beat": 1, "shots": [
+            {"kind": "clip", "source": "Show", "season_episode": "S01E01",
+             "visual": "an empty road", "duration_target_sec": 4}]}]
+        homeless = align.Placement(beat=1, shot=1, start_ms=0, end_ms=4000,
+                                   method="none")
+        verify.place_by_picture(self.db, beats, [homeless],
+                                episodes={1: self.video})
+        self.assertEqual(homeless.method, "none")
+
+    def test_a_shot_dialogue_already_placed_is_never_touched(self):
+        anchored = align.Placement(beat=1, shot=1, path=self.video,
+                                   start_ms=1234, end_ms=5234,
+                                   method="anchor")
+        verify.place_by_picture(self.db, self._beats(), [anchored],
+                                episodes={1: self.video})
+        self.assertEqual(anchored.start_ms, 1234)
+        self.assertEqual(anchored.method, "anchor")
+
+    def test_without_the_model_it_changes_nothing_and_says_so(self):
+        embed.set_backend(None)
+        said = []
+        homeless = align.Placement(beat=1, shot=1, start_ms=0, end_ms=4000,
+                                   method="none")
+        with mock.patch.object(embed, "available",
+                               return_value=(False, "needs torch")):
+            n = verify.place_by_picture(self.db, self._beats(), [homeless],
+                                        episodes={1: self.video},
+                                        log=said.append)
+        self.assertEqual(n, 0)
+        self.assertEqual(homeless.method, "none")
+        self.assertTrue(any("needs torch" in s for s in said))
+
+    def test_an_episode_with_no_index_is_skipped_not_crashed(self):
+        homeless = align.Placement(beat=1, shot=1, start_ms=0, end_ms=4000,
+                                   method="none")
+        n = verify.place_by_picture(self.db, self._beats(), [homeless],
+                                    episodes={1: "/nowhere/other.mkv"})
+        self.assertEqual(n, 0)
+        self.assertEqual(homeless.method, "none")

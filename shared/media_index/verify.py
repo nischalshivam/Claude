@@ -766,6 +766,102 @@ def verify_run(index: visual.VisualIndex, run, placements: list, backend,
     return out
 
 
+def place_by_picture(db_path: str, beats: list, placements: list,
+                     episodes: dict | None = None,
+                     log=lambda *a: None) -> int:
+    """Find a home for every shot that dialogue could not place.
+
+    Until now a shot with no quoted line fell straight through to filler —
+    the right episode, at a moment chosen by walking through it. That is
+    honest when nothing better is available, and it was all that WAS
+    available while nine of sixty-two episodes had their frames read.
+
+    It is no longer all that is available. A complete picture index can be
+    asked the actual question — *where in this episode does this description
+    happen?* — and it answers it for a shot with no dialogue exactly as well
+    as for one with dialogue, because it never needed the dialogue.
+
+    This matters most on precisely the videos worth making. A scene everyone
+    remembers is usually a quiet one: the box-cutter scene has almost no
+    speech in it at all, so a script about it has almost nothing to quote,
+    and a build that anchors only on speech placed three shots out of a
+    hundred and eighteen and filled the rest by walking. Every complaint
+    about random footage came from that.
+
+    Only placements that clear the episode's own measured noise floor are
+    taken. Below it the picture is not saying anything, and filler — which
+    is at least spread evenly — remains the better answer.
+
+    Returns how many shots were placed this way.
+    """
+    if not placements:
+        return 0
+    if embed.loaded() is None:
+        ok, why = embed.available()
+        if not ok:
+            log(f"      placing by picture is off — {why}")
+            return 0
+
+    from .library import connect
+
+    by_beat = {b.get("beat", i): b for i, b in enumerate(beats, 1)}
+    homeless = [p for p in placements if not p.ok or not p.path]
+    if not homeless:
+        return 0
+
+    con = connect(db_path)
+    try:
+        backend = embed.load(log=log)
+    except embed.EmbedError as exc:
+        con.close()
+        log(f"      placing by picture is off — {exc}")
+        return 0
+
+    # An episode is loaded once and asked many times: the frames are the
+    # slow part and every shot of a run wants the same ones.
+    seen: dict = {}
+    floors: dict = {}
+    placed, tried = 0, 0
+    try:
+        for p in homeless:
+            beat = by_beat.get(p.beat) or {}
+            shots = beat.get("shots") or []
+            shot = shots[p.shot - 1] if 0 < p.shot <= len(shots) else {}
+            caption = describe(shot)
+            if not caption:
+                continue
+            path = p.path or (episodes or {}).get(p.beat, "")
+            if not path:
+                continue
+            if path not in seen:
+                seen[path] = visual.load(con, db_path, path)
+            index = seen[path]
+            if index is None or not len(index):
+                continue
+            if path not in floors:
+                floors[path] = max(visual.LIFT_OK,
+                                   noise_floor(index, backend))
+            tried += 1
+            vec = backend.encode_texts([caption])[0]
+            match = visual.best_in(index, vec)
+            if match.lift < floors[path]:
+                continue
+            hold = max(1, p.end_ms - p.start_ms)
+            p.path = path
+            p.start_ms = int(match.time * 1000)
+            p.end_ms = p.start_ms + hold
+            p.method = "picture"
+            p.confidence = match.confidence
+            p.note = f"found in the picture (lift {match.lift:.1f})"
+            placed += 1
+    finally:
+        con.close()
+    if tried:
+        log(f"      placed by picture: {placed} of {tried} shot(s) that had "
+            "no quoted line")
+    return placed
+
+
 def apply(db_path: str, beats: list, placements: list,
           log=lambda *a: None) -> Report:
     """Check and correct a whole script's placements. Never raises.

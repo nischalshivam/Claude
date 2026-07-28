@@ -163,6 +163,32 @@
     }
   }
 
+  // Pictures and clips are kept across a redraw and re-used by their src.
+  // Rebuilding them means the browser fetches and decodes every one again,
+  // which on a page that redraws once a second while a build runs is a
+  // constant flicker — and looks exactly like something malfunctioning.
+  var media = {};
+  var kept = {};
+
+  function reuse(node, scope) {
+    var name = node.localName;
+    if (name !== "img" && name !== "video") return null;
+    var src = fill(node.getAttribute("src") || "", scope);
+    if (!src) return null;
+    var had = media[src];
+    if (!had) {
+      had = document.createElementNS(node.namespaceURI ||
+        "http://www.w3.org/1999/xhtml", name);
+      for (var a = 0; a < node.attributes.length; a++) {
+        attribute(had, node.attributes[a].name, node.attributes[a].value,
+                  scope);
+      }
+      media[src] = had;
+    }
+    kept[src] = true;
+    return had;
+  }
+
   function build(node, scope, into) {
     if (node.nodeType === 3) {                          // text
       var text = fill(node.nodeValue, scope);
@@ -192,6 +218,17 @@
       return;
     }
     if (TEMPLATE_TAGS[tag]) return;
+
+    var again = reuse(node, scope);
+    if (again) {
+      // Style can change between redraws — selection borders live there —
+      // while the picture itself does not.
+      if (node.hasAttribute("style")) {
+        again.setAttribute("style", fill(node.getAttribute("style"), scope));
+      }
+      into.appendChild(again);
+      return;
+    }
 
     // localName, never tagName. createElementNS is case-sensitive, and
     // tagName gives "DIV" for parsed HTML — which makes an element the
@@ -230,12 +267,32 @@
     var focused = document.activeElement;
     var mark = focused && where.contains(focused)
       ? focused.getAttribute("data-keep") : null;
+
+    // Where every scrollable region was. A page that jumps back to the top
+    // once a second cannot be read while it is working, which is exactly
+    // when there is something worth reading on it.
+    var places = {};
+    where.querySelectorAll("[data-scroll]").forEach(function (el) {
+      places[el.getAttribute("data-scroll")] = el.scrollTop;
+    });
+
     where.textContent = "";
     where.appendChild(made);
+
+    Object.keys(places).forEach(function (name) {
+      var back = where.querySelector('[data-scroll="' + name + '"]');
+      if (back) back.scrollTop = places[name];
+    });
     if (mark) {
-      var back = where.querySelector('[data-keep="' + mark + '"]');
-      if (back && back.focus) back.focus();      // typing survives a redraw
+      var box = where.querySelector('[data-keep="' + mark + '"]');
+      if (box && box.focus) box.focus();         // typing survives a redraw
     }
+    // Anything not on screen any more is dropped, so the cache cannot grow
+    // for the length of a session.
+    Object.keys(media).forEach(function (src) {
+      if (!kept[src]) delete media[src];
+    });
+    kept = {};
   }
 
   /* Pull one design file apart: its styles, and its markup. */
