@@ -1723,3 +1723,34 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
         laid = [p.start_ms / 1000.0 for p in places if p.method == "paced"]
         self.assertTrue(all(1800.0 <= at <= 2100.0 for at in laid))
+
+
+class TestABeatWouldRatherRepeatThanBeEmpty(unittest.TestCase):
+    """The de-duplicator is right until it is the difference between a
+    repeated shot and a hole. Four scenes of a real build came out empty
+    because their one shot was already on screen, and the renderer covered
+    each of them by holding a neighbour across it — somebody else's footage,
+    in the wrong place, with nothing saying so."""
+
+    def test_a_crowded_shot_is_kept_when_the_beat_has_nothing_else(self):
+        from media_index import runner
+        cut = []
+        beat = {"beat": 1, "narration": "one line",
+                "shots": [{"kind": "clip", "source": "Show",
+                           "season_episode": "S01E01", "visual": "a lab",
+                           "duration_target_sec": 4}]}
+        places = [align.Placement(beat=1, shot=1, path="/lib/ep.mkv",
+                                  start_ms=60_000, end_ms=64_000,
+                                  method="interpolated")]
+        job = mock.Mock(out=tempfile.mkdtemp(prefix="beat_"), clip_seconds=4.0,
+                        height=1080, stills_per_scene=1)
+        with mock.patch.object(runner.cutter, "cut_clip",
+                               side_effect=lambda *a, **k: cut.append(a)), \
+             mock.patch.object(runner, "episode_length", return_value=2800.0):
+            # every second of this episode is already spoken for
+            used = {"/lib/ep.mkv": [60.0 + i for i in range(-60, 60)]}
+            res = runner.build_scene(job, 1, beat, places, [], lambda *a: None,
+                                     used, "/lib/ep.mkv")
+        self.assertTrue(res.ok, res.note)
+        self.assertEqual(len(cut), 1)
+        shutil.rmtree(job.out, ignore_errors=True)

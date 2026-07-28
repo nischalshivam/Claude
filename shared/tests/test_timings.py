@@ -227,3 +227,81 @@ class TestARangeGivenTooWide(unittest.TestCase):
 
     def test_nothing_stated_means_nothing_to_complain_about(self):
         self.assertEqual(timings.too_wide(self._beats(6), []), [])
+
+
+class TestWhenAQuotedLineContradictsAStatedTime(unittest.TestCase):
+    """A stated time outranks every guess in this package. It does not
+    outrank a measurement, and a line matched in the real subtitle file is
+    one. On a real script four of five model-written ranges were wrong by
+    seven to fifteen minutes, and the build was only good because alignment
+    quietly used the lines instead — while the log said "nothing will look
+    elsewhere" the whole time."""
+
+    def _run(self, shots=6):
+        return [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": "S04E01",
+             "visual": f"shot {i}", "duration_target_sec": 5}
+            for i in range(shots)]}]
+
+    def _places(self, anchor_at=None):
+        out = [align.Placement(beat=1, shot=i + 1, path="/lib/ep.mkv",
+                               start_ms=1_800_000 + i * 5000,
+                               end_ms=1_805_000 + i * 5000,
+                               method="interpolated") for i in range(6)]
+        if anchor_at is not None:
+            out[2].method = "anchor"
+            out[2].start_ms = int(anchor_at * 1000)
+            out[2].end_ms = out[2].start_ms + 3000
+        return out
+
+    def test_a_window_the_line_contradicts_is_dropped_and_named(self):
+        said = []
+        windows = {1: (2400.0, 2760.0)}          # "40:00-46:00"
+        got = timings.honour(self._run(), self._places(anchor_at=1836.0),
+                             windows, log=said.append)
+        self.assertEqual(got, {})
+        self.assertTrue(any("30:36" in s for s in said), said)
+
+    def test_a_window_the_line_agrees_with_is_kept(self):
+        windows = {1: (1800.0, 2280.0)}          # "30:00-38:00"
+        got = timings.honour(self._run(), self._places(anchor_at=1900.0),
+                             windows)
+        self.assertEqual(got, windows)
+
+    def test_a_run_with_no_quoted_line_keeps_whatever_was_stated(self):
+        """Nothing was measured, so there is nothing to contradict — and
+        this is the case the whole feature exists for."""
+        windows = {1: (2400.0, 2760.0)}
+        got = timings.honour(self._run(), self._places(), windows)
+        self.assertEqual(got, windows)
+
+    def test_no_stated_windows_at_all_is_not_a_crash(self):
+        self.assertEqual(timings.honour(self._run(), self._places(), {}), {})
+        self.assertEqual(timings.honour(self._run(), self._places(), None), {})
+
+
+class TestWhatCanBeGivenATime(unittest.TestCase):
+
+    def test_a_press_portrait_is_never_asked_for_a_timecode(self):
+        """It was appearing as `unknown 29:30-33:40 — koi timing nahi`,
+        asking for the timecode of a photograph."""
+        beats = [{"beat": 1, "shots": [
+            {"source": "Vince Gilligan press portrait", "type": "real_world",
+             "season_episode": "", "visual": "a man at a desk"}]},
+            {"beat": 2, "shots": [
+                {"source": "Breaking Bad", "season_episode": "S04E01",
+                 "visual": "a lab"}]}]
+        left = timings.unstated(beats, [])
+        self.assertEqual(len(left), 1)
+        self.assertIn("S04E01", left[0][1])
+
+    def test_each_run_is_named_once_however_many_ways_it_was_stated(self):
+        """The script's range and the typed line are both `stated`, and the
+        pre-flight was listing every run twice because of it."""
+        beats = [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": "S03E13",
+             "visual": f"shot {i}", "duration_target_sec": 5}
+            for i in range(6)]}]
+        said = (timings.parse_lines("S03E13 40:00-47:00")
+                + timings.parse_lines("S03E13 40:00-47:00"))
+        self.assertEqual(len(timings.too_wide(beats, said)), 1)

@@ -1140,7 +1140,7 @@ def pace_runs(db_path: str, beats: list, placements: list,
             p.note = "laid in script order across the scene this run was found in"
             moved += 1
         log(f"      {run.label}: {len(loose)} shot(s) laid in order across "
-            f"{start/60:.0f}-{(start + reach * squeeze)/60:.0f} min"
+            f"{start/60:.1f}-{(start + reach * squeeze)/60:.1f} min"
             + (" (hung off the one shot that was found)" if firm else ""))
     if moved:
         log(f"      paced: {moved} shot(s) placed in script order rather than "

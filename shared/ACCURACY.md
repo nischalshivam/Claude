@@ -181,6 +181,39 @@ de do.
 - **Stated timings** — sab kuch ke upar.
 - **Characters** — reference photos se frame chunav.
 
+## Model ki di hui timing par bharosa mat karo
+
+Ek asli script par model ne 8 runs ke `scene_range` bhare. Jin 5 ko quoted
+line se check kiya ja sakta tha, unme se **4 galat the** — 7 se 15 minute
+tak:
+
+| run | model ne kaha | quoted line asal me kahan hai |
+|---|---|---|
+| S04E01 | 40:00-46:00 | **30:36** |
+| S03E13 | 42:00-47:00 | **29:50** |
+| S04E08 | 36:00-42:00 | **43:43** |
+| S04E11 | 35:00-42:00 | **20:10** |
+| S04E13 | 30:00-38:00 | 31:45 — sahi |
+
+Video phir bhi achhi bani, kyonki alignment ne quoted lines use ki aur
+ranges ko ignore kar diya. Par ranges filler ko steer kar rahi thi — isi
+wajah se 5 scenes ki footage 40-42 minute se aayi jabki scene 30-38 par
+hai.
+
+Ab tool ye pakadta hai aur log me saaf bolta hai:
+
+    S04E01: you said 40:00-46:00, but the line this run quotes is really
+    at 30:36 — using the line, and ignoring the time you gave.
+
+Matlab: **jis run me quoted line hai, wahan line jeetegi.** Timing box us
+run ke liye tabhi maayne rakhta hai jab line na ho — aur wahi wo case hai
+jiske liye ye feature banaya tha.
+
+Isse ek kaam nikalta hai: log me jo timings galat batayi jaayen, unhe box
+me theek kar do ya delete kar do. Wahi tumhara sabse tez feedback loop hai.
+
+---
+
 ## Agar script open hi na ho
 
 `Extra data: line 2104 column 1` — ye ab nahi aayega. Wo file kharab nahi

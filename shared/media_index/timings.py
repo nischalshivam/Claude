@@ -266,7 +266,8 @@ def windows_for(beats: list, stated: list, log=lambda *a: None) -> dict:
                 out[entry.beat] = said.window
             lo, hi = said.window
             log(f"      {run.label}: you said this is at "
-                f"{lo/60:.0f}-{hi/60:.0f} min — nothing will look elsewhere")
+                f"{int(lo//60)}:{int(lo%60):02d}-{int(hi//60)}:{int(hi%60):02d}"
+                " — nothing will look elsewhere")
     return out
 
 
@@ -290,13 +291,14 @@ def too_wide(beats: list, stated: list) -> list:
     barely worth having, and the person can fix it in ten seconds if
     somebody tells them which one to look at.
     """
-    out = []
+    out, seen = [], set()
     for said in stated or []:
         lo, hi = said.window
         room = hi - lo
         for run in align.runs(beats or []):
-            if not _matches(run, said):
+            if not _matches(run, said) or run.label in seen:
                 continue
+            seen.add(run.label)
             wanted = 0.0
             for entry in run.entries:
                 try:
@@ -308,6 +310,75 @@ def too_wide(beats: list, stated: list) -> list:
                 out.append((room / wanted, run.label, len(run.entries),
                             room, wanted))
     out.sort(reverse=True)
+    return out
+
+
+def placeable(run) -> bool:
+    """Is this a run somebody could state a time for at all?
+
+    A press portrait of Vince Gilligan has no episode and no timecode. It
+    was appearing in the pre-flight as `unknown 29:30-33:40 — koi timing
+    nahi`, asking a person to supply a time for a photograph, which is not
+    a thing that exists.
+    """
+    return subtitles.episode_key(run.season_episode or "") is not None
+
+
+def honour(beats: list, placements: list, windows: dict,
+           log=lambda *a: None) -> dict:
+    """Stated windows, minus the ones a quoted line contradicts.
+
+    A stated time outranks every guess in this package. It does not outrank
+    a *measurement*, and a line matched in the real subtitle file is one: it
+    is a millisecond somebody can go and check.
+
+    This is not a hypothetical conflict. On a real script the model filled
+    in `scene_range` for eight runs and four of the five that could be
+    checked were wrong by seven to fifteen minutes:
+
+        S04E01  said 40:00-46:00   the quoted line is at 30:36
+        S03E13  said 42:00-47:00   the quoted line is at 29:50
+        S04E08  said 36:00-42:00   the quoted line is at 43:43
+        S04E11  said 35:00-42:00   the quoted line is at 20:10
+        S04E13  said 30:00-38:00   the quoted lines agree
+
+    The build came out well because alignment used the lines and ignored the
+    windows — but the windows were still steering the filler, which is how
+    five scenes of that build got footage from 40-42 minutes for a scene
+    that happens at 30-38. And the log said "nothing will look elsewhere"
+    the whole time, which was not true.
+
+    So a contradicted window is dropped, loudly. The person can then fix
+    their line or delete it, which is a thing they can act on.
+    """
+    if not windows:
+        return {}
+    by_key = {(p.beat, p.shot): p for p in placements or []}
+    out = dict(windows)
+    for run in align.runs(beats or []):
+        if not run.entries:
+            continue
+        span = windows.get(run.entries[0].beat)
+        if not span or span[1] <= span[0]:
+            continue
+        found = [by_key[(e.beat, e.shot)].start_ms / 1000.0
+                 for e in run.entries
+                 if (e.beat, e.shot) in by_key
+                 and by_key[(e.beat, e.shot)].method == "anchor"]
+        if not found:
+            continue                     # nothing measured; the window stands
+        lo, hi = span
+        if any(lo <= at <= hi for at in found):
+            continue                     # they agree
+        at = sorted(found)[len(found) // 2]
+        log(f"      {run.label}: you said "
+            f"{int(lo//60)}:{int(lo%60):02d}-{int(hi//60)}:{int(hi%60):02d}, "
+            f"but the line this run quotes is really at "
+            f"{int(at//60)}:{int(at%60):02d} — "
+            "using the line, and ignoring the time you gave. Fix it or "
+            "delete it.")
+        for e in run.entries:
+            out.pop(e.beat, None)
     return out
 
 
@@ -325,7 +396,7 @@ def unstated(beats: list, stated: list) -> list:
                 have.add(run.label)
     out = []
     for run in align.runs(beats or []):
-        if run.label not in have:
+        if run.label not in have and placeable(run):
             out.append((len(run.entries), run.label, run.season_episode))
     out.sort(reverse=True)
     return out

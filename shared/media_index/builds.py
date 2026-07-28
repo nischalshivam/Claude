@@ -179,20 +179,28 @@ def timing_advice(rep, typed: str = "") -> list:
 
     beats = getattr(rep, "beats", None) or []
     said = timings.from_script(beats) + timings.parse_lines(typed or "")
-    out = []
+    out, seen = [], set()
     for shots, label, key in timings.unstated(beats, said):
+        seen.add(label)
         out.append({"label": label, "shots": shots,
-                    "example": f"{key} 29:30-33:40",
-                    "why": "koi timing nahi"})
-    # And the ones that DO have a time, given so wide that having it barely
-    # helps. Second in the list because a missing range is worse than a
-    # loose one — but both are one line to fix.
+                    "example": f"{key} __:__-__:__",
+                    "why": "koi timing nahi — ye sabse zaroori hai"})
     for _ratio, label, shots, room, wanted in timings.too_wide(beats, said):
+        if label in seen:
+            continue
+        seen.add(label)
         out.append({"label": label, "shots": shots,
                     "example": f"{label.split()[-1]} — abhi {room/60:.0f} min",
-                    "why": f"itni chaudi ki fayda kam — {wanted/60:.0f} min "
-                           "ki footage chahiye, range chhoti karo"})
+                    "why": f"is run ko sirf {_seconds(wanted)} footage chahiye "
+                           "— range scene jitni chhoti karo"})
     return out
+
+
+def _seconds(value: float) -> str:
+    """Screen time as something readable. `0 min` was neither."""
+    if value < 90:
+        return f"{value:.0f} sec"
+    return f"{value/60:.1f} min"
 
 
 def report_dict(rep, typed: str = "") -> dict:

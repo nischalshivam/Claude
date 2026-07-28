@@ -355,6 +355,10 @@ def build_scene(job, index: int, beat: dict, placements: list,
     mine = [p for p in placements if p.beat == beat_no]
     unplaced = 0
     repeats = 0
+    # Shots refused because the footage they wanted is already on screen
+    # somewhere else. Kept, because refusing is only the right answer while
+    # the beat has something ELSE to show — see the second pass below.
+    crowded: list = []
 
     filled = 0
     for p in mine:
@@ -377,6 +381,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
         if moved is None:
             # Everything within reach is already on screen somewhere.
             repeats += 1
+            crowded.append(p)
             continue
         # An episode has an end, and a placement can walk off it. Two shots
         # of a real build were cut at 2918s and 3488s of a 2848-second
@@ -434,6 +439,52 @@ def build_scene(job, index: int, beat: dict, placements: list,
         except (ProbeError, ValueError, OSError) as exc:
             log(f"      scene {index}: shot {n} failed — {exc}")
             continue
+
+    if not (res.clips or res.stills) and crowded:
+        # A repeated shot is a small fault. An empty beat is a large one: the
+        # renderer covers it by holding a neighbour across it, so a beat with
+        # nothing becomes somebody else's shot on screen for ten seconds, in
+        # the wrong place, with no label saying so. Four scenes of a real
+        # build went that way and every one of them was visible.
+        #
+        # So the de-duplication gives up here and only here, once it is the
+        # difference between a repeat and a hole.
+        log(f"      scene {index}: showing {len(crowded)} repeated shot(s) "
+            "rather than leaving this beat empty")
+        for p in crowded:
+            n = p.shot
+            shot = shots[n - 1] if 0 < n <= len(shots) else {}
+            start = p.start_ms / 1000.0
+            end = start + max(1.0, (p.end_ms - p.start_ms) / 1000.0)
+            length = episode_length(p.path)
+            if length and start >= length - 1.0:
+                continue
+            res.source = res.source or os.path.basename(p.path)
+            res.confidence = res.confidence or p.confidence
+            try:
+                if not _wants_still(shot):
+                    clip_path = os.path.join(scene_dir, f"clip_{n:02d}.mp4")
+                    cutter.cut_clip(p.path, start,
+                                    min(end, start + max(job.clip_seconds,
+                                                         CLIP_HEADROOM_S)),
+                                    clip_path, height=job.height)
+                    res.clips.append(clip_path)
+                    res.methods[os.path.basename(clip_path)] = p.method
+                    res.origins[os.path.basename(clip_path)] = round(start, 2)
+                    res.sources[os.path.basename(clip_path)] = \
+                        os.path.basename(p.path)
+                else:
+                    got = _stills_for(p.path, start, end, scene_dir, n,
+                                      _still_count(shot, job.stills_per_scene),
+                                      None, log, None)
+                    for still, at in got:
+                        res.stills.append(still)
+                        res.methods[os.path.basename(still)] = p.method
+                        res.origins[os.path.basename(still)] = round(at, 2)
+                        res.sources[os.path.basename(still)] = \
+                            os.path.basename(p.path)
+            except (ProbeError, ValueError, OSError) as exc:
+                log(f"      scene {index}: shot {n} failed — {exc}")
 
     if res.clips or res.stills:
         res.status = "cut" if res.clips else "fallback"
@@ -706,6 +757,11 @@ def run_job(job, report, log=print) -> JobResult:
         said = (timings.from_script(report.beats)
                 + timings.parse_lines(job.extras.get("timings") or ""))
         stated = timings.windows_for(report.beats, said, log=log)
+        # ...but only where a quoted line does not say otherwise. A line
+        # matched in the real subtitles is a millisecond somebody can go and
+        # check; a typed range is not, and on a real script four of five
+        # were wrong by seven to fifteen minutes.
+        stated = timings.honour(report.beats, placements, stated, log=log)
         windows.update(stated)
         verify.place_by_picture(job.db, report.beats, placements,
                                 episodes=owns, windows=windows,
