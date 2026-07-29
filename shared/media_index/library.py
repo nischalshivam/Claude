@@ -163,10 +163,15 @@ def _migrate(con: sqlite3.Connection) -> None:
 def connect(db_path: str) -> sqlite3.Connection:
     first = not os.path.exists(db_path)
     os.makedirs(os.path.dirname(os.path.abspath(db_path)) or ".", exist_ok=True)
-    con = sqlite3.connect(db_path)
+    # Sixty seconds, not the default five. Two processes on one library is
+    # a thing this tool now refuses, but a browser reading the Library page
+    # while a scan writes to it is normal and must not raise "database is
+    # locked" at either of them.
+    con = sqlite3.connect(db_path, timeout=60.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=60000")
     con.executescript(DDL)
     con.executescript(TRIGGERS)
     _migrate(con)

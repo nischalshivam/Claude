@@ -138,7 +138,7 @@
     timer = setInterval(function () {
       get("/api/task?id=" + encodeURIComponent(task.id)).then(function (now) {
         setState({ task: now });
-        if (now.status !== "running") {
+        if (now.status !== "running" && now.status !== "queued") {
           clearInterval(timer);
           timer = null;
         }
@@ -499,7 +499,7 @@
     var tick = setInterval(function () {
       get("/api/task?id=" + encodeURIComponent(task.id)).then(function (now) {
         setState({ libTask: now });
-        if (now.status !== "running") {
+        if (now.status !== "running" && now.status !== "queued") {
           clearInterval(tick);
           loadLibrary();            // the counts on screen just changed
         }
@@ -518,7 +518,7 @@
   function libraryScope() {
     var t = state.libTask;
     var look = state.addLook;
-    var running = !!t && t.status === "running";
+    var running = !!t && (t.status === "running" || t.status === "queued");
     var rows = [];
     if (look) {
       rows.push({ ok: true, text: look.files + " video file(s) mile",
@@ -846,7 +846,7 @@
     var f = state.form;
     var t = state.task;
     var report = (t && t.report && t.report.verdict) ? t.report : null;
-    var running = !!t && t.status === "running";
+    var running = !!t && (t.status === "running" || t.status === "queued");
     var chosen = titleNamed(f.title);
     var tone = chosen ? (TONES[chosen.status] || "muted") : "muted";
 

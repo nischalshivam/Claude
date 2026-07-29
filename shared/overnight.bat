@@ -49,6 +49,28 @@ if "%TARGET%"=="" (
 set "DB=%~2"
 if "%DB%"=="" set "DB=library.db"
 
+REM Ek library par ek hi kaam. Agar pehle se koi chal raha hai, ye file
+REM bata deti hai aur ruk jaati hai - kyonki do kaam ek saath chalane par
+REM dono ruk jaate hain aur DONO chalte hue dikhte hain.
+if exist "%DB%.lock" (
+    echo.
+    echo   RUKO. Is library par pehle se koi kaam chal raha hai:
+    echo.
+    type "%DB%.lock"
+    echo.
+    echo.
+    echo   Browser me Library page khula ho to wahan dekho, ya doosri CMD
+    echo   window band karo. Dono ek saath chalane se dono ruk jaate hain.
+    echo.
+    echo   Agar wo kaam sach me band ho chuka hai ^(laptop band ho gaya tha^),
+    echo   to 30 minute baad ye lock apne aap khatam ho jaata hai - ya ise
+    echo   khud delete kar do:
+    echo       %DB%.lock
+    echo.
+    pause
+    exit /b 1
+)
+
 REM Windows ko raat bhar jaagta rakho. Ek sleeping laptop 8 ghante ka kaam
 REM 40 minute me rok deta hai aur subah kuch aisa dikhta hai jaise crash ho
 REM gaya ho.
@@ -60,6 +82,9 @@ echo.
 echo   ================================================================
 echo     Folder : %TARGET%
 echo     Library: %DB%
+echo.
+echo     Ruk gaya tha? Koi baat nahi - jo episodes ho chuke hain wo
+echo     dobara nahi honge. Ye wahin se aage badhta hai.
 echo   ================================================================
 echo.
 echo   [1/2] subtitles padhe ja rahe hain (kuch minute)...

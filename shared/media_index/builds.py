@@ -42,7 +42,7 @@ class Task:
     id: str
     kind: str                       # "check" | "build"
     name: str = ""
-    status: str = "running"         # running | done | failed | blocked
+    status: str = "running"         # queued | running | done | failed | blocked
     stage: str = ""                 # the human line under the bar
     scenes_done: int = 0
     scenes_total: int = 0
@@ -62,6 +62,8 @@ class Task:
     def percent(self) -> int:
         if self.status in ("done", "failed", "blocked"):
             return 100
+        if self.status == "queued":
+            return 0
         if not self.scenes_total:
             return 0
         return min(99, int(self.scenes_done * 100 / self.scenes_total))
@@ -127,7 +129,16 @@ class Runner:
 
         def run():
             log = self._log(task)
+            # Waiting is not working, and a page that says "working" for
+            # twenty-three minutes while the task has not started yet is the
+            # tool lying to somebody who is trying to decide whether it has
+            # crashed. Only claim to be running once we actually are.
+            if self._busy.locked():
+                task.status = "queued"
+                task.stage = ("kataar me — pehle wala kaam khatam hone ka "
+                              "intezaar")
             with self._busy:
+                task.status = "running"
                 outcome, error = "done", ""
                 try:
                     work(task, log)
@@ -291,9 +302,21 @@ def index_title(runner: Runner, media_root: str, db: str,
     fail in ways a person must fix, the second is hours and cannot start
     until the first succeeded.
     """
-    from . import library as library_mod, visual
+    from . import library as library_mod, lockfile, visual
 
     def work(task, log):
+        # Said here rather than thrown from four frames down, because the
+        # only thing a person can do about it is close the other window and
+        # that sentence has to reach them intact.
+        owner = lockfile.held_by(db)
+        if owner:
+            task.status = "blocked"
+            task.stage = f"ye library abhi busy hai — {owner[0]}"
+            log(f"is library par pehle se '{owner[0]}' chal raha hai "
+                f"({owner[1] / 60:.0f} min pehle tak). Do kaam ek saath "
+                "chalane se dono ruk jaate hain — pehle wale ko khatam hone "
+                "do, ya us window ko band karo.")
+            return
         task.stage = "reading subtitles"
         log(f"scanning {media_root}")
         res = library_mod.build(media_root, db, log=log)

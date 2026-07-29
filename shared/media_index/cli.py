@@ -13,8 +13,9 @@ import os
 import sys
 
 from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
-               library, narration, probe, render, runner, search, sources,
-               subs, subtitles, sync, term, timeline, transcribe, visual)
+               library, lockfile, narration, probe, render, runner, search,
+               sources, subs, subtitles, sync, term, timeline, transcribe,
+               visual)
 from .probe import ProbeError
 
 
@@ -274,7 +275,14 @@ def cmd_look(a):
         print("  nothing to do — add --force to redo them")
         return 0
 
-    res = visual.build(a.db, only=only, fps=a.fps, force=a.force, log=print)
+    try:
+        res = visual.build(a.db, only=only, fps=a.fps, force=a.force, log=print)
+    except lockfile.Busy as exc:
+        # The only thing anybody can do about this is close the other
+        # window, so the sentence has to arrive whole rather than as a
+        # traceback from four frames down.
+        print(f"\n  {exc}\n")
+        return 1
     print("")
     print(f"  looked at {res.indexed} file(s) {term.sym('dot')} "
           f"skipped {res.skipped} {term.sym('dot')} "

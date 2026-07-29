@@ -555,36 +555,44 @@ def build(db_path: str, only: list | None = None, fps: float = DEFAULT_FPS,
     files the dialogue index already knows about — one list of what you own,
     not two that can disagree.
     """
+    from . import lockfile
     from .library import connect
     res = BuildResult()
     t0 = time.time()
-    con = connect(db_path)
-    try:
-        backend = embed.load(log=log)
-        rows = con.execute("SELECT path FROM media ORDER BY path").fetchall()
-        paths = [r["path"] for r in rows]
-        if only:
-            wanted = {os.path.abspath(p) for p in only}
-            paths = [p for p in paths if os.path.abspath(p) in wanted]
-        log(f"  {len(paths)} video(s) to look at")
-        for path in paths:
-            if not os.path.isfile(path):
-                res.failed.append((path, "file is gone"))
-                continue
-            try:
-                n = index_video(con, db_path, path, backend=backend, fps=fps,
-                                force=force, log=log)
-            except (ProbeError, VisualError, OSError) as exc:
-                res.failed.append((path, str(exc)))
-                log(f"      failed — {exc}")
-                continue
-            if n:
-                res.indexed += 1
-                res.frames += n
-            else:
-                res.skipped += 1
-    finally:
-        con.close()
+    # Held before anything is opened. Two of these on one library do not go
+    # twice as fast; they go slower than one, fight over the same file, and
+    # neither of them looks broken while it happens.
+    with lockfile.held(db_path, "pictures padhna", log=log):
+        con = connect(db_path)
+        try:
+            backend = embed.load(log=log)
+            rows = con.execute("SELECT path FROM media ORDER BY path").fetchall()
+            paths = [r["path"] for r in rows]
+            if only:
+                wanted = {os.path.abspath(p) for p in only}
+                paths = [p for p in paths if os.path.abspath(p) in wanted]
+            log(f"  {len(paths)} video(s) to look at")
+            for path in paths:
+                if not os.path.isfile(path):
+                    res.failed.append((path, "file is gone"))
+                    continue
+                try:
+                    n = index_video(con, db_path, path, backend=backend,
+                                    fps=fps, force=force, log=log)
+                except (ProbeError, VisualError, OSError) as exc:
+                    res.failed.append((path, str(exc)))
+                    log(f"      failed — {exc}")
+                    continue
+                # Still here. A lock nobody touches is treated as abandoned,
+                # which is the right answer after a laptop lid closes.
+                lockfile.touch(db_path)
+                if n:
+                    res.indexed += 1
+                    res.frames += n
+                else:
+                    res.skipped += 1
+        finally:
+            con.close()
     res.seconds = time.time() - t0
     return res
 
