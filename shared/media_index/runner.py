@@ -330,7 +330,7 @@ def _filler_for(episode: str, used: dict | None, log,
 def build_scene(job, index: int, beat: dict, placements: list,
                 seen: list | None = None, log=lambda *a: None,
                 used: dict | None = None, episode: str = "",
-                window: tuple | None = None) -> SceneResult:
+                windows: dict | None = None) -> SceneResult:
     """Cut every shot of one beat. Never raises — a bad scene is reported.
 
     Driven by alignment rather than by dialogue matches alone. On a real
@@ -368,7 +368,12 @@ def build_scene(job, index: int, beat: dict, placements: list,
         if not p.ok or not p.path:
             # No line, no picture — but the script named the episode, and
             # showing the right episode beats showing nothing at all.
-            at, path = _filler_for(episode, used, log, window)
+            # This shot's own window, not the beat's. A beat routinely
+            # draws from several episodes — 24 of 34 on a real script — so a
+            # single window per beat is one episode's stretch applied to
+            # everybody else's footage.
+            at, path = _filler_for(episode, used, log,
+                                   (windows or {}).get((p.beat, p.shot)))
             if at is None:
                 unplaced += 1
                 continue
@@ -642,7 +647,7 @@ def _run_needs(run) -> float:
 
 
 def _spans_by_beat(beats: list, placements: list) -> dict:
-    """{beat: (lo, hi)} — the stretch each run's placed shots actually cover.
+    """{(beat, shot): (lo, hi)} — the stretch each run's placed shots cover.
 
     The strongest statement about where a run belongs is not a model's
     opinion; it is the shots of that same run which were already placed on
@@ -671,7 +676,7 @@ def _spans_by_beat(beats: list, placements: list) -> dict:
             lo -= short / 2.0
             hi += short / 2.0
         for entry in run.entries:
-            out[entry.beat] = (max(0.0, lo), hi)
+            out[(entry.beat, entry.shot)] = (max(0.0, lo), hi)
     return out
 
 
@@ -777,20 +782,20 @@ def run_job(job, report, log=print) -> JobResult:
         # belongs — they are measurements, and the window is a guess. Worked
         # out after place_by_picture so it sees everything that got placed.
         found = _spans_by_beat(report.beats, placements)
-        for beat_no, span in found.items():
+        for key, span in found.items():
             # ...except where somebody stated the time. That is not an
             # opinion to be improved on, and widening it to whatever the
             # run's own shots happen to cover would quietly undo the one
             # instruction the tool was actually given.
-            if beat_no not in stated:
-                windows[beat_no] = span
+            if key not in stated:
+                windows[key] = span
         if found:
             log(f"    {len(set(found.values()))} run(s) bounded by their own "
                 "placed shots; filler stays inside those")
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
                                 owns.get(beat.get("beat", i), ""),
-                                window=windows.get(beat.get("beat", i)))
+                                windows=windows)
             result.scenes.append(scene)
             mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
             log(f"    scene {i:03d} {mark[scene.status]} "

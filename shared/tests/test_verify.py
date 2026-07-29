@@ -1600,7 +1600,7 @@ class TestARunIsBoundedByItsOwnPlacedShots(unittest.TestCase):
         places[4].start_ms, places[4].end_ms = 1_960_000, 1_964_000
         places[4].method = "anchor"
         spans = runner._spans_by_beat(beats, places)
-        lo, hi = spans[1]
+        lo, hi = spans[(1, 1)]
         self.assertLessEqual(lo, 1900.0)
         self.assertGreaterEqual(hi, 1964.0)
         # A sequence, not an episode.
@@ -1647,9 +1647,15 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
                                 start_ms=0, end_ms=int(seconds * 1000),
                                 method="none") for i in range(shots)]
 
+    def _window(self, span, shots=8):
+        """A window per SHOT, because a beat routinely draws from several
+        episodes and one window per beat is one episode's stretch applied to
+        everybody else's footage."""
+        return {(1, i + 1): span for i in range(shots)}
+
     def test_the_run_is_laid_out_in_order_inside_its_window(self):
         beats, places = self._beats(), self._loose()
-        n = verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        n = verify.pace_runs("db", beats, places, self._window((1800.0, 2100.0), len(places)))
         self.assertEqual(n, 8)
         starts = [p.start_ms for p in places]
         self.assertEqual(starts, sorted(starts))
@@ -1661,7 +1667,7 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         """A window is wider than the run on purpose. Spreading the run to
         its edges would invent gaps the script never asked for."""
         beats, places = self._beats(shots=6, seconds=5.0), self._loose(6, 5.0)
-        verify.pace_runs("db", beats, places, {1: (600.0, 1200.0)})
+        verify.pace_runs("db", beats, places, self._window((600.0, 1200.0), len(places)))
         gaps = [(b.start_ms - a.start_ms) / 1000.0
                 for a, b in zip(places, places[1:])]
         for gap in gaps:
@@ -1669,7 +1675,7 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
 
     def test_a_run_longer_than_its_window_is_squeezed_not_spilled(self):
         beats, places = self._beats(shots=10, seconds=20.0), self._loose(10, 20.0)
-        verify.pace_runs("db", beats, places, {1: (300.0, 360.0)})
+        verify.pace_runs("db", beats, places, self._window((300.0, 360.0), len(places)))
         self.assertTrue(all(299.0 <= p.start_ms / 1000.0 <= 361.0
                             for p in places))
         starts = [p.start_ms for p in places]
@@ -1679,7 +1685,7 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         beats, places = self._beats(), self._loose()
         places[4].method = "picture"
         places[4].start_ms, places[4].end_ms = 1900_000, 1906_000
-        verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        verify.pace_runs("db", beats, places, self._window((1800.0, 2100.0), len(places)))
         self.assertEqual(places[4].start_ms, 1900_000)
         self.assertEqual(places[4].method, "picture")
         # its neighbours sit one shot-length either side of it
@@ -1690,7 +1696,7 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         beats, places = self._beats(), self._loose()
         for p in places[:6]:
             p.method = "anchor"
-        n = verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        n = verify.pace_runs("db", beats, places, self._window((1800.0, 2100.0), len(places)))
         self.assertEqual(n, 0)
         self.assertTrue(all(p.method == "none" for p in places[6:]))
 
@@ -1706,12 +1712,12 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
     def test_a_cutaway_too_short_to_have_an_order_is_left_for_filler(self):
         beats, places = self._beats(shots=2), self._loose(shots=2)
         self.assertEqual(
-            verify.pace_runs("db", beats, places, {1: (600.0, 900.0)}), 0)
+            verify.pace_runs("db", beats, places, self._window((600.0, 900.0), len(places))), 0)
 
     def test_a_run_with_no_episode_on_it_is_skipped_not_crashed(self):
         beats, places = self._beats(), self._loose(path="")
         self.assertEqual(
-            verify.pace_runs("db", beats, places, {1: (600.0, 900.0)}), 0)
+            verify.pace_runs("db", beats, places, self._window((600.0, 900.0), len(places))), 0)
 
     def test_a_shot_found_outside_the_window_does_not_drag_the_run_out(self):
         """A stated window was typed by a person; a picture match was
@@ -1720,7 +1726,7 @@ class TestPacingARunNothingCouldMatch(unittest.TestCase):
         beats, places = self._beats(), self._loose()
         places[0].method = "picture"
         places[0].start_ms, places[0].end_ms = 60_000, 66_000
-        verify.pace_runs("db", beats, places, {1: (1800.0, 2100.0)})
+        verify.pace_runs("db", beats, places, self._window((1800.0, 2100.0), len(places)))
         laid = [p.start_ms / 1000.0 for p in places if p.method == "paced"]
         self.assertTrue(all(1800.0 <= at <= 2100.0 for at in laid))
 

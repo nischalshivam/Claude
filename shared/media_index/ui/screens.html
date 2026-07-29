@@ -467,6 +467,25 @@
                 </sc-for>
               </div>
 
+              <sc-if value="{{ hasEvidence }}">
+                <div style="margin:0 18px 16px 18px; padding:13px 15px; background:var(--raised); border:1px solid var(--border-strong); border-radius:10px;">
+                  <div style="font-size:11px; font-weight:700; letter-spacing:0.05em; color:var(--muted); padding-bottom:9px;">FOOTAGE KIS PAR TIKI HAI</div>
+                  <div style="display:flex; height:8px; border-radius:99px; overflow:hidden; background:var(--border);">
+                    <div style="{{ evExactBar }}"></div>
+                    <div style="{{ evBetweenBar }}"></div>
+                    <div style="{{ evLooseBar }}"></div>
+                  </div>
+                  <div style="padding-top:11px; display:flex; flex-direction:column; gap:5px;">
+                    <div style="display:flex; align-items:center; gap:8px; font-size:11.5px;"><div style="width:8px; height:8px; border-radius:2px; background:var(--ok); flex:0 0 8px;"></div><span style="color:var(--text); font-weight:600;">{{ evExact }}</span><span style="color:var(--muted);">quoted line ya tumhari timing se — exact</span></div>
+                    <div style="display:flex; align-items:center; gap:8px; font-size:11.5px;"><div style="width:8px; height:8px; border-radius:2px; background:var(--warn); flex:0 0 8px;"></div><span style="color:var(--text); font-weight:600;">{{ evBetween }}</span><span style="color:var(--muted);">unke beech me rakhe gaye — achha anumaan</span></div>
+                    <div style="display:flex; align-items:center; gap:8px; font-size:11.5px;"><div style="width:8px; height:8px; border-radius:2px; background:var(--muted); flex:0 0 8px;"></div><span style="color:var(--text); font-weight:600;">{{ evLoose }}</span><span style="color:var(--muted);">sirf sahi episode — jagah ka pata nahi</span></div>
+                  </div>
+                  <sc-if value="{{ evWeak }}">
+                    <div style="margin-top:11px; padding-top:10px; border-top:1px solid var(--line); font-size:11.5px; color:var(--warn); line-height:1.6;">{{ evWeakWhy }}</div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
               <sc-if value="{{ hasLearnedTiming }}">
                 <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--ok-soft); border:1px solid var(--ok); border-radius:10px;">
                   <div style="font-size:12px; color:var(--ok); font-weight:600; line-height:1.6;">Ye timings tool ne khud nikaal li — quoted lines se, exact. Copy karke box me daal do:</div>

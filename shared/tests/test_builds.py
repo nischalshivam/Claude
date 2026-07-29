@@ -186,3 +186,55 @@ class TestCheckingBeforeBuilding(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestWhatTheCheckPanelPromises(unittest.TestCase):
+    """The number the panel led with said **98%** while the build that
+    followed reported **60% usable**. Both were computed honestly and they
+    measure different things — "placeable" means the episode is known, not
+    that the moment is. A page being cheerful at somebody about to spend
+    forty minutes rendering is the one thing a pre-flight must not do."""
+
+    class Report:
+        def __init__(self, beats, places):
+            self.beats = beats
+            self._places = places
+            self.job = None
+
+    def _beats(self, shots=6):
+        return [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": "S04E01",
+             "visual": f"shot {i}", "duration_target_sec": 5}
+            for i in range(shots)]}]
+
+    def _places(self, methods):
+        return [builds.align.Placement(beat=1, shot=i + 1, path="/lib/e.mkv",
+                                       start_ms=1000, end_ms=5000, method=m)
+                for i, m in enumerate(methods)]
+
+    def test_a_quoted_line_counts_as_exact_and_a_guess_does_not(self):
+        rep = self.Report(self._beats(), self._places(
+            ["anchor", "interpolated", "interpolated", "none", "none",
+             "none"]))
+        got = builds.evidence(rep)
+        self.assertEqual(got["exact"], 1)
+        self.assertEqual(got["between"], 2)
+        self.assertEqual(got["loose"], 3)
+        self.assertEqual(got["total"], 6)
+
+    def test_a_stated_time_counts_as_exact_even_with_no_line(self):
+        rep = self.Report(self._beats(), self._places(["none"] * 6))
+        self.assertEqual(builds.evidence(rep)["exact"], 0)
+        got = builds.evidence(rep, "S04E01 29:30-33:40")
+        self.assertEqual(got["exact"], 0)
+        self.assertEqual(got["between"], 6)     # held by what you stated
+        self.assertEqual(got["loose"], 0)
+
+    def test_a_script_nothing_could_be_worked_out_for_says_so(self):
+        rep = self.Report(self._beats(), self._places(["none"] * 6))
+        got = builds.evidence(rep)
+        self.assertEqual(got["loose"], 6)
+        self.assertEqual(got["percent"], 0)
+
+    def test_no_beats_is_no_opinion_rather_than_a_crash(self):
+        self.assertEqual(builds.evidence(self.Report([], [])), {})

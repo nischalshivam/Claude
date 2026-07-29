@@ -869,7 +869,12 @@ def locate_run(index: visual.VisualIndex, captions: list, backend,
 
 def locate_runs(db_path: str, beats: list, people: dict | None = None,
                 log=lambda *a: None) -> dict:
-    """{beat number: (lo, hi)} — where each run happens in its episode."""
+    """{(beat, shot): (lo, hi)} — where each run happens in its episode.
+
+    Keyed by shot rather than by beat because a beat routinely draws from
+    several episodes — 24 of 34 on a real script — and one window per beat
+    means one episode's window silently overwrites all the others in it.
+    """
     if embed.loaded() is None:
         ok, _why = embed.available()
         if not ok:
@@ -910,7 +915,7 @@ def locate_runs(db_path: str, beats: list, people: dict | None = None,
                     "where this run happens")
                 continue
             for entry in run.entries:
-                found[entry.beat] = (lo, hi)
+                found[(entry.beat, entry.shot)] = (lo, hi)
             log(f"      {run.label}: happens around "
                 f"{lo/60:.0f}-{hi/60:.0f} min of "
                 f"{os.path.basename(path)} (x{strength:.1f})")
@@ -1018,7 +1023,7 @@ def place_by_picture(db_path: str, beats: list, placements: list,
             # fourteen hundred frames of everything else in it; searched
             # across the four minutes the scene actually occupies, it is
             # competing with the scene.
-            span = (windows or {}).get(p.beat)
+            span = (windows or {}).get((p.beat, p.shot))
             # ...and only among the frames the people this shot names are
             # actually in, where the script says who they are. A sentence
             # about Gus and Walter landing on Skyler and Walt Jr. is the
@@ -1100,7 +1105,7 @@ def pace_runs(db_path: str, beats: list, placements: list,
         loose = [p for p in mine if not p.ok]
         if len(loose) < PACE_MIN_SHOTS:
             continue                # dialogue placed this run; leave it alone
-        span = windows.get(run.entries[0].beat)
+        span = windows.get((run.entries[0].beat, run.entries[0].shot))
         if not span or span[1] <= span[0]:
             continue                # the picture has no opinion — filler, then
         path = next((p.path for p in mine if p.path), "")

@@ -846,6 +846,14 @@
     var f = state.form;
     var t = state.task;
     var report = (t && t.report && t.report.verdict) ? t.report : null;
+    var ev = (report && report.evidence) || {};
+
+    // One segment of the "what is this footage resting on" bar.
+    function bar(part, whole, tone) {
+      var share = whole ? (part || 0) * 100 / whole : 0;
+      return "width:" + share.toFixed(1) + "%; background:var(--" + tone
+             + "); transition:width .2s ease;";
+    }
     var running = !!t && (t.status === "running" || t.status === "queued");
     var chosen = titleNamed(f.title);
     var tone = chosen ? (TONES[chosen.status] || "muted") : "muted";
@@ -1008,6 +1016,22 @@
                  icon: c.ok ? "✓" : (c.fatal ? "✗" : "!"),
                  mark: "flex:0 0 16px; text-align:center; font-size:12px; font-weight:700; color:var(--" + tint + ");" };
       }),
+      hasEvidence: !!(report && report.evidence && report.evidence.total),
+      evExact: ev.exact || 0,
+      evBetween: ev.between || 0,
+      evLoose: ev.loose || 0,
+      evExactBar: bar(ev.exact, ev.total, "ok"),
+      evBetweenBar: bar(ev.between, ev.total, "warn"),
+      evLooseBar: bar(ev.loose, ev.total, "muted"),
+      // Below this the video is mostly the right episode and not much else,
+      // and somebody about to spend forty minutes rendering should be told
+      // BEFORE, not by watching it afterwards.
+      evWeak: !!ev.total && (ev.loose / ev.total) > 0.25,
+      evWeakWhy: !ev.total ? "" : Math.round(ev.loose * 100 / ev.total)
+        + "% shots ke liye sirf episode pata hai, moment nahi. Ye clips "
+        + "random lagengi. Niche jo timings maangi gayi hain wo bhar do, ya "
+        + "script me un runs ke liye quoted lines add karwao.",
+
       hasLearnedTiming: !!report && (report.learned_timing || []).length > 0,
       learnedTiming: report ? (report.learned_timing || []) : [],
       useLearned: function () {

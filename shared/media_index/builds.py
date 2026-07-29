@@ -29,7 +29,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 
-from . import jobs as jobs_mod, term
+from . import align, jobs as jobs_mod, term
 
 # How many log lines a task keeps. Enough to see what went wrong, bounded so
 # a forty-minute render cannot grow without limit.
@@ -214,6 +214,28 @@ def _seconds(value: float) -> str:
     return f"{value/60:.1f} min"
 
 
+def _placements(rep) -> list:
+    """Where alignment will actually put every shot, worked out once.
+
+    The pre-flight has to answer with the same numbers the build will
+    produce. Anything else is a page telling somebody their video is fine
+    and a log telling them it is not.
+    """
+    got = getattr(rep, "_places", None)
+    if got is not None:
+        return got
+    beats = getattr(rep, "beats", None) or []
+    try:
+        got = align.align(rep.job.db, beats) if beats else []
+    except Exception:                   # a pre-flight must never fail here
+        got = []
+    try:
+        rep._places = got
+    except AttributeError:
+        pass
+    return got
+
+
 def learned_timings(rep) -> list:
     """Timings the pre-flight worked out from lines that really matched.
 
@@ -221,17 +243,52 @@ def learned_timings(rep) -> list:
     with a quoted line has already stated where it is, exactly; there is no
     reason to make somebody scrub a player for a number the tool is holding.
     """
-    from . import align, timings
+    from . import timings
 
     beats = getattr(rep, "beats", None) or []
     if not beats:
         return []
-    try:
-        places = align.align(rep.job.db, beats)
-    except Exception:                   # a pre-flight must never fail here
-        return []
     return [{"line": line, "shots": shots, "lines_matched": count}
-            for shots, line, count in timings.derive(beats, places)]
+            for shots, line, count in timings.derive(beats, _placements(rep))]
+
+
+def evidence(rep, typed: str = "") -> dict:
+    """How much of this video will rest on evidence, and how much on a guess.
+
+    The number the Check panel used to lead with was `shots placeable`, and
+    on a real script it read **98%** while the build that followed reported
+    **60% usable**. Both were computed honestly and they measure different
+    things: "placeable" means the episode is known, not that the moment is.
+    A page saying 98% to somebody about to spend forty minutes rendering is
+    the tool being cheerful at the wrong moment.
+
+    This counts what actually decides the footage:
+
+      * a quoted line the subtitles confirm, or a time somebody stated —
+        those are exact
+      * a shot laid between two of those in the same run — a good guess
+      * everything else — the right episode and nothing more
+    """
+    from . import timings
+
+    beats = getattr(rep, "beats", None) or []
+    places = _placements(rep)
+    if not beats or not places:
+        return {}
+    said = timings.from_script(beats) + timings.parse_lines(typed or "")
+    stated = timings.windows_for(beats, said)
+    firm = held = 0
+    for p in places:
+        if p.method == "anchor":
+            firm += 1
+        elif (p.beat, p.shot) in stated:
+            held += 1
+        elif p.ok:
+            held += 1
+    total = len(places)
+    return {"exact": firm, "between": held, "loose": total - firm - held,
+            "total": total,
+            "percent": int(round((firm + held) * 100 / max(1, total)))}
 
 
 def report_dict(rep, typed: str = "") -> dict:
@@ -257,6 +314,7 @@ def report_dict(rep, typed: str = "") -> dict:
         # Last, because it is the one line worth acting on.
         "needs_timing": timing_advice(rep, typed),
         "learned_timing": learned_timings(rep),
+        "evidence": evidence(rep, typed),
     }
 
 

@@ -96,7 +96,11 @@ class TestWhatAStatedTimeDoes(unittest.TestCase):
         beats = _beats()
         said = timings.parse_lines("S04E01 29:30-33:40")
         got = timings.windows_for(beats, said)
-        self.assertEqual(got[1], (1770.0, 2020.0))
+        # Keyed by SHOT, not by beat: a beat routinely draws from several
+        # episodes, and one window per beat is one episode's stretch applied
+        # to everybody else's footage.
+        self.assertEqual(got[(1, 1)], (1770.0, 2020.0))
+        self.assertEqual(len(got), 6)
 
     def test_a_line_about_a_different_episode_is_ignored(self):
         beats = _beats(se="S04E01")
@@ -112,7 +116,8 @@ class TestWhatAStatedTimeDoes(unittest.TestCase):
         beats = _beats(scene_range="10:00-12:00")
         said = (timings.from_script(beats)
                 + timings.parse_lines("S04E01 29:30-33:40"))
-        self.assertEqual(timings.windows_for(beats, said)[1], (1770.0, 2020.0))
+        self.assertEqual(timings.windows_for(beats, said)[(1, 1)],
+                         (1770.0, 2020.0))
 
     def test_a_script_can_state_the_range_itself(self):
         beats = _beats(scene_range="29:30-33:40")
@@ -254,16 +259,19 @@ class TestWhenAQuotedLineContradictsAStatedTime(unittest.TestCase):
             out[2].end_ms = out[2].start_ms + 3000
         return out
 
+    def _windows(self, span, shots=6):
+        return {(1, i + 1): span for i in range(shots)}
+
     def test_a_window_the_line_contradicts_is_dropped_and_named(self):
         said = []
-        windows = {1: (2400.0, 2760.0)}          # "40:00-46:00"
+        windows = self._windows((2400.0, 2760.0))     # "40:00-46:00"
         got = timings.honour(self._run(), self._places(anchor_at=1836.0),
                              windows, log=said.append)
         self.assertEqual(got, {})
         self.assertTrue(any("30:36" in s for s in said), said)
 
     def test_a_window_the_line_agrees_with_is_kept(self):
-        windows = {1: (1800.0, 2280.0)}          # "30:00-38:00"
+        windows = self._windows((1800.0, 2280.0))     # "30:00-38:00"
         got = timings.honour(self._run(), self._places(anchor_at=1900.0),
                              windows)
         self.assertEqual(got, windows)
@@ -271,7 +279,7 @@ class TestWhenAQuotedLineContradictsAStatedTime(unittest.TestCase):
     def test_a_run_with_no_quoted_line_keeps_whatever_was_stated(self):
         """Nothing was measured, so there is nothing to contradict — and
         this is the case the whole feature exists for."""
-        windows = {1: (2400.0, 2760.0)}
+        windows = self._windows((2400.0, 2760.0))
         got = timings.honour(self._run(), self._places(), windows)
         self.assertEqual(got, windows)
 
@@ -361,3 +369,65 @@ class TestTimingsTheBuildWorksOutForItself(unittest.TestCase):
         got = timings.derive(beats, places)
         self.assertEqual(got[0][0], 20)
         self.assertIn("S04E01", got[0][1])
+
+
+class TestABeatThatDrawsFromSeveralEpisodes(unittest.TestCase):
+    """The bug that produced "kuch bhi clips crop ho rahi hai".
+
+    Windows used to be keyed by BEAT. A beat routinely draws from several
+    episodes — on a real 34-beat script, **24 of the 34 did** — so the last
+    episode processed silently overwrote every other episode's window in
+    that beat.
+
+    Measured on that build: S04E01 was told 5:00-8:00 and S03E01 was told
+    10:00-15:00, and both runs were laid out at 39.7 minutes, because
+    S03E13's window (38:00-42:00) had been written into the beats they
+    shared. Three episodes, one window, two of them completely wrong.
+    """
+
+    def _beats(self):
+        # One beat, three episodes — exactly the shape that broke.
+        return [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": se,
+             "visual": f"a shot of {se}", "duration_target_sec": 5}
+            for se in ("S04E01", "S03E01", "S03E13")]}]
+
+    def test_each_episode_keeps_its_own_window(self):
+        said = timings.parse_lines("S04E01 5:00-8:00\n"
+                                   "S03E01 10:00-15:00\n"
+                                   "S03E13 38:00-42:00")
+        got = timings.windows_for(self._beats(), said)
+        self.assertEqual(got[(1, 1)], (300.0, 480.0))       # S04E01
+        self.assertEqual(got[(1, 2)], (600.0, 900.0))       # S03E01
+        self.assertEqual(got[(1, 3)], (2280.0, 2520.0))     # S03E13
+
+    def test_no_episode_can_overwrite_another(self):
+        """The whole point: three windows in, three windows out."""
+        said = timings.parse_lines("S04E01 5:00-8:00\n"
+                                   "S03E01 10:00-15:00\n"
+                                   "S03E13 38:00-42:00")
+        got = timings.windows_for(self._beats(), said)
+        self.assertEqual(len(set(got.values())), 3)
+
+    def test_pacing_uses_the_right_episode_for_each_shot(self):
+        from media_index import verify
+
+        beats = [{"beat": 1, "shots": [
+            {"source": "Breaking Bad", "season_episode": "S04E01",
+             "visual": f"a {i}", "duration_target_sec": 5} for i in range(5)]
+            + [{"source": "Breaking Bad", "season_episode": "S03E01",
+                "visual": f"b {i}", "duration_target_sec": 5}
+               for i in range(5)]}]
+        places = ([align.Placement(beat=1, shot=i + 1, path="/lib/e401.mkv",
+                                   start_ms=0, end_ms=5000, method="none")
+                   for i in range(5)]
+                  + [align.Placement(beat=1, shot=i + 6, path="/lib/e301.mkv",
+                                     start_ms=0, end_ms=5000, method="none")
+                     for i in range(5)])
+        said = timings.parse_lines("S04E01 5:00-8:00\nS03E01 40:00-45:00")
+        verify.pace_runs("db", beats, places,
+                         timings.windows_for(beats, said))
+        first = [p.start_ms / 1000.0 for p in places[:5]]
+        second = [p.start_ms / 1000.0 for p in places[5:]]
+        self.assertTrue(all(300.0 <= at <= 480.0 for at in first), first)
+        self.assertTrue(all(2400.0 <= at <= 2700.0 for at in second), second)

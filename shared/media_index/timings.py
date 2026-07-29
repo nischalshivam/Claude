@@ -249,7 +249,18 @@ def _matches(run, said: Stated) -> bool:
 
 
 def windows_for(beats: list, stated: list, log=lambda *a: None) -> dict:
-    """{beat: (lo, hi)} for every run somebody stated a time for.
+    """{(beat, shot): (lo, hi)} for every run somebody stated a time for.
+
+    Keyed by SHOT, not by beat, and that is not a detail. A beat routinely
+    draws from several episodes — on a real 34-beat script, **24 of the 34
+    beats did** — so one window per beat means the last episode to be
+    processed silently overwrites every other episode's window in that beat.
+
+    Measured on that build: S04E01 was told 5:00-8:00 and S03E01 was told
+    10:00-15:00, and both runs were laid out at 39.7 minutes, because
+    S03E13's window (38:00-42:00) had been written into the beats they
+    shared. Three episodes, one window, two of them completely wrong. It is
+    the reason that build came back as "kuch bhi clips".
 
     Typed lines are applied after script ranges, so the box in front of
     someone wins over a field written days ago by a model. That is the right
@@ -263,7 +274,7 @@ def windows_for(beats: list, stated: list, log=lambda *a: None) -> dict:
             if not _matches(run, said):
                 continue
             for entry in run.entries:
-                out[entry.beat] = said.window
+                out[(entry.beat, entry.shot)] = said.window
             lo, hi = said.window
             log(f"      {run.label}: you said this is at "
                 f"{int(lo//60)}:{int(lo%60):02d}-{int(hi//60)}:{int(hi%60):02d}"
@@ -358,7 +369,7 @@ def honour(beats: list, placements: list, windows: dict,
     for run in align.runs(beats or []):
         if not run.entries:
             continue
-        span = windows.get(run.entries[0].beat)
+        span = windows.get((run.entries[0].beat, run.entries[0].shot))
         if not span or span[1] <= span[0]:
             continue
         found = [by_key[(e.beat, e.shot)].start_ms / 1000.0
@@ -378,7 +389,7 @@ def honour(beats: list, placements: list, windows: dict,
             "using the line, and ignoring the time you gave. Fix it or "
             "delete it.")
         for e in run.entries:
-            out.pop(e.beat, None)
+            out.pop((e.beat, e.shot), None)
     return out
 
 
