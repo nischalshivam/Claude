@@ -247,6 +247,25 @@ class Found:
         return None
 
 
+def sentences(line: str) -> list:
+    """A remembered line as the separate things a subtitle file holds.
+
+    A model recalls a moment and writes it out whole:
+
+        "Been watching him for weeks. I know every step of his cook."
+
+    The subtitle file has those as two cues, seconds apart, and searching
+    for both at once finds neither cleanly — the fragment retry then goes
+    looking and can land in a different episode entirely. Split, each half
+    is an ordinary search that either works or does not.
+
+    Short fragments are dropped rather than searched. "Couldn't." appears
+    hundreds of times in a season and a hit on it means nothing.
+    """
+    parts = [p.strip(" -–—") for p in re.split(r"(?<=[.!?])\s+", line or "")]
+    return [p for p in parts if len(p.split()) >= 4]
+
+
 def _look_up(db: str, line: str, show: str = "", episode: str = "") -> Found | None:
     """The line in the real subtitles, or nothing. Never an approximation.
 
@@ -254,6 +273,10 @@ def _look_up(db: str, line: str, show: str = "", episode: str = "") -> Found | N
     whole library when it did not — but a hit found elsewhere still counts,
     and is what corrects a wrongly remembered episode instead of inheriting
     it.
+
+    The whole line is tried first, because it is the most specific thing
+    available and a hit on it is the strongest. Only when that fails is it
+    broken into sentences — the shape the subtitle file actually stores.
     """
     # Checked rather than caught: sqlite *creates* a database it was asked
     # to open, so a mistyped library path would leave an empty .db beside
@@ -261,18 +284,30 @@ def _look_up(db: str, line: str, show: str = "", episode: str = "") -> Found | N
     if not os.path.isfile(db):
         return None
     key = subtitles.episode_key(episode or "") if episode else None
-    tries = []
-    if key:
-        tries.append({"season": key[0], "episode": key[1]})
-    tries.append({})
-    for where in tries:
-        try:
-            hits = search.find(db, line, show=show or None, limit=1,
-                               min_score=MIN_SCORE, **where)
-        except Exception:                       # a missing db is not fatal
-            return None
-        if hits:
-            return Found(line=line, hit=hits[0])
+    where = [{"season": key[0], "episode": key[1]}] if key else []
+    where.append({})
+
+    def ask(text):
+        for scope in where:
+            try:
+                hits = search.find(db, text, show=show or None, limit=1,
+                                   min_score=MIN_SCORE, **scope)
+            except Exception:                   # a missing db is not fatal
+                return None
+            if hits:
+                return Found(line=text, hit=hits[0])
+        return None
+
+    got = ask(line)
+    if got:
+        return got
+    parts = sentences(line)
+    if len(parts) < 2:
+        return None
+    for part in parts:
+        got = ask(part)
+        if got:
+            return got
     return None
 
 
@@ -321,6 +356,50 @@ def _bracket(a: Found | None, b: Found | None) -> tuple | None:
     return None
 
 
+def _spread(found: list, beats: list) -> dict:
+    """{beat number: [lines to place there]} — k lines across n beats, evenly.
+
+    The bug this function is the answer to, in one line of a real log:
+
+        Breaking Bad S04E01: 31 shot(s), 1 anchor(s)
+
+    Thirty-one shots got a real quoted line and exactly one of them survived
+    alignment. The clue script was right; the placement was not. One clue in
+    that script covered ten beats of narration — the whole box-cutter
+    sequence is one scene — and its three remembered lines were written into
+    the shots of *every* one of those ten beats. The same line then claimed
+    to be at ten different points of the run, the aligner correctly saw a
+    sequence implying 398x the pace of the script around it, and it threw
+    almost all of them away. Correct behaviour, from the aligner, in
+    response to nonsense it had been handed.
+
+    A clue is one scene, and its lines are spoken in the order given, once
+    each. So they are spread through the beats that scene covers — the first
+    line near the start, the last near the end — which is also exactly the
+    shape the aligner wants: anchors apart, silence interpolated between.
+    """
+    if not found or not beats:
+        return {}
+    out: dict = {}
+    last = len(beats) - 1
+    for i, item in enumerate(found):
+        at = 0 if len(found) == 1 else round(i * last / (len(found) - 1))
+        out.setdefault(beats[at], []).append(item)
+    return out
+
+
+def _trustworthy(got: "Found") -> bool:
+    """Is this hit strong enough to overrule the episode a clue named?
+
+    A high bar on purpose. Moving a beat to a different episode on the
+    strength of a fuzzy match is the most damaging single thing this module
+    can do, and "Son of a bitch." matches somewhere in almost every hour of
+    television ever made. A confident, unique hit may overrule; anything
+    less leaves the clue's own answer alone and simply contributes nothing.
+    """
+    return got.hit.confidence == "high" and not got.hit.alternatives
+
+
 def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment:
     """Fill in what the clues can prove, in place, and report what they could not.
 
@@ -329,6 +408,10 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
     already, and overwriting it with a remembered one would trade something
     checked for something recalled. The clue script exists for the 87% of
     shots that had nothing.
+
+    Works clue by clue rather than beat by beat, because a clue is a scene
+    and a scene routinely spans many beats — ten, in the script this was
+    fixed against. Its lines are looked up once and placed once.
     """
     out = Enrichment()
     if not beats or not clues:
@@ -343,16 +426,26 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
             "narration_covered wahi text hona chahiye jo visual script me hai")
         return out
 
-    cache: dict = {}
-    for beat in beats:
-        no = beat.get("beat")
+    by_no = {b.get("beat"): b for b in beats if b.get("beat") is not None}
+    order = [b.get("beat") for b in beats if b.get("beat") is not None]
+    mine: dict = {}
+    for no in order:
         clue = paired.get(no)
-        if clue is None:
+        if clue is not None and (by_no[no].get("shots") or []):
+            mine.setdefault(id(clue), []).append(no)
+
+    cache: dict = {}
+    quotes: dict = {}          # {beat: [Found]}   placed once, in order
+    edges: dict = {}           # {beat: (Found, "before"|"after")}
+    windows: dict = {}         # {beat: (lo, hi)}
+    facts: dict = {}           # {beat: (episode, clue)}
+
+    for clue in clues:
+        where = mine.get(id(clue)) or []
+        if not where:
             continue
-        shots = beat.get("shots") or []
-        if not shots:
-            continue
-        show = (shots[0].get("source") or "").strip()
+        first = by_no[where[0]]["shots"][0]
+        show = (first.get("source") or "").strip()
 
         def check(line):
             if not line:
@@ -371,22 +464,44 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
         window = _bracket(before, after)
 
         # The episode the clue named counts only where one of its own lines
-        # turned up inside an episode. That is the prompt's own rule, and it
-        # is what stops a confidently wrong "S05E08" from sending a whole
-        # beat into a different hour of television.
-        proven = next((f for f in inside + [before, after] if f), None)
+        # turned up inside an episode, and only when that hit is strong
+        # enough to be worth more than the clue's own answer.
+        proven = next((f for f in inside + [before, after]
+                       if f and _trustworthy(f)), None)
         proven_se = ""
         if proven and proven.episode_key:
             season, ep = proven.episode_key
             proven_se = f"S{season:02d}E{ep:02d}"
             if clue.episode and subtitles.episode_key(clue.episode) \
                     != proven.episode_key:
+                # Once per clue, not once per beat it happens to cover.
                 out.episodes_corrected.append(
                     f"{clue.clue_id or 'clue'}: kaha {clue.episode}, "
                     f"line mili {proven_se} me")
 
-        spare = list(inside)
-        for i, shot in enumerate(shots, 1):
+        for no, got in _spread(inside, where).items():
+            quotes.setdefault(no, []).extend(got)
+        # A line spoken *before* the scene belongs at its start and a line
+        # spoken after it at its end — putting either on all ten beats is
+        # the same duplication that broke the quotes.
+        if before:
+            edges[where[0]] = (before, "before")
+        if after:
+            edges.setdefault(where[-1], (after, "after"))
+        for no in where:
+            facts[no] = (proven_se, clue)
+            if window:
+                windows[no] = window
+        if window and before and after:
+            out.brackets_added += 1
+
+    for no, beat in by_no.items():
+        proven_se, clue = facts.get(no, ("", None))
+        if clue is None:
+            continue
+        spare = list(quotes.get(no) or [])
+        edge = edges.get(no)
+        for i, shot in enumerate(beat.get("shots") or [], 1):
             if not (shot.get("season_episode") or "").strip() and proven_se:
                 shot["season_episode"] = proven_se
                 shot["se_confidence"] = "high"
@@ -396,21 +511,16 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
                 shot["exact_dialogue"] = got.line
                 shot["dialogue_confidence"] = got.hit.confidence
                 out.quotes_added += 1
-            elif not (shot.get("nearest_dialogue") or "").strip():
-                edge = before or after
-                if edge:
-                    shot["nearest_dialogue"] = edge.line
-                    shot["nearest_dialogue_position"] = (
-                        "before" if edge is before else "after")
+            elif edge and not (shot.get("nearest_dialogue") or "").strip():
+                shot["nearest_dialogue"], shot["nearest_dialogue_position"] = (
+                    edge[0].line, edge[1])
             if not (shot.get("characters") or []) and clue.on_screen:
                 shot["characters"] = list(clue.on_screen)
                 out.people_filled += 1
             if not (shot.get("visual") or "").strip() and clue.visible:
                 shot["visual"] = clue.visible
-            if window:
-                out.windows[(no, i)] = window
-        if window and (before and after):
-            out.brackets_added += 1
+            if no in windows:
+                out.windows[(no, i)] = windows[no]
 
     log(out.summary())
     if out.episodes_corrected:

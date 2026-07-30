@@ -36,6 +36,7 @@ supports; it reads the list out of the build.
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -231,13 +232,65 @@ def candidates(log=lambda *a: None) -> list:
     return out
 
 
+def leftovers(log=lambda *a: None) -> int:
+    """Delete the `~orch`-style stubs a failed uninstall leaves behind.
+
+    From a real install that reported success and changed nothing:
+
+        WARNING: Failed to remove contents in a temporary directory
+                 '...\\site-packages\\~orch'.
+        Successfully installed torch-2.13.0+cu130
+
+    followed by `torch 2.13.0+cpu` on the very next line of the re-check.
+    On Windows a DLL that is open cannot be deleted, so pip renames the old
+    package to `~orch` and moves on. The rename is the problem: `~orch`
+    still holds a `torch/` tree inside it, `site-packages` now contains two,
+    and which one wins is down to directory order. Removing the stub is the
+    difference between an install that took and one that only said it did.
+    """
+    import glob                                          # noqa: PLC0415
+    import shutil                                        # noqa: PLC0415
+    import sysconfig                                     # noqa: PLC0415
+
+    gone = 0
+    for base in {sysconfig.get_paths().get("purelib"),
+                 sysconfig.get_paths().get("platlib")} - {None}:
+        for path in glob.glob(os.path.join(base, "~*")):
+            try:
+                shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+                log(f"    adhoora hataya hua purana package saaf kiya: "
+                    f"{os.path.basename(path)}")
+                gone += 1
+            except OSError:
+                log(f"    {os.path.basename(path)} hataya nahi ja saka — "
+                    "sabhi Python windows band karke dobara chalao")
+    return gone
+
+
 def install(cand: Candidate, log=print) -> bool:
-    """Replace torch with the chosen build. True if pip said it worked."""
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
+    """Replace torch with the chosen build. True if pip said it worked.
+
+    Uninstalled explicitly first rather than left to `--upgrade`. pip's
+    upgrade path replaces files in place, and a file it cannot replace is
+    one it renames and reports success over — which is exactly how a 1.9 GB
+    download finished with `+cpu` still installed.
+    """
+    leftovers(log)
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y",
+                        "torch"], capture_output=True, text=True)
+    except OSError:
+        pass
+    leftovers(log)
+
+    cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir",
            f"torch=={cand.version}", "--index-url", cand.index]
     log(f"    {' '.join(cmd[2:])}")
     try:
-        return subprocess.run(cmd).returncode == 0
+        if subprocess.run(cmd).returncode != 0:
+            return False
     except OSError as exc:
         log(f"    pip chala hi nahi: {exc}")
         return False
+    leftovers(log)
+    return True

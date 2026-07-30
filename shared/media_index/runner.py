@@ -915,7 +915,11 @@ def run_job(job, report, log=print) -> JobResult:
         # minutes", never "which second", so a shot paced inside one is
         # Tier B. `tiers.tier_of` applies that ceiling; nothing here can
         # promote filler past it.
-        stated = dict(clue_windows, **stated)
+        # `{**a, **b}` rather than `dict(a, **b)`: these keys are (beat,
+        # shot) tuples, and the second spelling routes them through keyword
+        # arguments, which must be strings. It raised "TypeError: keywords
+        # must be strings" after forty minutes of cutting.
+        stated = {**clue_windows, **stated}
         verify.place_by_picture(job.db, report.beats, placements,
                                 episodes=owns, windows=windows,
                                 people=people, log=log)

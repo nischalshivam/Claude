@@ -325,6 +325,18 @@ def cmd_gpu(a):
     print("  ================================================================\n")
     after = gpu_mod.probe()
     _gpu_report(after)
+    if after.torch and pick.version not in after.torch:
+        # pip printed "Successfully installed torch-2.13.0+cu130" and the
+        # very next probe read 2.13.0+cpu. Saying so is the whole value of
+        # measuring twice; without this line the install looks like it
+        # worked and the tool looks like it is lying.
+        print(f"\n  Dhyan do: pip ne {pick.version} lagaya bola, par Python "
+              f"abhi bhi {after.torch} utha raha hai.")
+        print("  Matlab purana torch poori tarah hata nahi — Windows use hone")
+        print("  wali DLL delete nahi karne deta. SAB Python/tool windows band")
+        print("  karo aur gpu.bat dobara chalao; ab wo purana hissa khud saaf")
+        print("  karta hai.")
+        return 1
     return 0 if after.usable else 1
 
 

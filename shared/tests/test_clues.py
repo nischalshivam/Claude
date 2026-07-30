@@ -281,6 +281,111 @@ class TestWhatSurvivesTheSubtitleFile(unittest.TestCase):
         self.assertIn("1/2", got.summary())
 
 
+class TestOneClueCoveringManyBeats(unittest.TestCase):
+    """The failure that made the first version of this worse than nothing.
+
+    From the real log, on a script whose first clue covered ten beats:
+
+        Breaking Bad S04E01: 31 shot(s), 1 anchor(s)
+        the line at shot 4 implies 398x the pace of the script around it
+        two lines put this run across 25 minutes of the episode
+
+    Thirty-one shots were given a real quoted line and one survived. The
+    clue's three lines had been written into every one of its ten beats, so
+    each line claimed ten different positions at once and the aligner — quite
+    correctly — threw the contradictions away.
+    """
+
+    def test_lines_are_spread_across_the_beats_not_repeated_in_each(self):
+        got = clues._spread(["a", "b", "c"], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(got, {1: ["a"], 5: ["b"], 10: ["c"]})
+
+    def test_the_first_line_opens_the_run_and_the_last_closes_it(self):
+        got = clues._spread(["a", "b"], [4, 5, 6, 7])
+        self.assertEqual(sorted(got), [4, 7])
+
+    def test_one_line_and_one_beat_is_still_one_placement(self):
+        self.assertEqual(clues._spread(["a"], [3]), {3: ["a"]})
+        self.assertEqual(clues._spread(["a"], [3, 4, 5]), {3: ["a"]})
+
+    def test_more_lines_than_beats_still_places_every_line(self):
+        got = clues._spread(["a", "b", "c", "d"], [1, 2])
+        self.assertEqual(sum(len(v) for v in got.values()), 4)
+
+    def test_nothing_to_spread_is_not_an_error(self):
+        self.assertEqual(clues._spread([], [1, 2]), {})
+        self.assertEqual(clues._spread(["a"], []), {})
+
+    @skip_no_ffmpeg
+    def test_a_ten_beat_clue_places_each_line_exactly_once(self):
+        """End to end, against real subtitles: the regression itself."""
+        tmp = tempfile.mkdtemp(prefix="clues_wide_")
+        try:
+            root = os.path.join(tmp, "Iron Harvest", "Season 04")
+            dv.build(os.path.join(root, "Iron.Harvest.S04E01.1080p.mkv"),
+                     log=lambda *a: None)
+            db = os.path.join(tmp, "library.db")
+            library.build(root, db, log=lambda *a: None)
+
+            narration = "He says he never wanted any of it and the argument turns."
+            beats = [beat(i, narration, shots=3) for i in range(1, 11)]
+            got = clues.enrich(db, beats, [clues._clue_from(clue(
+                narration_covered=narration,
+                dialogue_in_scene=[AT_52S, AT_63S]))])
+
+            placed = [s["exact_dialogue"] for b in beats for s in b["shots"]
+                      if s["exact_dialogue"]]
+            self.assertEqual(sorted(placed), sorted([AT_52S, AT_63S]))
+            self.assertEqual(got.quotes_added, 2)
+            # ...and at opposite ends of the run, so the shots between them
+            # are interpolated rather than contradicted.
+            first = [b["beat"] for b in beats
+                     if any(s["exact_dialogue"] for s in b["shots"])]
+            self.assertEqual(first, [1, 10])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestARememberedLineIsOftenTwoSubtitleCues(unittest.TestCase):
+
+    def test_a_two_sentence_recollection_splits(self):
+        self.assertEqual(
+            clues.sentences("Been watching him for weeks. "
+                            "I know every step of his cook."),
+            ["Been watching him for weeks.", "I know every step of his cook."])
+
+    def test_fragments_too_short_to_mean_anything_are_dropped(self):
+        """"Couldn't." appears hundreds of times in a season."""
+        self.assertEqual(clues.sentences("Couldn't. People there."), [])
+
+    def test_a_single_sentence_is_left_whole(self):
+        self.assertEqual(clues.sentences("Well? Get back to work."),
+                         ["Get back to work."])
+
+
+class TestOverrulingTheEpisodeAClueNamed(unittest.TestCase):
+    """Moving a beat to a different episode is the most damaging thing this
+    module can do, so it takes the strongest kind of hit and nothing less."""
+
+    def _found(self, confidence, alternatives=0):
+        hit = clues.search.Hit(
+            media_id=1, path="x", show="s", kind="tv", year=None, season=5,
+            episode=2, start_ms=0, end_ms=1, matched_text="t", score=90.0,
+            coverage=1.0, confidence=confidence, alternatives=alternatives)
+        return clues.Found(line="Son of a bitch.", hit=hit)
+
+    def test_a_confident_unique_hit_may_overrule(self):
+        self.assertTrue(clues._trustworthy(self._found("high")))
+
+    def test_a_merely_probable_hit_may_not(self):
+        self.assertFalse(clues._trustworthy(self._found("medium")))
+        self.assertFalse(clues._trustworthy(self._found("low")))
+
+    def test_a_line_that_appears_in_several_places_may_not(self):
+        self.assertFalse(clues._trustworthy(self._found("high",
+                                                        alternatives=3)))
+
+
 class TestNeverBreakingABuild(unittest.TestCase):
     """A third, hand-supplied, optional file may contribute nothing. It may
     never be the reason a two-hour build did not start."""
@@ -303,6 +408,94 @@ class TestNeverBreakingABuild(unittest.TestCase):
         beats = [{"beat": 1, "narration": "He folds the jacket.", "shots": []}]
         clues.enrich("nope.db", beats, [clues._clue_from(clue(
             narration_covered="He folds the jacket."))])
+
+
+@skip_no_ffmpeg
+class TestAWholeBuildWithAClueScript(unittest.TestCase):
+    """The test that was missing, and its absence is why a crash reached a
+    real user with 713 other tests green.
+
+    Every clue test above works on `clues` alone. None of them ran a build.
+    So `stated = dict(clue_windows, **stated)` — correct-looking, and wrong
+    because these keys are (beat, shot) tuples and that spelling routes them
+    through keyword arguments — passed everything and then failed with
+
+        TypeError: keywords must be strings
+
+    forty minutes in, after all the footage had been cut. A unit test cannot
+    catch that. Only running the thing can.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from media_index import jobs                             # noqa: PLC0415
+        cls.jobs = jobs
+        cls.tmp = tempfile.mkdtemp(prefix="clue_build_")
+        root = os.path.join(cls.tmp, "Iron Harvest", "Season 04")
+        dv.build(os.path.join(root, "Iron.Harvest.S04E01.1080p.mkv"),
+                 log=lambda *a: None)
+        cls.db = os.path.join(cls.tmp, "library.db")
+        library.build(root, cls.db, log=lambda *a: None)
+
+        narration = "He says he never wanted any of it, and the argument turns."
+        cls.script = write(cls.tmp, "visual.json",
+                           [beat(i, narration, shots=2) for i in range(1, 5)])
+        cls.clues = write(cls.tmp, "clue.json", {
+            "schema": "clue-1",
+            "clues": [clue(narration_covered=narration,
+                           dialogue_in_scene=[AT_52S],
+                           dialogue_before=AT_52S, dialogue_after=AT_63S,
+                           characters_on_screen=["Walt"])]})
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _job(self, **extras):
+        return self.jobs.Job(
+            name="clue build", script=self.script, db=self.db,
+            out=tempfile.mkdtemp(dir=self.tmp), extras=extras)
+
+    def test_a_build_with_a_clue_script_runs_to_the_end(self):
+        from media_index import runner                           # noqa: PLC0415
+
+        job = self._job(clues=self.clues, mode="balanced")
+        rep = self.jobs.preflight(job, log=lambda *a: None)
+        self.assertTrue(rep.clue_windows, "the clue script proved nothing")
+        result = runner.run_job(job, rep, log=lambda *a: None)
+        self.assertNotEqual(result.status, "failed", result.error)
+
+    def test_a_build_with_a_clue_script_and_a_typed_timing_runs_too(self):
+        """Both dicts non-empty is the case that actually crashed: the merge
+        only happens when there is something on each side of it."""
+        from media_index import runner                           # noqa: PLC0415
+
+        job = self._job(clues=self.clues, mode="balanced",
+                        timings="S04E01 0:50-1:10")
+        rep = self.jobs.preflight(job, log=lambda *a: None)
+        result = runner.run_job(job, rep, log=lambda *a: None)
+        self.assertNotEqual(result.status, "failed", result.error)
+
+    def test_the_same_build_without_a_clue_script_still_runs(self):
+        from media_index import runner                           # noqa: PLC0415
+
+        job = self._job(mode="balanced")
+        rep = self.jobs.preflight(job, log=lambda *a: None)
+        self.assertEqual(rep.clue_windows, {})
+        result = runner.run_job(job, rep, log=lambda *a: None)
+        self.assertNotEqual(result.status, "failed", result.error)
+
+    def test_a_broken_clue_script_is_reported_and_does_not_stop_the_build(self):
+        from media_index import runner                           # noqa: PLC0415
+
+        bad = write(self.tmp, "broken.json", "not a clue script at all")
+        job = self._job(clues=bad, mode="balanced")
+        rep = self.jobs.preflight(job, log=lambda *a: None)
+        named = [c for c in rep.checks if c.name == "clue script"]
+        self.assertTrue(named and not named[0].ok)
+        self.assertFalse(named[0].fatal, "a third optional file may not block")
+        result = runner.run_job(job, rep, log=lambda *a: None)
+        self.assertNotEqual(result.status, "failed", result.error)
 
 
 if __name__ == "__main__":
