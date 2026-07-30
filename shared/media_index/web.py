@@ -216,6 +216,32 @@ def narration_facts(path: str) -> dict:
     return {"path": os.path.abspath(path), "words": len(words)}
 
 
+def clue_facts(path: str) -> dict:
+    """What a clue script offers, before any of it has been checked.
+
+    Deliberately counts the two things separately: how many clues there are,
+    and how many of them actually carry a line of dialogue. A 40-clue script
+    where 30 clues remembered no line is worth less than a 12-clue one where
+    every clue did, and only the second number says so. The subtitle lookup
+    that decides which of those lines are real happens at Check — this is
+    the two-second answer someone gets the moment they pick the file.
+    """
+    from . import clues as clues_mod
+
+    found = clues_mod.read(path)                # raises ClueError
+    with_line = [c for c in found if c.lines]
+    return {
+        "path": os.path.abspath(path),
+        "clues": len(found),
+        "with_dialogue": len(with_line),
+        "lines": sum(len(c.lines) for c in found),
+        "bracketed": len([c for c in found if c.before and c.after]),
+        "episodes": len({c.episode for c in found if c.episode}),
+        "people": sorted({n for c in found for n in c.on_screen})[:12],
+        "silent": len([c for c in found if c.silent]),
+    }
+
+
 def audio_facts(path: str) -> dict:
     from .probe import ProbeError, probe
     try:
@@ -519,6 +545,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json({"error": f"no such file: {path}"}, 404)
                 return
             self._json(narration_facts(path))
+            return
+
+        if route == "/api/clues":
+            path = (query.get("path") or [""])[0].strip()
+            if not os.path.isfile(path):
+                self._json({"error": f"no such file: {path}"}, 404)
+                return
+            try:
+                self._json(clue_facts(path))
+            except Exception as exc:
+                # Almost always typographic quotes copied out of a chat
+                # window — `clues.read` straightens those itself, so if it
+                # still failed the file is something else entirely.
+                self._json({"error": str(exc)[:300]}, 400)
             return
 
         if route == "/api/cast":

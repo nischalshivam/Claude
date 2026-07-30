@@ -27,9 +27,12 @@
       title: "", script: "", audio: "", name: "", out: "",
       preset: "auto", quality: "1080", pace: "normal", clip: 4.0,
       timings: "", timingsFrom: "", cast: "", narration: "", mode: "strict",
+      clues: "",
     }),
     cast: null,             // what the chosen cast folder holds
     castError: "",
+    clues: null,            // what the chosen clue script offers, unchecked
+    clueError: "",
     narration: null,        // the clean narration script, if one was given
     narrationError: "",
     script: null,           // what the chosen script says about itself
@@ -167,6 +170,7 @@
       cast: f.cast,
       narration: f.narration,
       mode: f.mode,
+      clues: f.clues,
     };
   }
 
@@ -368,7 +372,19 @@
     else if (target === "audio") readAudio(path);
     else if (target === "cast") lookAtCast();
     else if (target === "narration") readNarration();
+    else if (target === "clues") readClues();
     else draw();
+  }
+
+  function readClues() {
+    var path = state.form.clues;
+    remember();
+    if (!path) { setState({ clues: null, clueError: "" }); return; }
+    get("/api/clues?path=" + encodeURIComponent(path))
+      .then(function (data) { setState({ clues: data, clueError: "" }); })
+      .catch(function (err) {
+        setState({ clues: null, clueError: String(err.message || err) });
+      });
   }
 
   function readNarration() {
@@ -941,6 +957,30 @@
         : [],
       castError: state.castError,
 
+      cluePath: f.clues,
+      setClues: function (ev) {
+        f.clues = ev.target.value.trim();
+        readClues();
+      },
+      pickClues: function () { choosePath("script", "clues"); },
+      clueFacts: state.clues
+        ? state.clues.clues + " clue · " + state.clues.lines + " dialogue line"
+          + " · " + state.clues.bracketed + " scene dono taraf se bandhe"
+        : "",
+      // Said separately from the count, because the count looks healthy
+      // either way. A clue with no line is a clue that cannot be checked
+      // against anything, and a script full of them buys nothing at all.
+      clueWeak: (function () {
+        var c = state.clues;
+        if (!c || !c.clues) return "";
+        var mute = c.clues - c.with_dialogue;
+        if (mute * 5 <= c.clues) return "";
+        return mute + " clue me koi dialogue nahi hai (" + c.clues + " me se)"
+             + " — inse kuch nahi milega. Claude se dobara maango: har scene"
+             + " ke pehle aur baad wali line yaad karke bhare.";
+      })(),
+      clueError: state.clueError,
+
       narrationPath: f.narration,
       setNarration: function (ev) {
         f.narration = ev.target.value.trim();
@@ -1026,6 +1066,7 @@
                  icon: c.ok ? "✓" : (c.fatal ? "✗" : "!"),
                  mark: "flex:0 0 16px; text-align:center; font-size:12px; font-weight:700; color:var(--" + tint + ");" };
       }),
+      clueNote: report ? (report.clue_note || "") : "",
       hasEvidence: !!(report && report.evidence && report.evidence.total),
       evExact: ev.exact || 0,
       evBetween: ev.between || 0,

@@ -32,8 +32,9 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import (align, cast, cutter, frames, jobs as jobs_mod, placeholder,
-               probe, term, tiers, timings, verify)
+from . import (align, cast, clues as clues_mod, cutter, frames,
+               jobs as jobs_mod, placeholder, probe, term, tiers, timings,
+               verify)
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -772,6 +773,35 @@ def _spans_by_beat(beats: list, placements: list) -> dict:
     return out
 
 
+def _apply_clues(job, report, log) -> dict:
+    """The clue script's windows, applying it here only if nobody has yet.
+
+    The pre-flight does this work and hands the enriched beats straight to
+    this function's caller, so the normal path is a lookup. The fallback
+    matters for the CLI, where a job can be run against a report built some
+    other way — and it costs one subtitle query per remembered line, which
+    is cheap enough not to be worth a flag.
+    """
+    if getattr(report, "clue_windows", None):
+        if getattr(report, "clue_note", ""):
+            log(f"  {report.clue_note}")
+        return dict(report.clue_windows)
+    path = (job.extras.get("clues") or "").strip()
+    if not path:
+        return {}
+    try:
+        found = clues_mod.read(path)
+        if not found:
+            return {}
+        log(f"  clue script: {len(found)} clue — har line subtitle me check "
+            "hogi, yaad kiya hua kuch bhi seedha nahi maana jayega")
+        return clues_mod.enrich(job.db, report.beats, found, log=log).windows
+    except Exception as exc:                    # never fatal, ever
+        log(f"  clue script lagaya nahi ja saka — {exc}")
+        log("  build waise hi chalega, bas clue wala fayda nahi milega.")
+        return {}
+
+
 def _episodes_by_beat(db_path: str, beats: list) -> dict:
     """{beat number: episode file} for every run in the script.
 
@@ -826,6 +856,12 @@ def run_job(job, report, log=print) -> JobResult:
         elif mode == tiers.DRAFT:
             log("  DRAFT mode — har beat bhara jayega, kamzor wale bhi. "
                 "Ye rough cut ke liye hai; ise accuracy mat samajhna.")
+        # Before anything is placed, because a clue's whole contribution is
+        # to make the visual script quote lines it did not quote before —
+        # and the aligner can only use what the script says when it reads
+        # it. Every line was checked against the real subtitles inside; what
+        # arrives here is already evidence rather than recollection.
+        clue_windows = _apply_clues(job, report, log)
         placements = align.align(job.db, report.beats, log=log)
         log("  " + align.summarise(placements))
         # Alignment says where a shot probably is. This says whether the
@@ -866,7 +902,20 @@ def run_job(job, report, log=print) -> JobResult:
         # check; a typed range is not, and on a real script four of five
         # were wrong by seven to fifteen minutes.
         stated = timings.honour(report.beats, placements, stated, log=log)
+        # Clue windows sit between the two: stronger than the picture
+        # model's opinion, because both their ends are timestamps read out
+        # of a subtitle file — and weaker than a line somebody typed, which
+        # is a person who has watched the episode. So they are applied
+        # first and a typed range overwrites them.
+        clue_windows = timings.honour(report.beats, placements,
+                                      clue_windows, log=log)
+        windows.update(clue_windows)
         windows.update(stated)
+        # Counted as stated for tiering: a bracketed run is "which two
+        # minutes", never "which second", so a shot paced inside one is
+        # Tier B. `tiers.tier_of` applies that ceiling; nothing here can
+        # promote filler past it.
+        stated = dict(clue_windows, **stated)
         verify.place_by_picture(job.db, report.beats, placements,
                                 episodes=owns, windows=windows,
                                 people=people, log=log)

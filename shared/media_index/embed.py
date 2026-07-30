@@ -136,7 +136,14 @@ class SigLIP(Backend):
                 f"could not load {model_name}: {exc}\n"
                 f"      weights are cached in {cache}") from exc
         self._model.eval()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Not `torch.cuda.is_available()`. That is True on a Pascal card
+        # holding a wheel with no sm_61 kernels — allocation works, `.to()`
+        # works, and the first real multiply dies with "no kernel image is
+        # available for execution on the device", forty minutes into an
+        # index that reported GPU on its first line. `usable_device` runs
+        # that multiply here, where failing costs nothing.
+        from . import gpu as gpu_mod                    # noqa: PLC0415
+        device = gpu_mod.usable_device()
         self._model.to(device)
         # Measured, not read off the config. `projection_dim` exists on some
         # versions and not others, and a wrong guess here would not raise —

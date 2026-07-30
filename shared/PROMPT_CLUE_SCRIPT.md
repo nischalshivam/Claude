@@ -196,6 +196,15 @@ Now here is my script:
 
 ---
 
+## Where it goes in the tool
+
+New Video → **Clue script** (just under Script). Optional; a build without
+one behaves exactly as it always did. What it changes is visible at Check,
+in a line that says how many of the remembered lines were actually found:
+
+    clue script: 61/82 line subtitle me mili (74%) · 38 shot ko asli quote
+                 mila · 15 run ko dono taraf se bandha
+
 ## How the three scripts fit together
 
 | # | File | Who writes it | Its one job |
@@ -208,6 +217,34 @@ Order matters: **write the clue script second and give it to Genspark** when
 you ask for the visual script. Genspark then has real dialogue to quote
 instead of inventing quotes, which is where its `exact_dialogue` fields have
 been failing.
+
+### Measured, on the same essay written both ways
+
+One clean narration script, and two visual scripts from it — one written
+straight from the clean script, one written from a clue script first:
+
+| | from the clean script | from the clue script |
+|---|---|---|
+| distinct quoted lines | 9 | 19 |
+| narration covered | 926 s | 154 s |
+| **one anchor per** | **103 s** | **8 s** |
+| shots with no line at all | 10 | 0 |
+
+Twelve times the anchor density. Not a better model — the same model, given
+the one thing it can be accurate about.
+
+Two things that measurement also showed, both worth knowing before you
+follow it:
+
+  - The clue-script run **stopped at 24 beats** and covered a quarter of
+    the narration. Feeding Genspark a clue script uses up its output budget.
+    Ask for the visual script **in halves** — beats 1–30, then 31–60 — or
+    you will get an excellent script for the first three minutes only.
+  - The clue script is worth giving to the tool **whichever** way the visual
+    script was written. Against the clean-script version it still matched 25
+    of 59 beats and offered a real quote to 56 shots that had none. Giving
+    Genspark the clue script and giving the tool the clue script are two
+    separate wins, and you should take both.
 
 ## What the tool does with it
 

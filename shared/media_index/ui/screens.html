@@ -298,6 +298,26 @@
               </div>
 
               <div>
+                <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Clue script <span style="color:var(--faint); font-weight:400;">· .json — optional, par accuracy sabse zyada isse badhti hai</span></div>
+                <div style="display:flex; gap:7px;">
+                  <input type="text" value="{{ cluePath }}" data-keep="clues" onChange="{{ setClues }}" placeholder="D:\Scripts\gus-clue.json" style="{{ pathInput }}" style-focus="border-color:var(--accent);">
+                  <div onClick="{{ pickClues }}" style="{{ chooseBtn }}" style-hover="background:var(--hover);">Choose</div>
+                </div>
+                <div style="margin-top:7px; font-size:11.5px; color:var(--faint); line-height:1.6;">Clean script Claude ko do <span style="font-family:'Cascadia Code', Consolas, monospace; color:var(--muted);">PROMPT_CLUE_SCRIPT.md</span> ke saath — wo har scene ka <b>asli dialogue</b> yaad karke deta hai. Tool har line ko tumhari subtitle file me dhoondhta hai: mil gayi to wo millisecond pakka hai, nahi mili to chup-chaap chhod di jaati hai. Yaad kiya hua time kabhi nahi maana jaata, sirf yaad ki hui line.</div>
+                <sc-if value="{{ clueFacts }}">
+                  <div style="margin-top:8px; display:flex; align-items:center; flex-wrap:wrap; gap:8px; background:var(--accent-soft); border-radius:9px; padding:9px 12px;">
+                    <div style="font-size:12px; font-weight:650; color:var(--accent);">{{ clueFacts }}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ clueWeak }}">
+                  <div style="margin-top:8px; font-size:11.5px; color:var(--warn); line-height:1.6;">{{ clueWeak }}</div>
+                </sc-if>
+                <sc-if value="{{ clueError }}">
+                  <div style="margin-top:8px; background:var(--bad-soft); border:1px solid var(--bad-line); color:var(--bad); border-radius:9px; padding:10px 12px; font-size:12px; line-height:1.6;">{{ clueError }}</div>
+                </sc-if>
+              </div>
+
+              <div>
                 <div style="font-size:12px; font-weight:550; color:var(--muted); padding-bottom:6px;">Clean narration script <span style="color:var(--faint); font-weight:400;">· .txt — optional, par lena chahiye</span></div>
                 <div style="display:flex; gap:7px;">
                   <input type="text" value="{{ narrationPath }}" data-keep="narration" onChange="{{ setNarration }}" placeholder="D:\Scripts\gus5-clean.txt" style="{{ pathInput }}" style-focus="border-color:var(--accent);">
@@ -483,6 +503,13 @@
                   </div>
                 </sc-for>
               </div>
+
+              <sc-if value="{{ clueNote }}">
+                <div style="margin:0 18px 16px 18px; padding:12px 14px; background:var(--accent-soft); border:1px solid var(--accent); border-radius:10px;">
+                  <div style="font-size:11px; font-weight:700; letter-spacing:0.05em; color:var(--accent); padding-bottom:6px;">CLUE SCRIPT SE KYA MILA</div>
+                  <div style="font-size:12px; color:var(--text); line-height:1.65;">{{ clueNote }}</div>
+                </div>
+              </sc-if>
 
               <sc-if value="{{ hasEvidence }}">
                 <div style="margin:0 18px 16px 18px; padding:13px 15px; background:var(--raised); border:1px solid var(--border-strong); border-radius:10px;">

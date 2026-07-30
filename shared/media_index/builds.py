@@ -175,7 +175,7 @@ def job_from(spec: dict, db: str) -> jobs_mod.Job:
         extras={k: v for k, v in spec.items()
                 if k in ("pace", "quality", "captions", "preset", "after",
                          "transitions", "filters", "animation", "title",
-                         "timings", "cast", "narration", "mode")})
+                         "timings", "cast", "narration", "mode", "clues")})
 
 
 def timing_advice(rep, typed: str = "") -> list:
@@ -315,6 +315,7 @@ def report_dict(rep, typed: str = "") -> dict:
         "needs_timing": timing_advice(rep, typed),
         "learned_timing": learned_timings(rep),
         "evidence": evidence(rep, typed),
+        "clue_note": getattr(rep, "clue_note", ""),
     }
 
 

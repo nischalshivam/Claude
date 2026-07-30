@@ -12,10 +12,10 @@ import json
 import os
 import sys
 
-from . import (align, contact, cutter, doctor, embed, frames, jobs as jobs_mod,
-               library, lockfile, narration, probe, render, runner, search,
-               sources, subs, subtitles, sync, term, timeline, transcribe,
-               visual)
+from . import (align, contact, cutter, doctor, embed, frames, gpu as gpu_mod,
+               jobs as jobs_mod, library, lockfile, narration, probe, render,
+               runner, search, sources, subs, subtitles, sync, term, timeline,
+               transcribe, visual)
 from .probe import ProbeError
 
 
@@ -239,45 +239,93 @@ def cmd_stills(a):
     return 0 if written else 1
 
 
+def _gpu_report(rep):
+    """Print the measurement. Every line is something that was read, not assumed."""
+    print(f"  python       {rep.python}  ({rep.executable})")
+    if not rep.torch:
+        print("  torch        install nahi hai — picture index chalega hi nahi")
+        return
+    print(f"  torch        {rep.torch}")
+    print(f"  CUDA build   {rep.cuda_build or 'NAHI — ye CPU-only wheel hai'}")
+    if rep.arch_list:
+        print(f"  banaya gaya  {', '.join(rep.arch_list)}")
+    if rep.device_name:
+        print(f"  GPU          {rep.device_name}  (compute {rep.compute} = {rep.sm})")
+        print(f"  VRAM         {rep.vram_gb:.1f} GB, {rep.free_gb:.1f} GB free")
+
+    if rep.usable:
+        print("\n  GPU par 64x64 multiply chal gaya. Ye sach me kaam karega.")
+    elif rep.wrong_arch:
+        # The failure worth spelling out, because its own error message
+        # ("no kernel image is available") names nothing that caused it.
+        print(f"\n  Card dikh raha hai par ye torch uske liye nahi bana.")
+        print(f"  Card {rep.sm} hai; wheel {', '.join(rep.arch_list)} ke liye hai.")
+        print("  Aise torch par indexing 40 minute chal ke beech me marti hai,")
+        print("  isliye tool khud CPU chunega — ye safe hai, bas dhima.")
+    else:
+        print(f"\n  GPU use nahi hoga — {rep.fault}")
+
+
 def cmd_gpu(a):
-    """What this machine can actually run the models on, measured.
+    """What this machine can actually run the models on, measured — and fixed.
 
     Written because "GPU hai to use karo" is one sentence and the answer is
-    not. The driver seeing a card, Python seeing it, the installed torch
-    build having CUDA at all, and the card having enough memory are four
+    not. The driver seeing a card, torch having CUDA at all, the wheel being
+    built for *this* card, and a real multiply coming back correct are four
     different facts, and a person deciding whether to spend 2.5 GB of
     download deserves all four rather than a guess.
+
+    `--install` exists because the alternative was a version number typed
+    into a batch file, and a typed version is a claim about somebody else's
+    computer. Here the index is asked what it has for this interpreter, and
+    only an answer is installed.
     """
-    import platform                                     # noqa: PLC0415
+    rep = gpu_mod.probe()
+    _gpu_report(rep)
 
-    print(f"  python   {platform.python_version()}  ({sys.executable})")
-    try:
-        import torch                                    # noqa: PLC0415
-        print(f"  torch    {torch.__version__}")
-        built = getattr(torch.version, "cuda", None)
-        print(f"  CUDA build   {built or 'NAHI — ye CPU-only wheel hai'}")
-        if torch.cuda.is_available():
-            n = torch.cuda.get_device_name(0)
-            free, total = torch.cuda.mem_get_info()
-            cap = torch.cuda.get_device_capability(0)
-            print(f"  GPU      {n}  (compute {cap[0]}.{cap[1]})")
-            print(f"  VRAM     {total / 1e9:.1f} GB, {free / 1e9:.1f} GB free")
-            print("\n  Ye model GPU par chalega.")
-        else:
-            print("  GPU      torch ko koi CUDA device nahi dikha")
-            print("\n  gpu.bat chalao — wo CUDA wala torch install karta hai.")
-    except ImportError:
-        print("  torch    install nahi hai — picture index chalega hi nahi")
+    if not a.install:
+        if not rep.usable and rep.torch:
+            print("\n  Theek karne ke liye:  mi gpu --install")
+        return 0 if rep.usable else 1
+
+    if rep.usable:
+        print("\n  Pehle se chal raha hai — kuch install karne ki zarurat nahi.")
+        return 0
+
+    print("\n  ================================================================")
+    print("    Index se puch rahe hain ki is Python ke liye kya maujood hai")
+    print("  ================================================================\n")
+    found = gpu_mod.candidates(log=print)
+    if not found:
+        # Not a network failure and not worth retrying: PyTorch ships CPU
+        # wheels for a new Python months before the CUDA ones, so this is a
+        # calendar problem with a one-line answer.
+        print(f"\n  Python {rep.python} ke liye kisi bhi CUDA channel par torch nahi hai.")
+        print("  (CPU wala hai — isiliye tool chal raha hai. CUDA wala abhi nahi bana.)")
+        print("\n  Iska ek hi seedha hal hai: Python 3.12 alag se install karo")
+        print("  (python.org se, 'Add to PATH' tick karke), phir usme setup.bat")
+        print("  chalao. Purana Python hataana nahi hai — dono saath rehte hain.")
         return 1
 
-    # What the tool itself will pick, which is the only answer that matters.
-    try:
-        backend = embed.load(log=lambda *x: None)
-        print(f"\n  ye tool isko use karega: {backend.device.upper()}")
-    except embed.EmbedError as exc:
-        print(f"\n  model load nahi hua — {exc}")
+    pick = found[0]
+    print(f"\n  Chuna gaya: torch {pick.version} ({pick.channel})")
+    if rep.capability and rep.capability < (7, 0):
+        # Pascal and older. Newer CUDA wheels drop these, and the whole
+        # point of arch_list is that we find out now rather than at minute
+        # forty of an index.
+        print(f"  Dhyan do: tumhara card {rep.sm} hai, jo purana hai. Install ke")
+        print("  baad dobara jaanch hogi — agar wheel me ye arch nahi hai to")
+        print("  tool CPU par hi rahega aur ye saaf bata dega.")
+    if not gpu_mod.install(pick, log=print):
+        print("\n  Install nahi hua. Torch waisa hi hai jaisa pehle tha.")
         return 1
-    return 0
+
+    print("\n  ================================================================")
+    print("    Dobara jaanch — kya sach me badla?")
+    print("  ================================================================\n")
+    after = gpu_mod.probe()
+    _gpu_report(after)
+    return 0 if after.usable else 1
 
 
 def cmd_look(a):
@@ -756,6 +804,8 @@ def main(argv=None):
 
     gp = sub.add_parser("gpu", parents=[common],
                         help="kya models GPU par chal sakte hain")
+    gp.add_argument("--install", action="store_true",
+                    help="is Python ke liye jo CUDA torch maujood hai wo lagao")
     gp.set_defaults(func=cmd_gpu)
 
     se = sub.add_parser("see", parents=[common],

@@ -5,18 +5,17 @@ chcp 65001 >nul 2>&1
 title media_index - GPU
 
 REM ------------------------------------------------------------------------
-REM  GPU ko sach me chalu karna, aur pehle ye dekhna ki wo chal bhi payega.
+REM  Pehli baar ye file me torch ka version haath se likha hua tha (2.5.1).
+REM  Wo galat tha, aur galat hi rehta: pinned version ek daawa hai ki KISI
+REM  AUR computer par kya tha. Python 3.14 aate hi wo daawa jhootha ho gaya
+REM  aur error ne network ko blame kiya:
 REM
-REM  Quadro P1000 = Pascal, 4 GB VRAM. SigLIP-base ise easily fit karta hai
-REM  (poora model ~800 MB fp32, batch 16 frames ~200 MB). faster-whisper ka
-REM  base.en bhi. Par ye "install karo aur ho gaya" nahi hai:
+REM      ERROR: Could not find a version that satisfies the requirement
+REM             torch==2.5.1 (from versions: none)
 REM
-REM    - torch ka default pip wheel CPU-only hota hai. CUDA wala alag hai.
-REM    - faster-whisper ko cuBLAS + cuDNN chahiye, jo torch ke saath aate
-REM      hain par PATH me hone chahiye.
-REM
-REM  Isliye ye file pehle NAAPTI hai, phir badalti hai, phir DOBARA naapti
-REM  hai. Number ke bina "tez ho gaya" bolna wahi purani galti hai.
+REM  Ab yahan koi version nahi likha hai. Saara faisla Python me hota hai —
+REM  index se poochh kar ki IS Python ke liye kya maujood hai, aur card par
+REM  ek asli multiply chala kar. Ye file bas usse bulati hai.
 REM ------------------------------------------------------------------------
 
 set "PY="
@@ -41,46 +40,29 @@ echo   ================================================================
 echo.
 
 %PY% -m media_index gpu
-echo.
+if not errorlevel 1 (
+    echo.
+    echo   Sab theek hai — kuch karne ki zarurat nahi.
+    echo.
+    pause
+    exit /b 0
+)
 
+echo.
 echo   ----------------------------------------------------------------
-echo   GPU chalu karne ke liye CUDA wala torch chahiye. Ye ~2.5 GB
-echo   download hai aur CPU wale torch ko replace karega.
+echo   Ab dekhte hain ki is Python ke liye CUDA wala torch bana bhi hai
+echo   ya nahi. Agar bana hai to wo ~2.5 GB download hai aur CPU wale
+echo   torch ko replace karega.
 echo.
 echo   Aage badhna hai? Ctrl+C dabao rukne ke liye.
 echo   ----------------------------------------------------------------
 pause
 
 echo.
-echo   purana torch hataya ja raha hai...
-%PY% -m pip uninstall -y torch torchvision torchaudio
-
+%PY% -m media_index gpu --install
 echo.
-REM Version pin kiya hua hai, latest nahi. Naye torch builds Pascal
-REM (compute 6.1 - tumhara P1000) ka support hata rahe hain; 2.5.1+cu121
-REM wo abhi rakhta hai. "Latest" lagane par card dikhega par kaam nahi
-REM karega, aur error samajhna mushkil hoga.
-echo   torch 2.5.1 + CUDA 12.1 install ho raha hai (Pascal supported)...
-%PY% -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-if errorlevel 1 (
-    echo.
-    echo   CUDA wala torch install nahi hua. CPU wala wapas laga rahe hain
-    echo   taaki tool chalta rahe.
-    echo.
-    %PY% -m pip install torch
-    pause
-    exit /b 1
-)
-
-echo.
-echo   ================================================================
-echo     Ab dobara jaanch - kya sach me badla?
-echo   ================================================================
-echo.
-%PY% -m media_index gpu
-echo.
-echo   Agar upar "cuda" likha hai to indexing ab GPU par chalegi.
-echo   Agar abhi bhi "cpu" hai to koi baat nahi - tool waise hi chalta
-echo   hai, bas dhima. Ye correctness ki problem nahi hai.
+echo   Agar upar "GPU par 64x64 multiply chal gaya" likha hai to indexing
+echo   ab GPU par chalegi. Agar nahi, to tool CPU par chalta rahega — wo
+echo   dhima hai, galat nahi. Ye correctness ki problem nahi hai.
 echo.
 pause

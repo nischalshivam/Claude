@@ -129,6 +129,8 @@ class JobReport:
     narration_seconds: float = 0.0
     placeable: int = 0
     quotes: object = None            # align.QuoteReport, once it has been run
+    clue_windows: dict = field(default_factory=dict)
+    clue_note: str = ""              # what the clue script proved, in one line
 
     @property
     def blocked(self) -> bool:
@@ -296,6 +298,49 @@ def read_beats(path: str) -> list:
             raise first from None            # the real fault is the first one
 
 
+def _apply_clues(job: Job, rep: JobReport, add, log) -> None:
+    """Let the optional third script fill in what it can prove.
+
+    A clue script contributes quoted lines and bracketed windows to a visual
+    script that had neither. It is checked line by line against the local
+    subtitles inside `clues.enrich`, so what lands on `rep.beats` is
+    evidence; the recollection is left at the door.
+
+    Nothing here may stop a build. A clue script is a third file supplied by
+    hand, and the worst it is allowed to do is contribute nothing — the
+    build that follows is exactly the build that would have run without it.
+    """
+    path = (job.extras.get("clues") or "").strip()
+    if not path:
+        return
+    from . import clues as clues_mod                     # noqa: PLC0415
+
+    if not os.path.isfile(path):
+        add(Check("clue script", False, f"not found: {path}", fatal=False))
+        return
+    try:
+        found = clues_mod.read(path)
+        got = clues_mod.enrich(job.db, rep.beats, found, log=log)
+    except clues_mod.ClueError as exc:
+        add(Check("clue script", False, str(exc)[:160], fatal=False))
+        return
+    except Exception as exc:                             # never fatal, ever
+        add(Check("clue script", False, f"could not be applied: {exc}"[:160],
+                  fatal=False))
+        return
+
+    rep.clue_windows = got.windows
+    rep.clue_note = got.summary().strip()
+    # `ok` is about whether the clues were *useful*, not whether the file
+    # was valid — a clue script none of whose lines exist in the subtitles
+    # parsed perfectly and is worth nothing, and saying so is the point.
+    add(Check("clue script", got.lines_found > 0,
+              f"{len(found)} clue {chr(183)} {got.lines_found}/"
+              f"{got.lines_checked} line subtitle me mili {chr(183)} "
+              f"{got.quotes_added} shot ko asli quote mila",
+              fatal=False))
+
+
 def preflight(job: Job, log=lambda *a: None) -> JobReport:
     """Everything that can be verified without rendering a single frame."""
     rep = JobReport(job=job)
@@ -323,6 +368,14 @@ def preflight(job: Job, log=lambda *a: None) -> JobReport:
         add(Check("library index", False, f"not found: {job.db} — run 'build' first"))
         return rep
     add(Check("library index", True, os.path.basename(job.db)))
+
+    # --- clue script ---
+    # Applied here rather than at build time, and that is deliberate. The
+    # Check panel saying "6% exact" and the build then reporting 40% was a
+    # real complaint about this tool, caused by the two counting different
+    # things. Everything the clues can prove is proved now, so both numbers
+    # describe the same script.
+    _apply_clues(job, rep, add, log)
 
     # --- narration audio ---
     if job.audio:
