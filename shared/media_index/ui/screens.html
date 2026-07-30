@@ -378,6 +378,23 @@
             </sc-if>
           </div>
 
+          <!-- Mode ..................................................... -->
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
+            <div style="display:flex; align-items:center; gap:9px; padding-bottom:6px;">
+              <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em;">Kitna bharosa</div>
+              <div style="font-size:9px; font-weight:700; letter-spacing:0.06em; color:var(--ok); background:var(--ok-soft); padding:2px 6px; border-radius:4px;">NAYA</div>
+            </div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.65; padding-bottom:12px;">Jis shot ka saboot nahi — na quoted line, na tumhari timing — uske liye tool ab <span style="font-family:'Cascadia Code', Consolas, monospace; color:var(--text);">NEEDS VISUAL</span> card lagata hai. Card apna poora time rokta hai, to baaki sab scene apni jagah rehte hain. Editor me sirf card bharne hain.</div>
+            <div style="display:flex; gap:10px;">
+              <sc-for list="{{ modes }}" as="m">
+                <div onClick="{{ m.pick }}" style="{{ m.style }}">
+                  <div style="font-size:13px; font-weight:620;">{{ m.name }}</div>
+                  <div style="font-size:11.5px; color:var(--muted); padding-top:5px; line-height:1.45;">{{ m.why }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
           <!-- Look ..................................................... -->
           <div style="background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; box-shadow:var(--shadow-sm);">
             <div style="font-size:15px; font-weight:640; letter-spacing:-0.015em; padding-bottom:18px;">Look</div>

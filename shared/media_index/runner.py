@@ -32,8 +32,8 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
-from . import (align, cast, cutter, frames, jobs as jobs_mod, probe, term,
-               timings, verify)
+from . import (align, cast, cutter, frames, jobs as jobs_mod, placeholder,
+               probe, term, tiers, timings, verify)
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -67,10 +67,16 @@ class SceneResult:
     # Season 3 Episode 13, which is exactly the kind of wrong label that
     # sends an investigation into the wrong file.
     sources: dict = field(default_factory=dict)     # {"clip_01.mp4": "S03E13.mp4"}
+    # NEEDS VISUAL cards: the beats this mode refused to fill, holding their
+    # own duration. They are assets on the timeline like any other, and they
+    # are the reason the rest of the timeline can be trusted.
+    cards: list = field(default_factory=list)
+    # {"image_x.jpg": "A"} — what each asset was worth when it was chosen.
+    tiers: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
-        return bool(self.clips or self.stills)
+        return bool(self.clips or self.stills or self.cards)
 
     @property
     def anchored(self) -> int:
@@ -327,10 +333,56 @@ def _filler_for(episode: str, used: dict | None, log,
             episode)
 
 
+# Why a shot was held back, in the words the card shows.
+HELD_BACK_WHY = {
+    "none": "na koi quoted line, na picture match",
+    "filler": "sirf sahi episode — moment ka koi saboot nahi",
+    "paced": "script ke order se anumaan — koi saboot nahi",
+    "interpolated": "do placed shots ke beech ka anumaan",
+    "picture": "sirf picture se mila — dialogue se confirm nahi",
+    "verified": "picture ne confirm kiya, par dialogue se nahi",
+}
+
+
+def _needs_visual(job, scene_dir: str, index: int, res, p, tier: str,
+                  shot: dict, episode: str, log) -> bool:
+    """Draw the card for one shot this mode would not show.
+
+    A card is an asset. It sits on the timeline, holds the narration's own
+    duration, and carries every fact somebody needs to fix it by hand. That
+    is the whole trade this mode makes: less footage, and complete trust in
+    the footage there is.
+    """
+    name = f"card_{p.shot:02d}.png"
+    made = ""
+    try:
+        made = placeholder.card(os.path.join(scene_dir, name), {
+            "scene": index,
+            "seconds": max(1.0, (p.end_ms - p.start_ms) / 1000.0),
+            "narration": res.narration,
+            "episode": (os.path.basename(episode) if episode
+                        else str(shot.get("season_episode") or "")),
+            "why": HELD_BACK_WHY.get(p.method if p.ok else "none",
+                                     "koi saboot nahi"),
+            "must_show": shot.get("characters") or [],
+        })
+    except (ProbeError, OSError) as exc:
+        log(f"      scene {index}: card nahi ban paya — {exc}")
+    if not made:
+        return False
+    res.cards.append(made)
+    res.methods[name] = "needs_visual"
+    res.tiers[name] = tier
+    res.origins[name] = 0.0
+    res.sources[name] = os.path.basename(episode) if episode else ""
+    return True
+
+
 def build_scene(job, index: int, beat: dict, placements: list,
                 seen: list | None = None, log=lambda *a: None,
                 used: dict | None = None, episode: str = "",
-                windows: dict | None = None) -> SceneResult:
+                windows: dict | None = None, mode: str = tiers.BALANCED,
+                stated: dict | None = None) -> SceneResult:
     """Cut every shot of one beat. Never raises — a bad scene is reported.
 
     Driven by alignment rather than by dialogue matches alone. On a real
@@ -355,6 +407,10 @@ def build_scene(job, index: int, beat: dict, placements: list,
     mine = [p for p in placements if p.beat == beat_no]
     unplaced = 0
     repeats = 0
+    # What this mode refuses to show. Every one of these keeps its exact
+    # duration on the timeline as a NEEDS VISUAL card, because the one thing
+    # worse than an unfilled beat is a filled one nobody can trust.
+    held_back: list = []
     # Shots refused because the footage they wanted is already on screen
     # somewhere else. Kept, because refusing is only the right answer while
     # the beat has something ELSE to show — see the second pass below.
@@ -365,6 +421,14 @@ def build_scene(job, index: int, beat: dict, placements: list,
         n = p.shot
         shot = shots[n - 1] if 0 < n <= len(shots) else {}
         wanted = p.end_ms - p.start_ms
+        # The tier is decided from how this shot was placed, before anything
+        # is cut. A mode that will not show this tier must not spend a
+        # minute of ffmpeg on it, and must not quietly drop it either.
+        was_stated = bool(stated and (p.beat, p.shot) in stated)
+        tier = tiers.tier_of(p.method if p.ok else "none", stated=was_stated)
+        if not tiers.places(mode, tier):
+            held_back.append((p, tier, shot))
+            continue
         if not p.ok or not p.path:
             # No line, no picture — but the script named the episode, and
             # showing the right episode beats showing nothing at all.
@@ -428,6 +492,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
                                 clip_path, height=job.height)
                 res.clips.append(clip_path)
                 res.methods[os.path.basename(clip_path)] = p.method
+                res.tiers[os.path.basename(clip_path)] = tier
                 res.origins[os.path.basename(clip_path)] = round(start, 2)
                 res.sources[os.path.basename(clip_path)] = os.path.basename(p.path)
                 _mark_used(used, p.path, start)
@@ -438,6 +503,7 @@ def build_scene(job, index: int, beat: dict, placements: list,
             for still, at in got:
                 res.stills.append(still)
                 res.methods[os.path.basename(still)] = p.method
+                res.tiers[os.path.basename(still)] = tier
                 res.origins[os.path.basename(still)] = round(at, 2)
                 res.sources[os.path.basename(still)] = os.path.basename(p.path)
                 _mark_used(used, p.path, at)
@@ -445,7 +511,17 @@ def build_scene(job, index: int, beat: dict, placements: list,
             log(f"      scene {index}: shot {n} failed — {exc}")
             continue
 
-    if not (res.clips or res.stills) and crowded:
+    # Cards for everything this mode would not show, and for a beat that
+    # ended up with nothing at all. The duration is the narration's, not the
+    # footage's — a gap that does not hold its own time is a gap that shifts
+    # every scene after it.
+    for p, tier, shot in held_back:
+        made = _needs_visual(job, scene_dir, index, res, p, tier, shot,
+                             episode, log)
+        if not made:
+            unplaced += 1
+
+    if not (res.clips or res.stills) and crowded and not res.cards:
         # A repeated shot is a small fault. An empty beat is a large one: the
         # renderer covers it by holding a neighbour across it, so a beat with
         # nothing becomes somebody else's shot on screen for ten seconds, in
@@ -491,9 +567,16 @@ def build_scene(job, index: int, beat: dict, placements: list,
             except (ProbeError, ValueError, OSError) as exc:
                 log(f"      scene {index}: shot {n} failed — {exc}")
 
-    if res.clips or res.stills:
+    if res.cards and not (res.clips or res.stills):
+        res.status = "needs_visual"
+        res.note = (f"{len(res.cards)} shot(s) ke liye koi bharosemand "
+                    "footage nahi — editor me bharna hoga")
+    elif res.clips or res.stills:
         res.status = "cut" if res.clips else "fallback"
-        if filled:
+        if res.cards:
+            res.note = (f"{len(res.cards)} shot(s) card ban gaye — "
+                        "unke liye saboot nahi tha")
+        elif filled:
             res.note = (f"{filled} shot(s) filled from this episode — no line "
                         "and no picture matched them")
         elif unplaced:
@@ -607,19 +690,28 @@ def write_manifest(job, result: JobResult) -> str:
             "interpolated": s.interpolated,
             "paced": s.paced,
             "filler": s.filler,
+            "needs_visual": len(s.cards),
             "assets": (
                 [{"file": os.path.basename(p), "kind": "video",
                   "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                  "tier": s.tiers.get(os.path.basename(p), "C"),
                   "source_start": s.origins.get(os.path.basename(p)),
                   "source": s.sources.get(os.path.basename(p), s.source),
                   "score": _asset_score(s, p, 1.0)}
                  for p in s.clips]
                 + [{"file": os.path.basename(p), "kind": "image",
                     "placed_by": s.methods.get(os.path.basename(p), "unknown"),
+                    "tier": s.tiers.get(os.path.basename(p), "C"),
                     "source_start": s.origins.get(os.path.basename(p)),
                     "source": s.sources.get(os.path.basename(p), s.source),
                     "score": _asset_score(s, p, 0.9)}
-                   for p in s.stills]),
+                   for p in s.stills]
+                + [{"file": os.path.basename(p), "kind": "image",
+                    "placed_by": "needs_visual", "tier": "C",
+                    "source_start": None,
+                    "source": s.sources.get(os.path.basename(p), ""),
+                    "score": 0.0}
+                   for p in s.cards]),
         } for s in result.scenes],
     }
     path = os.path.join(job.out, MANIFEST)
@@ -727,6 +819,13 @@ def run_job(job, report, log=print) -> JobResult:
         # Placed once for the whole script: a run of shots from one episode
         # is laid along that scene together, which is what lets the silent
         # ones inherit a position from the few that quote a line.
+        mode = tiers.normalise(job.extras.get("mode"))
+        if mode == tiers.STRICT:
+            log("  STRICT mode — sirf wahi footage lagegi jiska saboot hai. "
+                "Baaki har beat par NEEDS VISUAL card aayega.")
+        elif mode == tiers.DRAFT:
+            log("  DRAFT mode — har beat bhara jayega, kamzor wale bhi. "
+                "Ye rough cut ke liye hai; ise accuracy mat samajhna.")
         placements = align.align(job.db, report.beats, log=log)
         log("  " + align.summarise(placements))
         # Alignment says where a shot probably is. This says whether the
@@ -795,11 +894,13 @@ def run_job(job, report, log=print) -> JobResult:
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
                                 owns.get(beat.get("beat", i), ""),
-                                windows=windows)
+                                windows=windows, mode=mode, stated=stated)
             result.scenes.append(scene)
-            mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!"}
-            log(f"    scene {i:03d} {mark[scene.status]} "
+            mark = {"cut": "·", "reused": "=", "fallback": "~", "empty": "!",
+                    "needs_visual": "□"}
+            log(f"    scene {i:03d} {mark.get(scene.status, '?')} "
                 f"{len(scene.clips)} clip(s), {len(scene.stills)} still(s)"
+                + (f", {len(scene.cards)} card(s)" if scene.cards else "")
                 + (f"   {scene.note}" if scene.note else ""))
         # What the build worked out for itself, in the form the Scene
         # timings box takes. A run that quoted a line has already said where
@@ -811,6 +912,16 @@ def run_job(job, report, log=print) -> JobResult:
                 "inhe box me paste kar do:")
             for shots, line, count in learned:
                 log(f"      {line:<22} ({shots} shots, {count} matched line(s))")
+        tally: dict = {}
+        for scene in result.scenes:
+            for name in list(scene.methods):
+                got = scene.tiers.get(name, "C")
+                tally[got] = tally.get(got, 0) + 1
+        if tally:
+            log("  " + tiers.summary(tally))
+        cards = sum(len(s.cards) for s in result.scenes)
+        if cards:
+            log(f"  {cards} NEEDS VISUAL card(s) — inhe editor me bharna hai")
         write_manifest(job, result)
         result.status = "done" if result.gaps == 0 else "partial"
     except Exception as exc:                    # one job must never kill the queue

@@ -175,7 +175,7 @@ def job_from(spec: dict, db: str) -> jobs_mod.Job:
         extras={k: v for k, v in spec.items()
                 if k in ("pace", "quality", "captions", "preset", "after",
                          "transitions", "filters", "animation", "title",
-                         "timings", "cast", "narration")})
+                         "timings", "cast", "narration", "mode")})
 
 
 def timing_advice(rep, typed: str = "") -> list:

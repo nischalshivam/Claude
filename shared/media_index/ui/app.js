@@ -26,7 +26,7 @@
     form: load("me.form", {
       title: "", script: "", audio: "", name: "", out: "",
       preset: "auto", quality: "1080", pace: "normal", clip: 4.0,
-      timings: "", timingsFrom: "", cast: "", narration: "",
+      timings: "", timingsFrom: "", cast: "", narration: "", mode: "strict",
     }),
     cast: null,             // what the chosen cast folder holds
     castError: "",
@@ -166,6 +166,7 @@
       timings: f.timings,
       cast: f.cast,
       narration: f.narration,
+      mode: f.mode,
     };
   }
 
@@ -962,6 +963,14 @@
                  style: presetCard(f.preset === p.key),
                  pick: function () { f.preset = p.key; remember(); draw(); } };
       }),
+      modes: [["strict", "Strict", "Sirf pakki footage. Baaki NEEDS VISUAL card."],
+              ["balanced", "Balanced", "Pakki + achhe anumaan. Kamzor par card."],
+              ["draft", "Draft", "Sab bhar do. Rough cut ke liye — accuracy nahi."]]
+        .map(function (m) {
+          return { key: m[0], name: m[1], why: m[2],
+                   style: presetCard(f.mode === m[0]),
+                   pick: function () { f.mode = m[0]; remember(); draw(); } };
+        }),
       q1080: seg2(f.quality === "1080"),
       q4k: seg2(f.quality === "4k"),
       is4k: f.quality === "4k",
@@ -982,6 +991,7 @@
       clearForm: function () {
         state.form = { title: "", script: "", audio: "", name: "", out: "",
                        timings: "", timingsFrom: "", cast: "", narration: "",
+                       mode: "strict",
                        preset: "auto", quality: "1080", pace: "normal",
                        clip: 4.0 };
         remember();

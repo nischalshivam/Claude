@@ -295,18 +295,35 @@ class TestQueueRun(_QueueCase):
             os.path.join(self.tmp, "run", "d", "scene_001")))
 
     def test_a_scene_whose_shots_cannot_be_placed_says_so(self):
-        """The same case one layer down, where pre-flight cannot help: a beat
-        reached at build time with no usable placement writes no asset and
-        gives a reason instead of an empty folder."""
+        """A beat reached at build time with no usable placement and no
+        episode to fall back on writes no footage and gives a reason."""
         job = jobs_mod.load_jobs(self.jf)[0]
         job.out = os.path.join(self.tmp, "unplaceable")
         beat = {"beat": 1, "narration": "N.", "shots": [{"source": "x"}]}
         nowhere = [runner.align.Placement(beat=1, shot=1)]
         scene = runner.build_scene(job, 1, beat, nowhere, [],
-                                   log=lambda *a: None)
-        self.assertFalse(scene.ok)
+                                   log=lambda *a: None, mode=runner.tiers.DRAFT)
+        self.assertFalse(scene.clips)
+        self.assertFalse(scene.stills)
         self.assertEqual(scene.status, "empty")
         self.assertIn("could be placed", scene.note)
+
+    @unittest.skipUnless(probe.ffmpeg_bin(), "ffmpeg not installed")
+    def test_in_strict_mode_an_unproven_beat_becomes_a_card(self):
+        """The trade Strict makes: less footage, and complete trust in the
+        footage there is. The beat keeps its duration as a NEEDS VISUAL card
+        rather than being covered by a neighbour nobody labelled."""
+        job = jobs_mod.load_jobs(self.jf)[0]
+        job.out = os.path.join(self.tmp, "strict")
+        beat = {"beat": 1, "narration": "N.", "shots": [{"source": "x"}]}
+        nowhere = [runner.align.Placement(beat=1, shot=1)]
+        scene = runner.build_scene(job, 1, beat, nowhere, [],
+                                   log=lambda *a: None,
+                                   mode=runner.tiers.STRICT)
+        self.assertTrue(scene.cards, "no card was drawn")
+        self.assertFalse(scene.clips)
+        self.assertEqual(scene.status, "needs_visual")
+        self.assertEqual(scene.tiers[os.path.basename(scene.cards[0])], "C")
 
     def test_output_layout_matches_the_editor_tools(self):
         scene = os.path.join(self.tmp, "run", "a", "scene_001")
@@ -516,7 +533,7 @@ class TestABeatNobodyCouldPlaceStillShowsSomething(unittest.TestCase):
             nowhere = [runner.align.Placement(beat=1, shot=1)]
             scene = runner.build_scene(job, 1, beat, nowhere, [],
                                        log=lambda *a: None, used={},
-                                       episode=vid)
+                                       episode=vid, mode=runner.tiers.DRAFT)
             self.assertTrue(scene.ok, "the beat still has nothing to show")
             self.assertEqual(scene.filler, len(scene.methods))
             self.assertIn("filled from this episode", scene.note)

@@ -239,6 +239,47 @@ def cmd_stills(a):
     return 0 if written else 1
 
 
+def cmd_gpu(a):
+    """What this machine can actually run the models on, measured.
+
+    Written because "GPU hai to use karo" is one sentence and the answer is
+    not. The driver seeing a card, Python seeing it, the installed torch
+    build having CUDA at all, and the card having enough memory are four
+    different facts, and a person deciding whether to spend 2.5 GB of
+    download deserves all four rather than a guess.
+    """
+    import platform                                     # noqa: PLC0415
+
+    print(f"  python   {platform.python_version()}  ({sys.executable})")
+    try:
+        import torch                                    # noqa: PLC0415
+        print(f"  torch    {torch.__version__}")
+        built = getattr(torch.version, "cuda", None)
+        print(f"  CUDA build   {built or 'NAHI — ye CPU-only wheel hai'}")
+        if torch.cuda.is_available():
+            n = torch.cuda.get_device_name(0)
+            free, total = torch.cuda.mem_get_info()
+            cap = torch.cuda.get_device_capability(0)
+            print(f"  GPU      {n}  (compute {cap[0]}.{cap[1]})")
+            print(f"  VRAM     {total / 1e9:.1f} GB, {free / 1e9:.1f} GB free")
+            print("\n  Ye model GPU par chalega.")
+        else:
+            print("  GPU      torch ko koi CUDA device nahi dikha")
+            print("\n  gpu.bat chalao — wo CUDA wala torch install karta hai.")
+    except ImportError:
+        print("  torch    install nahi hai — picture index chalega hi nahi")
+        return 1
+
+    # What the tool itself will pick, which is the only answer that matters.
+    try:
+        backend = embed.load(log=lambda *x: None)
+        print(f"\n  ye tool isko use karega: {backend.device.upper()}")
+    except embed.EmbedError as exc:
+        print(f"\n  model load nahi hua — {exc}")
+        return 1
+    return 0
+
+
 def cmd_look(a):
     """Index what the footage LOOKS like, so shots can be checked, not guessed.
 
@@ -712,6 +753,10 @@ def main(argv=None):
     lk.add_argument("--force", action="store_true",
                     help="redo files that are already done")
     lk.set_defaults(func=cmd_look)
+
+    gp = sub.add_parser("gpu", parents=[common],
+                        help="kya models GPU par chal sakte hain")
+    gp.set_defaults(func=cmd_gpu)
 
     se = sub.add_parser("see", parents=[common],
                         help="describe a picture, get the real frames back")
