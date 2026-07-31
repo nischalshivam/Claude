@@ -377,6 +377,13 @@ def _spread(found: list, beats: list) -> dict:
     each. So they are spread through the beats that scene covers — the first
     line near the start, the last near the end — which is also exactly the
     shape the aligner wants: anchors apart, silence interpolated between.
+
+    Spread over SLOTS, not over beats, and that is the second half of the
+    fix. Spreading over beats picked beat 1, 5 and 10 and dropped any line
+    whose beat happened to have no empty shot — the visual script usually
+    quotes something already. The next build found 84 of 85 lines and placed
+    thirteen. A slot is a shot with nothing in it, so every line that was
+    found now lands somewhere.
     """
     if not found or not beats:
         return {}
@@ -435,7 +442,7 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
             mine.setdefault(id(clue), []).append(no)
 
     cache: dict = {}
-    quotes: dict = {}          # {beat: [Found]}   placed once, in order
+    quotes: dict = {}          # {(beat, shot): Found}  placed once each
     edges: dict = {}           # {beat: (Found, "before"|"after")}
     windows: dict = {}         # {beat: (lo, hi)}
     facts: dict = {}           # {beat: (episode, clue)}
@@ -479,8 +486,15 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
                     f"{clue.clue_id or 'clue'}: kaha {clue.episode}, "
                     f"line mili {proven_se} me")
 
-        for no, got in _spread(inside, where).items():
-            quotes.setdefault(no, []).extend(got)
+        # Every shot of this scene that has nothing quoted on it yet, in
+        # script order. Lines are spread over THESE, not over the beats: a
+        # beat whose shots the visual script already filled has no room, and
+        # spreading over beats silently threw those lines away.
+        slots = [(no, i) for no in where
+                 for i, shot in enumerate(by_no[no].get("shots") or [], 1)
+                 if not (shot.get("exact_dialogue") or "").strip()]
+        for slot, got in _spread(inside, slots).items():
+            quotes[slot] = got[0]
         # A line spoken *before* the scene belongs at its start and a line
         # spoken after it at its end — putting either on all ten beats is
         # the same duplication that broke the quotes.
@@ -499,15 +513,14 @@ def enrich(db: str, beats: list, clues: list, log=lambda *a: None) -> Enrichment
         proven_se, clue = facts.get(no, ("", None))
         if clue is None:
             continue
-        spare = list(quotes.get(no) or [])
         edge = edges.get(no)
         for i, shot in enumerate(beat.get("shots") or [], 1):
             if not (shot.get("season_episode") or "").strip() and proven_se:
                 shot["season_episode"] = proven_se
                 shot["se_confidence"] = "high"
                 out.episodes_filled += 1
-            if not (shot.get("exact_dialogue") or "").strip() and spare:
-                got = spare.pop(0)
+            got = quotes.get((no, i))
+            if got and not (shot.get("exact_dialogue") or "").strip():
                 shot["exact_dialogue"] = got.line
                 shot["dialogue_confidence"] = got.hit.confidence
                 out.quotes_added += 1

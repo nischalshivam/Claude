@@ -201,6 +201,42 @@ def detect_script(cues, sample=400) -> str:
     return "latin" if latin else "unknown"
 
 
+def _same_episode(want, path: str, stem: str) -> bool:
+    """Refuse a subtitle whose own episode number contradicts the video's.
+
+    The worst bug this package has had, and it never looked like a bug.
+
+    `stem + "*"` is how a sidecar is found, and it is how "Breaking Bad
+    Season 4 Episode 1.mp4" came to be indexed against "Breaking Bad Season
+    4 Episode 13.srt" — the glob matches episodes 1, 10, 11, 12 and 13, and
+    the tie-break preferred the largest file, which is never episode 1.
+
+    Nothing downstream could survive that and nothing downstream could see
+    it. Every quoted line was still *found*, with high confidence, at a real
+    millisecond — of the wrong episode. On a real build: "84/85 lines found
+    (99%)", anchors implying 398x the script's pace, all of them dropped as
+    contradictory, and 31 shots left hanging off one point. The dashboard
+    read 99% the whole time.
+
+    So an episode number on the subtitle that disagrees with the video's is
+    disqualifying, whatever else matches. Files that state no episode at all
+    — "subtitles.srt", "en.srt" beside one video — are unaffected.
+    """
+    if want is None:
+        return True
+    got = _ep_key(os.path.basename(path)) or _ep_key(
+        os.path.basename(os.path.dirname(path)))
+    if got is not None and got != want:
+        return False
+    # A name that carries no readable episode marker of its own may still be
+    # episode 13 pretending to be episode 1, because the marker is there and
+    # simply did not parse. The stem must therefore end at a boundary: what
+    # follows it may be a language or format suffix, never another digit.
+    tail = os.path.basename(path)[len(stem):] if \
+        os.path.basename(path).lower().startswith(stem.lower()) else ""
+    return not (tail[:1].isdigit() if tail else False)
+
+
 def find_sidecar(video_path: str) -> str | None:
     """Best subtitle file sitting next to the video (English preferred).
 
@@ -208,6 +244,10 @@ def find_sidecar(video_path: str) -> str | None:
     episode, so a bare glob there would hand episode 1's subtitles to every
     other episode. We only accept those when the episode marker agrees, or
     when the folder holds a single video.
+
+    And the same rule now applies to a sidecar sitting right beside the
+    video, which used to be trusted unconditionally — see `_same_episode`
+    for why that was the most damaging line in this package.
     """
     stem = os.path.splitext(os.path.basename(video_path))[0]
     folder = os.path.dirname(video_path)
@@ -244,7 +284,7 @@ def find_sidecar(video_path: str) -> str | None:
 
     seen, uniq = set(), []
     for c in candidates:
-        if c not in seen and os.path.isfile(c):
+        if c not in seen and os.path.isfile(c) and _same_episode(want, c, stem):
             seen.add(c)
             uniq.append(c)
     if not uniq:

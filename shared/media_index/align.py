@@ -95,10 +95,14 @@ class Run:
     source: str
     season_episode: str
     entries: list = field(default_factory=list)
+    # Which sequence OF that episode. An essay visits the box cutter scene
+    # and the cold open of the same hour, and those are two walks, not one.
+    part: int = 0
 
     @property
     def label(self) -> str:
-        return f"{self.source} {self.season_episode}"
+        base = f"{self.source} {self.season_episode}"
+        return f"{base} (scene {self.part + 1})" if self.part else base
 
 
 @dataclass
@@ -128,8 +132,33 @@ class Placement:
 # 1. group consecutive shots that come from the same episode
 # ---------------------------------------------------------------------------
 
+def _declared_range(shot: dict) -> tuple | None:
+    """(lo, hi) in seconds from a shot's `scene_range`, if it states one."""
+    from . import timings                                  # noqa: PLC0415
+    got = timings.parse_range((shot or {}).get("scene_range") or "")
+    return got if got and got[1] > got[0] else None
+
+
+def _sequence_of(seen: list, span: tuple) -> int:
+    """Which already-known sequence of this episode `span` belongs to.
+
+    Overlapping or touching spans are the same sequence — a script that
+    writes 19:00-24:30 for one moment and 24:00-29:30 for the next is
+    describing one continuous stretch in two pieces, not two scenes. A span
+    that touches nothing starts a new sequence, and one that touches an
+    earlier sequence rejoins it, because an essay returns to the scene it
+    opened with.
+    """
+    for i, have in enumerate(seen):
+        if span[0] <= have[1] and have[0] <= span[1]:
+            seen[i] = (min(have[0], span[0]), max(have[1], span[1]))
+            return i
+    seen.append(span)
+    return len(seen) - 1
+
+
 def runs(beats: list) -> list[Run]:
-    """All shots from one episode form one run through it, in script order.
+    """One walk through one *sequence* of one episode, in script order.
 
     Grouping only CONSECUTIVE shots looks more conservative and is much
     worse. An essay cuts away constantly — main scene, a flashback, back to
@@ -138,23 +167,46 @@ def runs(beats: list) -> list[Run]:
     and cannot be placed at all, so the cutaways were not merely fragmenting
     the walk through the scene, they were deleting shots from the video.
 
-    Gathered by episode instead, those same 106 shots form a handful of runs,
-    and the seventy from the box-cutter episode become one walk with seven
-    anchors spread through it. Returning to an episode later is safe: shots
-    are only ever interpolated BETWEEN the anchors either side of them, so a
-    second visit with its own anchor is placed on its own terms.
+    So shots are gathered by episode — but an episode is not always one
+    sequence, and pretending it is destroyed a real build:
+
+        Breaking Bad S04E01: 31 shot(s), 1 anchor(s)
+        two lines put this run across 25 minutes of the episode
+
+    Those 31 shots were three different parts of that episode: the cold open
+    at 0-3:30, Gale's apartment at 3:30-13:00, and the box cutter at
+    22:00-35:00. As one run they cannot all increase in time together, so
+    `usable_anchors` dropped line after line — correctly, given what it had
+    been told — until a single anchor was left holding 31 shots. The video
+    came back 95% empty cards.
+
+    The script had said so all along. Genspark writes `scene_range` on the
+    first shot of each sequence, and five different ones appeared in that
+    single run. A stated range is not a guess about *where* the shots are —
+    it may be badly wrong about that — but it is an excellent statement of
+    *which shots belong together*, which is all this needs. Shots with no
+    range of their own stay in whichever sequence is in force, so a script
+    that states none behaves exactly as it did before.
     """
     order: list = []
     by_key: dict = {}
+    seen: dict = {}          # (source, episode) -> [merged spans]
+    current: dict = {}       # (source, episode) -> sequence index in force
     for b in beats:
         beat_no = b.get("beat")
         for i, shot in enumerate(b.get("shots") or [], 1):
             src = (shot.get("source") or "").strip()
             se = str(shot.get("season_episode") or "unknown").strip()
-            key = (src, se)
+            home = (src, se)
+            span = _declared_range(shot)
+            if span is not None:
+                current[home] = _sequence_of(seen.setdefault(home, []), span)
+            part = current.get(home, 0)
+            key = (src, se, part)
             run = by_key.get(key)
             if run is None:
-                run = by_key[key] = Run(source=src, season_episode=se)
+                run = by_key[key] = Run(source=src, season_episode=se,
+                                        part=part)
                 order.append(run)
             run.entries.append(Entry(beat=beat_no, shot=i, data=shot))
     return order

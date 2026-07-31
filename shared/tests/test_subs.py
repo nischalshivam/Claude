@@ -254,6 +254,71 @@ class TestSubtitlesFolderBesideTheVideos(unittest.TestCase):
             self.assertEqual(os.path.basename(found),
                              f"Breaking Bad S1-S5-English-S2E{ep}.srt")
 
+    def test_episode_one_does_not_take_episode_thirteens_subtitles(self):
+        """The single most damaging bug this package has had.
+
+        The sidecar glob is `stem + "*"`, and a sidecar named after its own
+        video was trusted without any further check. For "Breaking Bad
+        Season 4 Episode 1.mp4" that pattern also matches episodes 10, 11,
+        12 and 13 — and the tie-break preferred the largest file, which is
+        never episode 1.
+
+        Nothing downstream could see it. Every quoted line was still found,
+        with high confidence, at a real millisecond of the wrong episode. A
+        real build reported "84/85 lines found (99%)" while the anchors
+        implied 398x the script's pace and were dropped as contradictory,
+        leaving 31 shots hanging off a single point.
+
+        The existing test above passes because those subtitles are named
+        differently from their videos and go through the shared-folder
+        check. This one uses the naming the failure actually happened on:
+        the subtitle named exactly after the video.
+        """
+        room = tempfile.mkdtemp(prefix="samename_")
+        try:
+            for ep in range(1, 14):
+                stem = f"Breaking Bad Season 4 Episode {ep}"
+                open(os.path.join(room, stem + ".mp4"), "w").close()
+                with open(os.path.join(room, stem + ".srt"), "w",
+                          encoding="utf-8") as f:
+                    # Later episodes deliberately bigger: the old tie-break
+                    # preferred size, so episode 13 always won.
+                    for i in range(ep * 20):
+                        f.write(f"{i + 1}\n00:00:01,000 --> 00:00:02,000\n"
+                                f"this line belongs to episode {ep}\n\n")
+            for ep in range(1, 14):
+                got = subtitles.find_sidecar(os.path.join(
+                    room, f"Breaking Bad Season 4 Episode {ep}.mp4"))
+                self.assertIsNotNone(got, f"episode {ep} found nothing")
+                self.assertEqual(
+                    os.path.basename(got),
+                    f"Breaking Bad Season 4 Episode {ep}.srt",
+                    f"episode {ep} was given another episode's subtitles")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
+    def test_a_language_suffix_is_still_the_same_episode(self):
+        """The rule rejects a following DIGIT, not a following character."""
+        room = tempfile.mkdtemp(prefix="lang_")
+        try:
+            open(os.path.join(room, "BB.S04E01.mkv"), "w").close()
+            open(os.path.join(room, "BB.S04E01.en.srt"), "w").close()
+            got = subtitles.find_sidecar(os.path.join(room, "BB.S04E01.mkv"))
+            self.assertEqual(os.path.basename(got), "BB.S04E01.en.srt")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
+    def test_a_film_whose_subtitle_names_no_episode_is_untouched(self):
+        room = tempfile.mkdtemp(prefix="film_")
+        try:
+            open(os.path.join(room, "The Godfather (1972).mp4"), "w").close()
+            open(os.path.join(room, "The Godfather (1972).srt"), "w").close()
+            got = subtitles.find_sidecar(
+                os.path.join(room, "The Godfather (1972).mp4"))
+            self.assertEqual(os.path.basename(got), "The Godfather (1972).srt")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
     def test_the_text_that_loads_is_the_right_episode(self):
         _kind, _path, cues = subtitles.load_for_video(os.path.join(
             self.season, "Breaking Bad Season 2 Episode 7.mp4"))

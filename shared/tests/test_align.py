@@ -74,6 +74,71 @@ class TestRuns(unittest.TestCase):
         self.assertEqual([e.shot for e in r[0].entries], [1, 2, 3])
 
 
+class TestOneEpisodeIsNotAlwaysOneScene(unittest.TestCase):
+    """An essay visits the same hour twice, and those are two walks.
+
+    From a real build, which came back 95% empty cards:
+
+        Breaking Bad S04E01: 31 shot(s), 1 anchor(s)
+        the line at shot 4 implies 398x the pace of the script around it
+        two lines put this run across 25 minutes of the episode
+
+    Those 31 shots were three parts of that episode — the cold open at
+    0-3:30, Gale's apartment at 3:30-13:00, and the box cutter at
+    22:00-35:00. As one run their anchors cannot all increase together, so
+    `usable_anchors` dropped line after line until one was left holding all
+    31 shots. Correct arithmetic on a false premise.
+
+    The script had said so all along: five different `scene_range` values
+    inside that single run.
+    """
+
+    def ranged(self, *specs):
+        beats = []
+        for i, (rng, n) in enumerate(specs, 1):
+            shots = [shot() for _ in range(n)]
+            if rng:
+                shots[0]["scene_range"] = rng
+            beats.append({"beat": i, "shots": shots})
+        return beats
+
+    def test_two_far_apart_ranges_in_one_episode_are_two_runs(self):
+        r = align.runs(self.ranged(("27:00-35:00", 3), ("00:00-03:30", 2)))
+        self.assertEqual(len(r), 2)
+        self.assertEqual([len(x.entries) for x in r], [3, 2])
+
+    def test_overlapping_ranges_stay_one_run(self):
+        """19:00-24:30 and 24:00-29:30 is one stretch written in two pieces."""
+        r = align.runs(self.ranged(("19:00-24:30", 2), ("24:00-29:30", 2)))
+        self.assertEqual(len(r), 1)
+        self.assertEqual(len(r[0].entries), 4)
+
+    def test_returning_to_the_opening_scene_rejoins_that_run(self):
+        r = align.runs(self.ranged(("27:00-35:00", 2), ("00:00-03:30", 2),
+                                   ("28:00-33:00", 2)))
+        self.assertEqual(len(r), 2)
+        self.assertEqual(sorted(len(x.entries) for x in r), [2, 4])
+
+    def test_shots_with_no_range_stay_in_the_sequence_in_force(self):
+        r = align.runs(self.ranged(("27:00-35:00", 2), ("", 3), ("", 4)))
+        self.assertEqual(len(r), 1)
+        self.assertEqual(len(r[0].entries), 9)
+
+    def test_a_script_stating_no_ranges_behaves_exactly_as_before(self):
+        r = align.runs(self.ranged(("", 4), ("", 5)))
+        self.assertEqual(len(r), 1)
+        self.assertEqual(len(r[0].entries), 9)
+
+    def test_the_second_sequence_says_so_in_its_name(self):
+        r = align.runs(self.ranged(("27:00-35:00", 1), ("00:00-03:30", 1)))
+        self.assertNotIn("scene", r[0].label)
+        self.assertIn("scene 2", r[1].label)
+
+    def test_a_different_episode_is_still_a_different_run(self):
+        beats = [{"beat": 1, "shots": [shot(se="S04E01"), shot(se="S03E13")]}]
+        self.assertEqual(len(align.runs(beats)), 2)
+
+
 @skip_no_ffmpeg
 class TestAlignWordlessScene(unittest.TestCase):
     """The real shape: a run of shots through one scene, where only the first
