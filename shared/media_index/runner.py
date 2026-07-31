@@ -33,8 +33,8 @@ import traceback
 from dataclasses import dataclass, field
 
 from . import (align, cast, clues as clues_mod, cutter, frames,
-               jobs as jobs_mod, placeholder, probe, term, tiers, timings,
-               verify)
+               jobs as jobs_mod, placeholder, probe, refine as refine_mod,
+               term, tiers, timings, verify)
 from .probe import ProbeError
 
 MANIFEST = "manifest.json"
@@ -944,6 +944,14 @@ def run_job(job, report, log=print) -> JobResult:
         if found:
             log(f"    {len(set(found.values()))} run(s) bounded by their own "
                 "placed shots; filler stays inside those")
+        # Last of all, and only if a vision model is configured: hand every
+        # still-interpolated shot in a wide window to Gemini to pick the
+        # actual frame. This is the one step that can reach the silent beats
+        # — a killing, a bell, a straightened tie — that carry no dialogue to
+        # anchor on. Off by default; a build with no key runs exactly as
+        # before. It moves guesses onto looked-at frames and never touches an
+        # anchor or a stated time.
+        refine_mod.refine_runs(report.beats, placements, windows, log=log)
         for i, beat in enumerate(report.beats, 1):
             scene = build_scene(job, i, beat, placements, seen, log, used,
                                 owns.get(beat.get("beat", i), ""),

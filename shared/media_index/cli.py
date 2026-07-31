@@ -340,6 +340,51 @@ def cmd_gpu(a):
     return 0 if after.usable else 1
 
 
+def cmd_gemini(a):
+    """Is the vision verifier configured, and can it be reached?
+
+    Written so the answer to "did I set the key right" is one command, not a
+    forty-minute build that silently skips the step. It sends the smallest
+    possible real request and reports exactly what came back, without ever
+    printing the key.
+    """
+    from . import gemini                                   # noqa: PLC0415
+
+    cfg = gemini.config()
+    print(f"  key      {'set hai' if cfg.key else 'NAHI — settings.txt me gemini_key daalo'}")
+    print(f"  endpoint {cfg.base or 'NAHI — settings.txt me gemini_base daalo'}")
+    print(f"  model    {cfg.model}")
+    ok, why = gemini.available()
+    if not ok:
+        print(f"\n  {why}")
+        print("  settings.txt me ye do line daalo (tool ke folder me):")
+        print("      gemini_key=<tumhari key>")
+        print("      gemini_base=<endpoint URL, jaise https://.../v1>")
+        return 1
+
+    print("\n  ek chhota test bhej rahe hain...")
+    # A 1x1 white JPEG — the smallest thing that proves the image path works.
+    import base64                                          # noqa: PLC0415
+    white = base64.b64decode(
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////"
+        "////////////////////////////////////////////////////wgALCAABAAEB"
+        "AREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=")
+    frame = [gemini.Frame(at_s=0.0, jpeg=white)]
+    choice = gemini.verify("a test image", frame, cfg=cfg)
+    # A real answer (even an abstention) proves the round trip; only a total
+    # failure comes back with the default reason-less, index -1 AND the raw
+    # post having returned nothing — which `verify` cannot distinguish, so we
+    # do one raw post to be certain.
+    raw = gemini._post(cfg, gemini.build_messages("a test image", [], frame))
+    if raw:
+        print(f"  jawab aaya ✓  — vision model chaalu hai")
+        print(f"  ({raw.strip()[:120]})")
+        return 0
+    print("  koi jawab nahi aaya — key/endpoint galat ho sakta hai, ya "
+          "network band hai")
+    return 1
+
+
 def cmd_look(a):
     """Index what the footage LOOKS like, so shots can be checked, not guessed.
 
@@ -819,6 +864,10 @@ def main(argv=None):
     gp.add_argument("--install", action="store_true",
                     help="is Python ke liye jo CUDA torch maujood hai wo lagao")
     gp.set_defaults(func=cmd_gpu)
+
+    ge = sub.add_parser("gemini", parents=[common],
+                        help="kya vision model (silent shots ke liye) set hai")
+    ge.set_defaults(func=cmd_gemini)
 
     se = sub.add_parser("see", parents=[common],
                         help="describe a picture, get the real frames back")

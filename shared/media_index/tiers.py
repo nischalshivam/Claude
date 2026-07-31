@@ -58,6 +58,7 @@ CEILING = {
     "chosen": "A",        # a person picked this in the editor
     "verified": "B",      # the picture agreed with the description
     "picture": "B",       # the picture found it, above the noise floor
+    "vlm": "B",           # a vision model picked this frame from a window
     "interpolated": "B",  # laid between two placed shots of the same run
     "paced": "C",         # laid in order across a guessed stretch
     "filler": "C",        # the right episode, no particular moment
