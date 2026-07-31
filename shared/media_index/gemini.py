@@ -118,6 +118,14 @@ def available() -> tuple:
         return False, "gemini_key settings.txt me nahi hai"
     if not cfg.base:
         return False, "gemini_base (endpoint URL) settings.txt me nahi hai"
+    # The single most likely paste mistake: the API *documentation* page
+    # instead of the API host. apifox.cn hosts docs; requests to it return
+    # HTML, not a completion, and the failure would look like a dead model.
+    # Cheaper to name it here than to let a build silently skip the step.
+    if "apifox" in cfg.base.lower():
+        return False, ("gemini_base me documentation page ka link hai "
+                       "(apifox.cn). Asli API base URL chahiye — yunwu ke "
+                       "liye aksar https://yunwu.ai/v1")
     return True, ""
 
 
