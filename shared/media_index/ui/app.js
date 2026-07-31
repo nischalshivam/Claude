@@ -26,7 +26,7 @@
     form: load("me.form", {
       title: "", script: "", audio: "", name: "", out: "",
       preset: "auto", quality: "1080", pace: "normal", clip: 4.0,
-      timings: "", timingsFrom: "", cast: "", narration: "", mode: "strict",
+      timings: "", timingsFrom: "", cast: "", narration: "", mode: "balanced",
       clues: "",
     }),
     cast: null,             // what the chosen cast folder holds
@@ -1003,9 +1003,9 @@
                  style: presetCard(f.preset === p.key),
                  pick: function () { f.preset = p.key; remember(); draw(); } };
       }),
-      modes: [["strict", "Strict", "Sirf pakki footage. Baaki NEEDS VISUAL card."],
-              ["balanced", "Balanced", "Pakki + achhe anumaan. Kamzor par card."],
-              ["draft", "Draft", "Sab bhar do. Rough cut ke liye — accuracy nahi."]]
+      modes: [["balanced", "Balanced", "Poori video bharti hai. Silent shots par Gemini asli frame dhoondhta hai. Ye default hai."],
+              ["strict", "Strict", "Sirf dialogue-pakki footage. Baaki har shot BLACK CARD — aadhi video khaali ho sakti hai."],
+              ["draft", "Draft", "Sab bhar do, kamzor bhi. Rough cut ke liye."]]
         .map(function (m) {
           return { key: m[0], name: m[1], why: m[2],
                    style: presetCard(f.mode === m[0]),
@@ -1031,7 +1031,7 @@
       clearForm: function () {
         state.form = { title: "", script: "", audio: "", name: "", out: "",
                        timings: "", timingsFrom: "", cast: "", narration: "",
-                       mode: "strict",
+                       mode: "balanced",
                        preset: "auto", quality: "1080", pace: "normal",
                        clip: 4.0 };
         remember();
