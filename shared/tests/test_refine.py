@@ -33,28 +33,36 @@ def beats_with(n_shots, visual="a bell is struck", people=None):
 
 class TestWhoIsEligible(unittest.TestCase):
 
-    def test_only_interpolated_shots_in_a_wide_window(self):
+    def test_every_guessed_method_is_offered(self):
+        """interpolated, paced and homeless are all guesses worth a look —
+        the Hank build had 40 wrong shots and only the interpolated ones
+        (20) were being offered."""
         ps = [placement(1, 1, "interpolated"),
-              placement(1, 2, "anchor"),
-              placement(1, 3, "interpolated")]
-        windows = {(1, 1): (0.0, 300.0),     # wide
-                   (1, 2): (0.0, 300.0),      # anchor — never
-                   (1, 3): (0.0, 300.0)}
+              placement(1, 2, "paced"),
+              placement(1, 3, "none"),
+              placement(1, 4, "anchor"),
+              placement(1, 5, "picture")]
+        windows = {(1, i): (0.0, 300.0) for i in range(1, 6)}
         got = refine.eligible(ps, windows)
-        self.assertEqual([p.shot for p, _ in got], [1, 3])
+        self.assertEqual(sorted(p.shot for p, _ in got), [1, 2, 3])
 
     def test_a_tight_window_is_left_alone(self):
         ps = [placement(1, 1, "interpolated")]
-        windows = {(1, 1): (100.0, 120.0)}   # 20s — interpolation is fine
+        windows = {(1, 1): (100.0, 115.0)}   # 15s — a guess lands close
         self.assertEqual(refine.eligible(ps, windows), [])
 
     def test_a_shot_with_no_window_is_skipped(self):
         ps = [placement(1, 1, "interpolated")]
         self.assertEqual(refine.eligible(ps, {}), [])
 
-    def test_a_stated_time_is_never_touched(self):
-        ps = [placement(1, 1, "stated")]
-        windows = {(1, 1): (0.0, 600.0)}
+    def test_a_homeless_shot_with_no_source_file_is_skipped(self):
+        p = placement(1, 1, "none")
+        p.path = ""
+        self.assertEqual(refine.eligible([p], {(1, 1): (0.0, 300.0)}), [])
+
+    def test_an_anchor_and_a_stated_time_are_never_touched(self):
+        ps = [placement(1, 1, "anchor"), placement(1, 2, "stated")]
+        windows = {(1, 1): (0.0, 600.0), (1, 2): (0.0, 600.0)}
         self.assertEqual(refine.eligible(ps, windows), [])
 
 
@@ -92,6 +100,17 @@ class TestApplyingAVerdict(unittest.TestCase):
         self.assertFalse(moved)
         self.assertEqual(p.method, "interpolated")
         self.assertEqual(p.start_ms, 1000_000)
+
+    def test_a_homeless_shot_gets_a_real_length_when_rescued(self):
+        p = placement(1, 1, "none", start=0)
+        p.end_ms = 0                          # no length yet
+        moved = refine.apply_choice(
+            p, gemini.Choice(index=0, at_s=610.0, confidence=0.9, reason="x"),
+            want_s=5.0)
+        self.assertTrue(moved)
+        self.assertEqual(p.method, "vlm")
+        self.assertEqual(p.start_ms, 610_000)
+        self.assertEqual(p.end_ms, 615_000)   # 5s, not an instant
 
 
 class TestTheWholeStepWithAFakeModel(unittest.TestCase):

@@ -30,18 +30,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from . import align, gemini, verify as verify_mod
+from . import align, gemini
 
-# A window narrower than this is already tight enough that interpolation is
-# fine — the shots are seconds apart and there is nothing for a model to fix.
-# The waste worth avoiding is a frame call per shot on a run that was never
-# wrong.
-MIN_WINDOW_S = 90.0
-# How many frames to show the model per shot. Enough to cover a wide window
-# at a usable spacing; more than this is cost without recall.
-FRAMES_PER_SHOT = 12
+# A window narrower than this is already tight enough that a guess lands
+# close, and a frame call would cost more than it saves. Deliberately low —
+# on the Hank build most wrong shots sat in 2-6 minute windows, and the old
+# 90 s floor skipped them, so the model was asked about 20 shots while 40
+# stayed wrong.
+MIN_WINDOW_S = 30.0
+# The methods that are a GUESS. These are the shots worth a look:
+#   interpolated — laid between two anchors of the run
+#   paced        — laid in script order across a stretch, no evidence
+#   none         — homeless; would otherwise become filler ("right episode,
+#                  nothing more"). A frame the model picks is a rescue.
+# Never in this set: anchor and stated (known), picture and vlm (already
+# looked at). Moving those on an opinion trades a fact for a guess.
+GUESSED = frozenset({"interpolated", "paced", "none"})
+# How many frames to show the model per shot. More for a wide window so the
+# right moment is not missed between samples.
+FRAMES_PER_SHOT = 16
 # Never sample two candidate frames closer than this.
 MIN_FRAME_GAP_S = 2.0
+# A shot the model rescues from nowhere needs a length; the script's target,
+# or this, so a placed frame plays for a sensible beat rather than an instant.
+DEFAULT_SHOT_S = 4.0
 
 
 @dataclass
@@ -59,16 +71,23 @@ class Refinement:
 
 
 def eligible(placements: list, windows: dict) -> list:
-    """[(placement, (lo, hi))] for interpolated shots inside a wide window.
+    """[(placement, (lo, hi))] for every GUESSED shot that has a window.
 
-    Only interpolation is touched. An anchor is a matched line and a stated
-    time is a person's word — moving either on a model's opinion would trade
-    something known for something guessed, which is the wrong direction and
-    the opposite of what this is for.
+    This is the change that matters most. The old rule looked only at
+    interpolated shots in a wide window, so on an essay that hops across many
+    episodes — a "greatest hits", where each beat is a brief reference with
+    one anchor or none — the model was asked about a fraction of the wrong
+    shots and the rest stayed wrong. Now every interpolated, paced or
+    homeless shot with a window is offered, because those are exactly the
+    shots whose footage is a guess.
+
+    An anchor and a stated time are never here — they are known. A shot with
+    no window and no source file is skipped, because there is nothing to
+    sample.
     """
     out = []
     for p in placements:
-        if p.method != "interpolated":
+        if p.method not in GUESSED or not p.path:
             continue
         window = windows.get((p.beat, p.shot))
         if not window:
@@ -123,17 +142,23 @@ def _entry_for(beats: list, beat: int, shot: int):
     return None
 
 
-def apply_choice(placement, choice) -> bool:
+def apply_choice(placement, choice, want_s: float = DEFAULT_SHOT_S) -> bool:
     """Move a placement onto the chosen frame. True if it moved.
 
-    Keeps the shot's own length; only its position changes. The method
-    becomes `vlm`, which `tiers` ceilings at B — a frame a model looked at is
-    better than a guess between two far-apart lines, and still not the
-    millisecond certainty of a matched line.
+    Only the position changes for a shot that already had one. A homeless
+    shot — method "none", no length yet — is given `want_s` seconds so a
+    frame the model rescued plays for a real beat instead of an instant;
+    that rescue is the whole point of offering "none" shots at all.
+
+    The method becomes `vlm`, which `tiers` ceilings at B: a frame a model
+    looked at beats a guess, and is still not the millisecond certainty of a
+    matched line.
     """
     if not choice.chose:
         return False
-    dur = max(1, placement.end_ms - placement.start_ms)
+    dur = placement.end_ms - placement.start_ms
+    if dur < 1000:                       # homeless or zero-length
+        dur = int(max(1.0, want_s) * 1000)
     placement.start_ms = int(choice.at_s * 1000)
     placement.end_ms = placement.start_ms + dur
     placement.method = "vlm"
@@ -165,7 +190,7 @@ def refine_runs(beats: list, placements: list, windows: dict, log=lambda *a: Non
     if grab is None:
         grab = _real_grab
 
-    log(f"  vlm: {len(todo)} interpolated shot ko sahi frame dhoondhne "
+    log(f"  vlm: {len(todo)} anumaan-wale shot ko sahi frame dhoondhne "
         "bhej rahe hain...")
     for p, window in todo:
         entry = _entry_for(beats, p.beat, p.shot)
@@ -185,7 +210,7 @@ def refine_runs(beats: list, placements: list, windows: dict, log=lambda *a: Non
             log(f"      vlm call fail (beat {p.beat}): {exc}")
             out.kept += 1
             continue
-        if apply_choice(p, choice):
+        if apply_choice(p, choice, want_s=entry.target_seconds):
             out.moved += 1
             log(f"      beat {p.beat} shot {p.shot}: "
                 f"{choice.at_s/60:.0f}:{choice.at_s%60:04.1f} "
