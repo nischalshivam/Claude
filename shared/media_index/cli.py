@@ -362,27 +362,38 @@ def cmd_gemini(a):
         print("      gemini_base=<endpoint URL, jaise https://.../v1>")
         return 1
 
-    print("\n  ek chhota test bhej rahe hain...")
-    # A 1x1 white JPEG — the smallest thing that proves the image path works.
-    import base64                                          # noqa: PLC0415
-    white = base64.b64decode(
-        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////////////////////////"
-        "////////////////////////////////////////////////////wgALCAABAAEB"
-        "AREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=")
-    frame = [gemini.Frame(at_s=0.0, jpeg=white)]
-    choice = gemini.verify("a test image", frame, cfg=cfg)
-    # A real answer (even an abstention) proves the round trip; only a total
-    # failure comes back with the default reason-less, index -1 AND the raw
-    # post having returned nothing — which `verify` cannot distinguish, so we
-    # do one raw post to be certain.
-    raw = gemini._post(cfg, gemini.build_messages("a test image", [], frame))
-    if raw:
-        print(f"  jawab aaya ✓  — vision model chaalu hai")
-        print(f"  ({raw.strip()[:120]})")
-        return 0
-    print("  koi jawab nahi aaya — key/endpoint galat ho sakta hai, ya "
-          "network band hai")
-    return 1
+    # Two steps, and the order matters. A text ping proves the key and the
+    # endpoint; only then does an image ping test the multimodal path the
+    # tool actually uses. If text works and image does not, the fault is the
+    # image request, which is a different fix from a bad key — and the old
+    # check, which said only "koi jawab nahi aaya", could not tell them apart.
+    print("\n  1/2  text test bhej rahe hain...")
+    ok, detail = gemini.ping(cfg, with_image=False)
+    if not ok:
+        print(f"       ✗  {detail}")
+        print("\n  Key ya endpoint kaam nahi kar raha. Upar likha error hi "
+              "asli wajah hai.")
+        print("  yunwu ke liye base aksar in me se ek hota hai — ek-ek karke "
+              "try karo:")
+        print("      https://yunwu.ai/v1")
+        print("      https://api.apiplus.org/v1")
+        print("      https://api3.wlai.vip/v1")
+        return 1
+    print(f"       ✓  jawab: {detail}")
+
+    print("  2/2  image test bhej rahe hain (tool isi ka use karta hai)...")
+    ok, detail = gemini.ping(cfg, with_image=True)
+    if not ok:
+        print(f"       ✗  {detail}")
+        print("\n  Text chala par image nahi. Key sahi hai; ye model/endpoint "
+              "shayad image (vision) support nahi karta.")
+        print("  gemini_model=gemini-2.5-flash rakho (ye vision karta hai), "
+              "ya wahi base rakho jispe text chala.")
+        return 1
+    print(f"       ✓  jawab: {detail}")
+    print("\n  Sab sahi ✓  — vision model chaalu hai, build me apne aap "
+          "lag jayega.")
+    return 0
 
 
 def cmd_look(a):

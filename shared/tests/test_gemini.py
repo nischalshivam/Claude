@@ -131,5 +131,67 @@ class TestTheAnswer(unittest.TestCase):
                     os.environ[k] = v
 
 
+class TestErrorsAreSurfacedNotSwallowed(unittest.TestCase):
+    """The bug that left a user stuck with a working key: a failure that said
+    only "koi jawab nahi aaya" and hid the actual HTTP status."""
+
+    def setUp(self):
+        import urllib.request
+        self._real = urllib.request.urlopen
+        self.cfg = gemini.Config(key="k", base="https://x/v1")
+
+    def tearDown(self):
+        import urllib.request
+        urllib.request.urlopen = self._real
+
+    def _fake_urlopen(self, payload=None, code=200, http_error=None):
+        import io
+        import urllib.error
+        import urllib.request
+
+        def fake(req, timeout=None):
+            if http_error is not None:
+                raise urllib.error.HTTPError(
+                    "u", http_error, "bad", {}, io.BytesIO(b'{"error":"nope"}'))
+
+            class R:
+                def __enter__(self_): return self_
+                def __exit__(self_, *a): return False
+                def read(self_): return payload.encode("utf-8")
+                def getcode(self_): return code
+            return R()
+        urllib.request.urlopen = fake
+
+    def test_a_clean_answer_comes_through(self):
+        self._fake_urlopen(
+            '{"choices":[{"message":{"content":"OK"}}]}')
+        text, detail = gemini.call(self.cfg, [])
+        self.assertEqual(text, "OK")
+
+    def test_an_http_error_names_the_status(self):
+        self._fake_urlopen(http_error=401)
+        text, detail = gemini.call(self.cfg, [])
+        self.assertIsNone(text)
+        self.assertIn("401", detail)
+
+    def test_an_error_object_in_a_200_is_still_an_error(self):
+        self._fake_urlopen('{"error":{"message":"quota over"}}')
+        text, detail = gemini.call(self.cfg, [])
+        self.assertIsNone(text)
+        self.assertIn("quota over", detail)
+
+    def test_html_instead_of_json_is_reported(self):
+        self._fake_urlopen("<html>docs</html>")
+        text, detail = gemini.call(self.cfg, [])
+        self.assertIsNone(text)
+        self.assertIn("JSON nahi", detail)
+
+    def test_ping_reports_the_answer_on_success(self):
+        self._fake_urlopen('{"choices":[{"message":{"content":"OK"}}]}')
+        ok, detail = gemini.ping(self.cfg)
+        self.assertTrue(ok)
+        self.assertEqual(detail, "OK")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -226,30 +226,98 @@ def parse_verdict(text: str, frames: list) -> Choice:
     return Choice(index=n - 1, at_s=fr.at_s, confidence=conf, reason=reason)
 
 
-def _post(cfg: Config, messages: list) -> str:
-    """One HTTP call. Returns the assistant text, or '' on any failure.
+def call(cfg: Config, messages: list) -> tuple:
+    """One HTTP call. Returns (assistant_text_or_None, detail).
 
-    Deliberately swallows everything: a verifier that raises would take down
-    a build it was only ever meant to improve. A network blip, a rate limit,
-    a proxy 500 — all of them mean "no opinion", which is the same as not
-    being configured, which the build already handles.
+    `detail` is a short human string naming exactly what went wrong — the
+    HTTP status and the first of the body, or the network error. `verify`
+    throws the detail away because a verifier must never break a build; the
+    `mi gemini` check keeps it, because "koi jawab nahi aaya" with no reason
+    is exactly what left a real user stuck with a working key.
+
+    The response is read defensively: an OpenAI-compatible proxy returns
+    `choices[0].message.content`, but an error comes back as `{"error": ...}`
+    with a 200 on some proxies, so both shapes are recognised.
     """
-    body = json.dumps({
+    payload = json.dumps({
         "model": cfg.model,
         "messages": messages,
         "temperature": 0,
         "max_tokens": 300,
     }).encode("utf-8")
     req = urllib.request.Request(
-        cfg.endpoint, data=body, method="POST",
+        cfg.endpoint, data=payload, method="POST",
         headers={"Content-Type": "application/json",
                  "Authorization": f"Bearer {cfg.key}"})
     try:
         with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT_S) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
-    except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError):
-        return ""
+            raw = resp.read().decode("utf-8", "replace")
+            code = resp.getcode()
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        return None, f"HTTP {exc.code} — {body or exc.reason}"
+    except (urllib.error.URLError, OSError) as exc:
+        return None, f"network: {getattr(exc, 'reason', exc)}"
+
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None, f"HTTP {code} par jawab JSON nahi tha: {raw[:200]}"
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"]
+        msg = err.get("message") if isinstance(err, dict) else err
+        return None, f"API error: {str(msg)[:250]}"
+    try:
+        return data["choices"][0]["message"]["content"], ""
+    except (KeyError, IndexError, TypeError):
+        return None, f"jawab ka shape anjaan tha: {raw[:200]}"
+
+
+def _post(cfg: Config, messages: list) -> str:
+    """The assistant text, or '' on any failure — the build-safe wrapper.
+
+    Swallows the detail on purpose: a verifier that raises, or that makes a
+    build wait on a reason nobody will read, is worse than one that quietly
+    contributes nothing.
+    """
+    text, _detail = call(cfg, messages)
+    return text or ""
+
+
+# The smallest valid JPEG there is: a 1x1 white pixel. Enough to prove the
+# image path of a request works without shipping a real frame.
+_PIXEL = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUG"
+    "CQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgE"
+    "BAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ"
+    "EBAQEBD/wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAv/EABQQ"
+    "AQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAA"
+    "AAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AAf/Z")
+
+
+def ping(cfg: Config, with_image: bool = False) -> tuple:
+    """A tiny real request, for the check. Returns (ok, detail).
+
+    Text first so auth and endpoint are proven before the image path is
+    tried — if a key works for text and fails for an image, that narrows the
+    fault to the multimodal request, which is a completely different fix from
+    a bad key.
+    """
+    if with_image:
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "Reply with the single word OK."},
+            {"type": "image_url",
+             "image_url": {"url": _data_uri(_PIXEL)}}]}]
+    else:
+        msgs = [{"role": "user", "content": "Reply with the single word OK."}]
+    text, detail = call(cfg, msgs)
+    if text is not None:
+        return True, text.strip()[:120]
+    return False, detail
 
 
 def verify(intent: str, frames: list, must_be_visible=None,
