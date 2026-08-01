@@ -80,10 +80,28 @@ node src/run.js --input=<dir> --job=<id>
 ## Test
 
 ```
-npm run test:mini
+npm run test:all      # content (13) + regression (18)
+npm run test:mini     # 13 content cases
+npm run test:reg      # 18 M1.1 correctness/blocker cases
 ```
 
 Synthetic "episode" videos (color-coded time regions) + subtitle tracks se poori
-pipeline offline chalti hai (YouTube ke bina). 10 moments: EXACT_TIME, DIALOGUE,
-repeated source, dead-source→alternate recovery, unresolved→NEEDS_SOURCE, cross-show.
-Har cut sahi region par landa — color se verify hota hai.
+pipeline offline chalti hai (YouTube ke bina).
+
+- **Content suite (13):** EXACT_TIME, DIALOGUE, repeated source, dead-source→alternate,
+  unresolved→NEEDS_SOURCE, cross-show independence, repeated-dialogue (anchor),
+  missing-caption, space+Unicode paths. Har cut sahi region par landa — color se verify.
+- **Regression suite (18):** path-traversal/redo containment; fresh-process resume
+  (download→cut); input-change invalidation; NEEDS_REVIEW excluded from final;
+  repeated-dialogue runner-up margin; exact range-cache collision; black/low-res QA;
+  QA/download candidate fallback; segment-failure no-drift; final duration equality;
+  per-beat sampling; URL-project preflight stop.
+
+## Milestone 1.1 changes (audit fixes)
+
+Path-safety (IDs + containment); resume fix (raw_file persisted, no silent skip);
+NEEDS_REVIEW held out of final; dialogue runner-up margin; input fingerprint
+invalidation; ms-exact range cache; real black/freeze/low-res QA (stderr captured);
+candidate fallback through cut/QA; timeline no-drift; VO never truncated; yt-dlp EJS
+runtime check (Deno/Node 22+); run.log; honest report counts; audio required for
+production render.

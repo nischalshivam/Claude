@@ -39,15 +39,17 @@ function makeEpisodeAt(dir, name, segDefs) {
   const tmp = path.join(dir, `_tmp_${name}`);
   fs.mkdirSync(tmp, { recursive: true });
   const parts = [];
-  const srtBlocks = [];
+  const cueList = [];   // {t0,t1,text}
   segDefs.forEach((d, i) => {
     const seg = path.join(tmp, `s${i}.mp4`);
-    ff(['-f', 'lavfi', '-i', `color=c=${PALETTE[d.colorIndex].hex}:s=1280x720:r=30:d=${SEG}`,
+    const w = d.width || 1280, h = d.height || 720;
+    ff(['-f', 'lavfi', '-i', `color=c=${PALETTE[d.colorIndex].hex}:s=${w}x${h}:r=30:d=${SEG}`,
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-t', String(SEG), seg]);
     parts.push(`file '${seg.replace(/'/g, "'\\''")}'`);
-    const t0 = i * SEG + 2, t1 = i * SEG + 8;
-    srtBlocks.push(`${i + 1}\n${srtTime(t0)} --> ${srtTime(t1)}\n${d.dialogue}\n`);
+    cueList.push({ t0: i * SEG + 2, t1: i * SEG + 8, text: d.dialogue });
+    if (d.context) cueList.push({ t0: i * SEG + 9, t1: i * SEG + 14, text: d.context });  // nearby context line
   });
+  const srtBlocks = cueList.map((c, k) => `${k + 1}\n${srtTime(c.t0)} --> ${srtTime(c.t1)}\n${c.text}\n`);
   const list = path.join(tmp, 'list.txt'); fs.writeFileSync(list, parts.join('\n'));
   ff(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', video]);
   fs.writeFileSync(srt, srtBlocks.join('\n'));
@@ -189,16 +191,18 @@ writePack(csDir, {
 });
 
 // ---------------- EDGE CASES JOB (space+Unicode path, repeated dialogue, missing caption) ----------------
+// IDENTICAL dialogue seg0 & seg2; distinguishing CONTEXT line har jagah alag.
 const repeat = makeEpisodeAt(path.join(EP, 'repeat épisode'), 'repeat_ep', [  // space+unicode in source path
-  { colorIndex: 0, dialogue: 'Meet me at the bridge.' },                                 // red  (repeat #1)
-  { colorIndex: 1, dialogue: 'Nothing happens in this scene.' },                         // green
-  { colorIndex: 2, dialogue: 'Meet me at the bridge tonight after the festival ends.' }, // blue (repeat #2 + anchor)
-  { colorIndex: 3, dialogue: 'The end credits roll.' },                                  // yellow
+  { colorIndex: 0, dialogue: 'We strike at dawn.', context: 'at the old mill by the river' },   // red  (repeat #1)
+  { colorIndex: 1, dialogue: 'Nothing happens in this scene.' },                                 // green
+  { colorIndex: 2, dialogue: 'We strike at dawn.', context: 'at the festival square downtown' }, // blue (repeat #2, anchor near)
+  { colorIndex: 3, dialogue: 'The end credits roll.' },                                          // yellow
 ]);
 const ecDir = path.join(FX, 'edgé cases');   // space+unicode in INPUT dir
 makeNarration(ecDir, [
-  { start: 0, end: 8, text: 'He whispers the plan, meet me at the bridge.' },
+  { start: 0, end: 8, text: 'He whispers the plan, we strike at dawn.' },
   { start: 8, end: 16, text: 'Later a silent shot that has no caption at all.' },
+  { start: 16, end: 24, text: 'The same order is given again, we strike at dawn.' },
 ]);
 writePack(ecDir, {
   schema_version: 'scene-research-pack-v1',
@@ -210,13 +214,17 @@ writePack(ecDir, {
       { source_id: 'NOSUB', local_file: repeat.video, source_kind: 'OFFICIAL_EPISODE', inspection_status: 'VERIFIED_WATCHED', duration_sec: repeat.duration },
     ],
     moments: [
-      // repeated dialogue: "meet me at the bridge" seg0 aur seg2 dono mein; anchor 'festival' se seg2 (blue) chune
-      { moment_id: 'EC_M01', script_cue_exact: 'He whispers the plan, meet me at the bridge.', must_show: ['bridge meeting'],
-        locators: [{ source_id: 'REP', locator_type: 'DIALOGUE', dialogue_exact: 'meet me at the bridge', nearby_context_terms: ['festival'], confidence: 'HIGH' }],
+      // repeated dialogue WITH context: anchor 'festival' se seg2 (blue) chune
+      { moment_id: 'EC_M01', script_cue_exact: 'He whispers the plan, we strike at dawn.', must_show: ['dawn raid plan'],
+        locators: [{ source_id: 'REP', locator_type: 'DIALOGUE', dialogue_exact: 'we strike at dawn', nearby_context_terms: ['festival'], confidence: 'HIGH' }],
         fallback: { type: 'NEEDS_SOURCE' } },
       // missing caption: NOSUB source ke paas subs nahi -> controlled NEEDS_SOURCE (M2 ASR)
       { moment_id: 'EC_M02', script_cue_exact: 'Later a silent shot that has no caption at all.', must_show: ['silent b-roll'],
         locators: [{ source_id: 'NOSUB', locator_type: 'DIALOGUE', dialogue_exact: 'this line is not present in captions', confidence: 'MEDIUM' }],
+        fallback: { type: 'NEEDS_SOURCE' } },
+      // repeated dialogue WITHOUT context: ambiguous -> NEEDS_REVIEW (final se bahar)
+      { moment_id: 'EC_M03', script_cue_exact: 'The same order is given again, we strike at dawn.', must_show: ['dawn raid'],
+        locators: [{ source_id: 'REP', locator_type: 'DIALOGUE', dialogue_exact: 'we strike at dawn', confidence: 'HIGH' }],
         fallback: { type: 'NEEDS_SOURCE' } },
     ],
   }],
@@ -257,6 +265,7 @@ const expectations = [
   ['crossshow', 'CS_M04', 'NEEDS_SOURCE', null, null],
   ['edgecases', 'EC_M01', 'RESOLVED', 'blue', 'DIALOGUE'],   // repeated dialogue, anchor 'festival' -> seg2 (blue)
   ['edgecases', 'EC_M02', 'NEEDS_SOURCE', null, null],       // missing caption -> NEEDS_SOURCE
+  ['edgecases', 'EC_M03', 'NEEDS_REVIEW', null, 'DIALOGUE'], // repeated dialogue, no context -> held out of final
 ];
 
 console.log('\n' + '='.repeat(78));

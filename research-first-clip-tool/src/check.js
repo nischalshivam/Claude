@@ -25,16 +25,32 @@ module.exports = function check() {
   const fp = checkOne(U.tool('ffprobe'), ['-version'], { required: false, optionalNote: 'optional (ffmpeg fallback hai)' });
   results.push(fp);
 
+  // drawtext filter (text cards ke liye) — kuch static builds mein missing
+  const filters = U.run(U.tool('ffmpeg'), ['-hide_banner', '-filters']);
+  const drawtext = !!(filters.ok && /\bdrawtext\b/.test(filters.stdout || ''));
+  results.push({ bin: 'ffmpeg:drawtext', ok: drawtext, version: drawtext ? 'available' : '', required: false, optionalNote: drawtext ? 'text cards on' : 'missing -> text cards solid-color (full ffmpeg build lo)' });
+
   // yt-dlp (zaroori download ke liye; local_file sources ke liye optional)
   const ytdlp = checkOne(U.tool('yt-dlp'), ['--version'], { required: true });
   results.push(ytdlp);
 
-  // yt-dlp ko ab YouTube ke liye ek JS RUNTIME chahiye (nsig/PO-token challenge
-  // solve karne ko — EJS). Deno recommended; Bun/Node bhi chal sakte hain.
+  // yt-dlp ko ab YouTube ke liye ek JS RUNTIME chahiye (nsig/PO-token challenge —
+  // EJS). Deno recommended (koi bhi version); Node-based EJS ke liye Node 22+.
   // Ref: https://github.com/yt-dlp/yt-dlp/wiki/EJS  &  .../Po-Token-Guide
-  const js = ['deno', 'bun', 'node'].map(b => ({ b, r: U.run(b, ['--version'], { timeout: 15000 }) })).find(x => x.r.ok);
-  if (js) results.push({ bin: `js-runtime(${js.b})`, ok: true, version: (js.r.stdout || '').split('\n')[0].trim().slice(0, 40), required: false, optionalNote: 'yt-dlp YouTube ke liye' });
-  else results.push({ bin: 'js-runtime', ok: false, required: false, optionalNote: 'Deno/Bun/Node install karo (yt-dlp YouTube EJS)', error: 'koi JS runtime nahi' });
+  let jsFound = null;
+  const deno = U.run('deno', ['--version'], { timeout: 15000 });
+  if (deno.ok) jsFound = { name: 'deno', ver: (deno.stdout || '').split('\n')[0].trim() };
+  if (!jsFound) { const bun = U.run('bun', ['--version'], { timeout: 15000 }); if (bun.ok) jsFound = { name: 'bun', ver: (bun.stdout || '').trim() }; }
+  if (!jsFound) {
+    const node = U.run('node', ['--version'], { timeout: 15000 });
+    if (node.ok) {
+      const major = parseInt(String(node.stdout).replace(/^v/, '').split('.')[0], 10) || 0;
+      if (major >= 22) jsFound = { name: 'node', ver: node.stdout.trim() };
+      else results.push({ bin: 'js-runtime', ok: false, required: false, optionalNote: `node ${node.stdout.trim()} EJS ke liye purana (Node 22+ ya Deno chahiye)`, error: 'node <22' });
+    }
+  }
+  if (jsFound) results.push({ bin: `js-runtime(${jsFound.name})`, ok: true, version: jsFound.ver.slice(0, 40), required: false, optionalNote: 'yt-dlp YouTube EJS' });
+  else if (!results.some(r => r.bin === 'js-runtime')) results.push({ bin: 'js-runtime', ok: false, required: false, optionalNote: 'Deno (recommended) ya Node 22+ install karo', error: 'koi EJS-capable JS runtime nahi' });
 
   // report
   let hardFail = false;

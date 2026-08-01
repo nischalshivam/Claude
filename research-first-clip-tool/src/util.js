@@ -1,20 +1,16 @@
 // ============================================================
 //  util.js — common helpers: logging, config/.env, tool resolution,
-//  safe external command runner, media probe (ffprobe -> ffmpeg fallback).
-//
-//  Design rules (handoff §9):
-//   - Sab external commands argument ARRAY se chalte hain (execFile), kabhi
-//     shell string concat nahi. Isse spaces/Unicode paths Windows par safe.
-//   - ffprobe optional hai: na ho to `ffmpeg -i` stderr parse karke duration/
-//     resolution nikaal lete hain (dev sandbox mein ffprobe nahi hota).
+//  safe command runner (spawnSync: SUCCESS par bhi stderr capture),
+//  media probe (ffprobe -> ffmpeg fallback), path-safety, hashing.
 // ============================================================
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 
-// ---------- logging (plain, Windows cmd safe) ----------
+// ---------- logging ----------
 const log = (...a) => console.log(...a);
 const ok = m => console.log(`  [OK]   ${m}`);
 const warn = m => console.log(`  [WARN] ${m}`);
@@ -28,7 +24,6 @@ function config() {
   _cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
   return _cfg;
 }
-
 let _env = null;
 function env() {
   if (_env) return _env;
@@ -43,45 +38,45 @@ function env() {
   return _env;
 }
 
-// ---------- tool resolution (config.tools override, warna PATH) ----------
+// ---------- tool resolution ----------
 const _toolCache = {};
 function tool(name) {
   if (_toolCache[name]) return _toolCache[name];
+  // env override (testing/CI): RFC_FFMPEG / RFC_FFPROBE / RFC_YTDLP
+  const envMap = { ffmpeg: 'RFC_FFMPEG', ffprobe: 'RFC_FFPROBE', 'yt-dlp': 'RFC_YTDLP' };
+  const envVal = process.env[envMap[name]];
+  if (envVal && envVal.trim()) { _toolCache[name] = envVal.trim(); return _toolCache[name]; }
   const cfg = config();
   const keyMap = { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', 'yt-dlp': 'ytDlp' };
   const configured = cfg.tools && cfg.tools[keyMap[name]];
-  const resolved = (configured && configured.trim()) ? configured.trim() : name;
-  _toolCache[name] = resolved;
-  return resolved;
+  _toolCache[name] = (configured && configured.trim()) ? configured.trim() : name;
+  return _toolCache[name];
 }
 
-// ek external command chalao. { ok, stdout, stderr, code } lautata hai.
-// throwOnFail=false rakha hai taaki caller khud decide kare.
+// ek external command chalao. spawnSync => stdout AUR stderr dono hamesha milte
+// hain (SUCCESS par bhi) — blackdetect/freezedetect stderr par likhte hain.
 function run(bin, args, { timeout = 600000, input = null, throwOnFail = false, maxBuffer = 1 << 27 } = {}) {
-  try {
-    const stdout = execFileSync(bin, args, {
-      timeout, maxBuffer, encoding: 'utf8', input: input || undefined,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { ok: true, stdout: stdout || '', stderr: '', code: 0 };
-  } catch (e) {
-    const res = { ok: false, stdout: e.stdout ? String(e.stdout) : '', stderr: e.stderr ? String(e.stderr) : (e.message || ''), code: e.status ?? -1 };
-    if (throwOnFail) { const err = new Error(res.stderr.slice(0, 400) || `command failed: ${bin}`); err.detail = res; throw err; }
-    return res;
-  }
+  const r = spawnSync(bin, args, { timeout, maxBuffer, encoding: 'utf8', input: input || undefined });
+  const res = {
+    ok: !r.error && r.status === 0,
+    stdout: r.stdout || '',
+    stderr: r.stderr || (r.error ? r.error.message : ''),
+    code: r.status == null ? -1 : r.status,
+  };
+  if (!res.ok && throwOnFail) { const e = new Error((res.stderr || `command failed: ${bin}`).slice(0, 400)); e.detail = res; throw e; }
+  return res;
 }
 
 const ffmpeg = (args, opts) => run(tool('ffmpeg'), ['-y', '-hide_banner', '-loglevel', 'error', ...args], opts);
-const ffmpegRaw = (args, opts) => run(tool('ffmpeg'), ['-hide_banner', ...args], opts); // stderr chahiye (probe/blackdetect)
+// stderr chahiye (probe/blackdetect/freezedetect) — loglevel info rakhо
+const ffmpegRaw = (args, opts) => run(tool('ffmpeg'), ['-hide_banner', ...args], opts);
 const ytdlp = (args, opts) => run(tool('yt-dlp'), args, opts);
 
-// ---------- media probe: ffprobe pehle, warna ffmpeg -i parse ----------
+// ---------- media probe ----------
 function probe(file) {
-  if (!fs.existsSync(file)) return { ok: false, error: 'file missing' };
-  // 1) ffprobe (agar available)
+  if (!file || !fs.existsSync(file)) return { ok: false, error: 'file missing' };
   const r = run(tool('ffprobe'), ['-v', 'error', '-select_streams', 'v:0',
-    '-show_entries', 'stream=width,height,duration,codec_name:format=duration',
-    '-of', 'json', file]);
+    '-show_entries', 'stream=width,height,duration,codec_name:format=duration', '-of', 'json', file]);
   if (r.ok && r.stdout.trim()) {
     try {
       const j = JSON.parse(r.stdout);
@@ -90,7 +85,6 @@ function probe(file) {
       return { ok: true, width: +s.width || 0, height: +s.height || 0, duration: dur, codec: s.codec_name || '', via: 'ffprobe' };
     } catch { /* fall through */ }
   }
-  // 2) fallback: ffmpeg -i (stderr parse)
   const f = ffmpegRaw(['-i', file]);
   const txt = f.stderr || '';
   const dm = txt.match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
@@ -102,17 +96,36 @@ function probe(file) {
   return { ok: true, width, height, duration, codec: cm ? cm[1] : '', via: 'ffmpeg' };
 }
 
-// ---------- paths ----------
+// ---------- paths + safety ----------
 const jobDir = id => path.join(ROOT, 'jobs', id);
 const outDir = () => path.join(ROOT, 'output');
 const p = (id, ...rest) => path.join(jobDir(id), ...rest);
 function ensureDir(d) { fs.mkdirSync(d, { recursive: true }); return d; }
 
-// slug id from a project title / file
+// ID safe hai? (job/pack/source/moment). Path traversal/separators/absolute reject.
+const ID_RE = /^[A-Za-z0-9_-]+$/;
+function isSafeId(id) { return typeof id === 'string' && id.length > 0 && id.length <= 80 && ID_RE.test(id) && id !== '.' && id !== '..'; }
+function assertSafeId(id, what = 'id') { if (!isSafeId(id)) throw new Error(`unsafe ${what}: ${JSON.stringify(id)} (allowed: A-Z a-z 0-9 _ -)`); return id; }
+
+// target, root ke ANDAR hai? (resolve karke prefix check) — delete/write se pehle.
+function isInside(root, target) {
+  const r = path.resolve(root) + path.sep;
+  const t = path.resolve(target);
+  return (t + path.sep).startsWith(r) || t === path.resolve(root);
+}
+function assertInside(root, target, what = 'path') { if (!isInside(root, target)) throw new Error(`refusing to touch ${what} outside ${root}: ${target}`); return target; }
+
 const slug = s => String(s || 'job').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'job';
+
+// ---------- hashing (fingerprints) ----------
+function sha256(buf) { return crypto.createHash('sha256').update(buf).digest('hex'); }
+function hashFile(file) { try { return sha256(fs.readFileSync(file)); } catch { return 'na'; } }
+function hashStr(s) { return sha256(Buffer.from(String(s))); }
 
 module.exports = {
   ROOT, log, ok, warn, bad, step,
   config, env, tool, run, ffmpeg, ffmpegRaw, ytdlp, probe,
   jobDir, outDir, p, ensureDir, slug,
+  isSafeId, assertSafeId, isInside, assertInside,
+  sha256, hashFile, hashStr,
 };

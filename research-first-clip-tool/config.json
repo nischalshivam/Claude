@@ -48,7 +48,8 @@
     "crf": 21,
     "preset": "veryfast",
     "kenBurnsZoom": 0.1,
-    "_note": "Stills par halka Ken Burns motion. Video clips as-is (already frame-accurate)."
+    "allowSilent": false,
+    "_note": "allowSilent=false => production ko voiceover audio zaroori (missing audio = fail, misleading DONE nahi). Test harness true set karta hai."
   },
 
   "validation": {

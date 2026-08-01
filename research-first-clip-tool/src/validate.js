@@ -15,6 +15,7 @@
 //  errors[] => job rukega. warnings[] => chalega par report mein dikhega.
 // ============================================================
 const fs = require('fs');
+const U = require('./util.js');
 
 const ENUM = {
   scopeKind: ['SERIES', 'FILM', 'DOCUMENTARY', 'REAL_WORLD', 'GRAPHIC', 'MULTI_SOURCE'],
@@ -59,6 +60,7 @@ function validatePackObject(pack) {
   for (const pk of pack.packs) {
     const pid = pk.pack_id || '(no pack_id)';
     if (!pk.pack_id) errors.push('kisi pack ka pack_id missing');
+    else if (!U.isSafeId(pk.pack_id)) errors.push(`pack_id unsafe (A-Z a-z 0-9 _ - only): ${pk.pack_id}`);
     else if (seenPackIds.has(pk.pack_id)) errors.push(`duplicate pack_id: ${pk.pack_id}`);
     else seenPackIds.add(pk.pack_id);
 
@@ -72,6 +74,7 @@ function validatePackObject(pack) {
     for (const s of (pk.sources || [])) {
       const sid = s.source_id || '(no source_id)';
       if (!s.source_id) errors.push(`[${pid}] source ka source_id missing`);
+      else if (!U.isSafeId(s.source_id)) errors.push(`[${pid}] source_id unsafe: ${s.source_id}`);
       else if (localSourceIds.has(s.source_id)) errors.push(`[${pid}] duplicate source_id: ${s.source_id}`);
       else localSourceIds.add(s.source_id);
 
@@ -90,6 +93,7 @@ function validatePackObject(pack) {
       momentCount++;
       const mid = m.moment_id || '(no moment_id)';
       if (!m.moment_id) errors.push(`[${pid}] moment ka moment_id missing`);
+      else if (!U.isSafeId(m.moment_id)) errors.push(`[${pid}] moment_id unsafe: ${m.moment_id}`);
       else if (seenMomentIds.has(m.moment_id)) errors.push(`duplicate moment_id: ${m.moment_id}`);
       else seenMomentIds.add(m.moment_id);
 

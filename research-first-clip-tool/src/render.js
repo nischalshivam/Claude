@@ -45,7 +45,15 @@ function wrap(text, width = 42) {
 // ffmpeg drawtext fontfile path (Windows backslash + colon escape)
 const escFont = p => p.replace(/\\/g, '/').replace(/:/g, '\\:');
 
-const CARD_BG = { text: '0x1a1a1a', graphic: '0x102a43', needs_source: '0x4a1010' };
+const CARD_BG = { text: '0x1a1a1a', graphic: '0x102a43', needs_source: '0x4a1010', needs_review: '0x3a2b08' };
+
+// solid card (fail-safe) — exact duration, taaki timeline drift na ho
+function renderSolid(cfg, seg, dur, bg) {
+  const W = cfg.canvas.width, H = cfg.canvas.height, FPS = cfg.canvas.fps;
+  return U.ffmpeg(['-f', 'lavfi', '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`,
+    '-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21),
+    '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
+}
 
 module.exports = function render(spec, cfg, st, tl) {
   const id = spec.id;
@@ -57,7 +65,7 @@ module.exports = function render(spec, cfg, st, tl) {
   else if (!drawtextOK) U.warn('is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.');
 
   const listLines = [];
-  let n = 0;
+  let n = 0, failed = 0;
   for (const s of tl.slots) {
     const seg = path.join(segDir, `seg_${String(s.i).padStart(4, '0')}.mp4`);
     const dur = Math.max(0.3, s.dur);
@@ -71,7 +79,7 @@ module.exports = function render(spec, cfg, st, tl) {
       // card
       const kind = s.kind === 'video' ? 'needs_source' : s.kind;   // clip missing -> needs_source card
       const bg = CARD_BG[kind] || CARD_BG.text;
-      const label = s.label === 'NEEDS SOURCE' ? 'NEEDS SOURCE' : (s.label === 'fallback' ? '' : '');
+      const label = (s.label === 'NEEDS SOURCE' || s.label === 'NEEDS REVIEW') ? s.label : '';
       const body = (label ? label + '\n\n' : '') + wrap(s.text || s.cue || '');
       const vf = ['-f', 'lavfi', '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`];
       let filter = null;
@@ -86,7 +94,13 @@ module.exports = function render(spec, cfg, st, tl) {
         '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg);
       r = U.ffmpeg(args, { timeout: 120000 });
     }
-    if (!r.ok || !fs.existsSync(seg)) { U.warn(`seg ${s.i} (${s.kind}) render fail: ${(r.stderr || '').slice(0, 100)}`); continue; }
+    if (!r.ok || !fs.existsSync(seg)) {
+      // NEVER skip time — same-duration fallback solid card (no drift, P1-8)
+      U.warn(`seg ${s.i} (${s.kind}) render fail -> fallback card: ${(r.stderr || '').slice(0, 80)}`);
+      const fb = renderSolid(cfg, seg, dur, '0x202020');
+      if (!fb.ok || !fs.existsSync(seg)) throw new Error(`seg ${s.i} fallback card bhi fail: ${(fb.stderr || '').slice(0, 100)}`);
+      failed++;
+    }
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
     n++;
   }
@@ -107,17 +121,28 @@ module.exports = function render(spec, cfg, st, tl) {
   // master voiceover mux
   const finalOut = U.p(id, 'final.mp4');
   const audio = spec.audio;
+  const vdur = U.probe(master).duration || tl.total;
   if (audio && fs.existsSync(audio)) {
-    const m = U.ffmpeg(['-i', master, '-i', audio, '-map', '0:v:0', '-map', '1:a:0',
-      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', finalOut]);
-    if (!m.ok || !fs.existsSync(finalOut)) throw new Error('audio mux fail: ' + (m.stderr || '').slice(0, 150));
-  } else {
-    U.warn('voiceover audio nahi mila — video bina audio ke.');
+    // VO truncate se bachne ko: video+audio dono ko MAX length tak pad karo
+    // (video = last frame freeze, audio = silence). -shortest nahi.
+    const adur = U.probe(audio).duration || vdur;
+    const target = Math.max(vdur, adur);
+    const vpad = Math.max(0, +(target - vdur).toFixed(3));
+    const m = U.ffmpeg(['-i', master, '-i', audio,
+      '-filter_complex', `[0:v]tpad=stop_mode=clone:stop_duration=${vpad}[v];[1:a]apad[a]`,
+      '-map', '[v]', '-map', '[a]', '-t', target.toFixed(3),
+      '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
+      '-pix_fmt', 'yuv420p', '-r', String(FPS), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', finalOut]);
+    if (!m.ok || !fs.existsSync(finalOut)) throw new Error('audio mux fail: ' + (m.stderr || '').slice(0, 200));
+  } else if (cfg.render.allowSilent) {
+    U.warn('voiceover audio nahi — allowSilent=true, silent video (test-only).');
     fs.copyFileSync(master, finalOut);
+  } else {
+    throw new Error('voiceover audio nahi mila. Production render ke liye audio zaroori (ya config.render.allowSilent=true test ke liye).');
   }
 
   const pr = U.probe(finalOut);
-  U.ok(`render: final.mp4 (${n} segments, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
-  st.meta.render = { segments: n, duration: pr.ok ? +pr.duration.toFixed(1) : null, file: 'final.mp4' };
-  return { file: finalOut, segments: n };
+  U.ok(`render: final.mp4 (${n} segments${failed ? ', ' + failed + ' fallback-card' : ''}, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
+  st.meta.render = { segments: n, failed, duration: pr.ok ? +pr.duration.toFixed(1) : null, file: 'final.mp4' };
+  return { file: finalOut, segments: n, duration: pr.ok ? pr.duration : null };
 };

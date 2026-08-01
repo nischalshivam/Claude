@@ -1,11 +1,16 @@
 @echo off
 REM ============================================================
 REM  START.bat — poori pipeline chalao (ya resume karo)
-REM  input/ mein ye files honi chahiye:
-REM    script.txt, voiceover.mp3, voiceover.srt, scene-research.json
+REM  input\ mein: scene-research.json, voiceover.srt, voiceover.mp3
 REM ============================================================
 cd /d "%~dp0"
 node src\run.js %*
+set RC=%ERRORLEVEL%
 echo.
-echo Ho gaya. output\ folder dekho (final.mp4, quality-report.html, NEEDS_SOURCE.csv)
+if "%RC%"=="0" (
+  echo Done. Output: jobs\^<project^>\  -  final.mp4, quality-report.html, NEEDS_SOURCE.csv, run.log, clips\
+) else (
+  echo FAILED with exit code %RC%.  jobs\^<project^>\run.log dekho.
+)
 pause
+exit /b %RC%

@@ -13,7 +13,10 @@ const U = require('./util.js');
 const SRC = require('./sources.js');
 const SUB = require('./subtitles.js');
 
-const TYPE_ORDER = { EXACT_TIME: 0, DIALOGUE: 1, APPROX_WINDOW: 2, SEARCH_ONLY: 3, UNRESOLVED: 4 };
+const CONF_RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, NONE: 3 };
+// researcher priority (source.priority) + confidence ko respect karo — EXACT_TIME
+// ko blindly DIALOGUE ke upar mat rakho (P1-10). Ties par type sirf tie-break.
+const TYPE_TIE = { EXACT_TIME: 0, DIALOGUE: 1, APPROX_WINDOW: 2, SEARCH_ONLY: 3, UNRESOLVED: 4 };
 
 module.exports = function locate(spec, cfg, st, aligned) {
   const id = spec.id;
@@ -22,7 +25,7 @@ module.exports = function locate(spec, cfg, st, aligned) {
   const clip = cfg.clip;
 
   const resolved = [];
-  let nVideo = 0, nGraphic = 0, nNeeds = 0, nReview = 0;
+  let nAccept = 0, nReview = 0, nGraphic = 0, nNeeds = 0;
 
   for (const m of aligned.moments) {
     const base = {
@@ -33,7 +36,12 @@ module.exports = function locate(spec, cfg, st, aligned) {
       preferred_clip_sec: m.preferred_clip_sec || null,
     };
 
-    const locs = [...(m.locators || [])].sort((a, b) => (TYPE_ORDER[a.locator_type] ?? 9) - (TYPE_ORDER[b.locator_type] ?? 9));
+    // sort: source.priority (researcher) -> confidence -> type tie-break
+    const prio = L => { const s = sources[L.source_id]; return (s && typeof s.priority === 'number') ? s.priority : 99; };
+    const locs = [...(m.locators || [])].sort((a, b) =>
+      (prio(a) - prio(b)) ||
+      ((CONF_RANK[a.confidence] ?? 3) - (CONF_RANK[b.confidence] ?? 3)) ||
+      ((TYPE_TIE[a.locator_type] ?? 9) - (TYPE_TIE[b.locator_type] ?? 9)));
     const attempts = [];
     const candidates = [];   // saare viable locators (ordered) — download inhe try karega
 
@@ -42,6 +50,11 @@ module.exports = function locate(spec, cfg, st, aligned) {
       if (!src) { attempts.push({ type: L.locator_type, source_id: L.source_id, result: 'source not in pack' }); continue; }
       const meta = SRC.getMeta(id, src, cfg);
       if (!meta.available) { attempts.push({ type: L.locator_type, source_id: L.source_id, result: `source unavailable: ${meta.error || 'na'}` }); continue; }
+
+      // video_id verify (jab dono available) — galat video reject (P1-10)
+      if (src.video_id && meta.video_id && String(src.video_id) !== String(meta.video_id)) {
+        attempts.push({ type: L.locator_type, source_id: L.source_id, result: `wrong video: expected id ${src.video_id}, got ${meta.video_id}` }); continue;
+      }
 
       let hit = null;
       if (L.locator_type === 'EXACT_TIME') {
@@ -78,13 +91,19 @@ module.exports = function locate(spec, cfg, st, aligned) {
 
     if (candidates.length) {
       const primary = candidates[0];
-      const entry = { ...base, status: 'RESOLVED', kind: 'video',
+      // clean alignment + ACCEPT hi RESOLVED (final mein jayega). warna NEEDS_REVIEW
+      // (report mein candidate dikhega par final.mp4 mein review-card, clip nahi) — P1-3.
+      const alignOK = base.align_flag === 'OK';
+      const isReview = !alignOK || primary.decision !== 'ACCEPT';
+      const status = isReview ? 'NEEDS_REVIEW' : 'RESOLVED';
+      const review_reason = isReview ? (!alignOK ? `alignment ${base.align_flag}` : `dialogue ${primary.decision}`) : null;
+      const entry = { ...base, status, kind: 'video',
         source_id: primary.source_id, source_kind: primary.source_kind, url: primary.url, local_file: primary.local_file,
         locator_type: primary.locator_type, decision: primary.decision, score: primary.score, recall: primary.recall,
-        reason: primary.reason, matched: primary.matched, cut: primary.cut,
+        reason: primary.reason, review_reason, matched: primary.matched, cut: primary.cut,
         candidates, attempts };
-      if (primary.decision === 'REVIEW') nReview++;
-      resolved.push(entry); nVideo++;
+      if (isReview) nReview++; else nAccept++;
+      resolved.push(entry);
       continue;
     }
 
@@ -104,8 +123,8 @@ module.exports = function locate(spec, cfg, st, aligned) {
 
   const outFile = U.p(id, 'resolved.json');
   fs.writeFileSync(outFile, JSON.stringify(resolved, null, 2));
-  U.ok(`located: ${nVideo} video (${nReview} review), ${nGraphic} graphic/text, ${nNeeds} NEEDS_SOURCE`);
-  st.meta.locate = { video: nVideo, review: nReview, graphic: nGraphic, needsSource: nNeeds };
+  U.ok(`located: ${nAccept} RESOLVED, ${nReview} NEEDS_REVIEW, ${nGraphic} graphic/text, ${nNeeds} NEEDS_SOURCE`);
+  st.meta.locate = { resolved: nAccept, review: nReview, graphic: nGraphic, needsSource: nNeeds };
   return resolved;
 };
 

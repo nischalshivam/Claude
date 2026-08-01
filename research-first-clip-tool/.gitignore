@@ -14,4 +14,5 @@ tests/fixtures/
 *.rgb
 *.gray
 RAW-TEST-LOG.txt
+RAW-REGRESSION-LOG.txt
 *.log

@@ -38,40 +38,67 @@ function parseFile(file) {
   return parse(fs.readFileSync(file, 'utf8'));
 }
 
-// consecutive cues ka best-matching window dhoondo target dialogue ke liye.
+// match ke aas-paas (±ctxSec seconds) anchor terms kitne present — repeated
+// dialogue disambiguate karne ko (sirf same caption line ke andar nahi).
+// Time-based context: dense real captions mein nearby lines pakadta hai, aur
+// door wali doosri occurrence ka context nahi milata.
+function anchorFraction(cues, i, j, anchors, ctxSec = 8) {
+  if (!anchors || !anchors.length) return 0;
+  const lo = cues[i].start - ctxSec, hi = cues[j].end + ctxSec;
+  let txt = '';
+  for (const c of cues) if (c.end > lo && c.start < hi) txt += ' ' + c.text;
+  const norm = F.normalize(txt);
+  let hit = 0; for (const a of anchors) if (norm.includes(F.normalize(a))) hit++;
+  return hit / anchors.length;
+}
+
+// consecutive cues ka best + genuinely-separate runner-up window.
+// final = base(F.score) + 0.2*anchorFraction(context window).  Anchor present hone
+// se sahi occurrence clearly jeetta hai (repeated dialogue ke liye zaroori).
 function locateDialogue(cues, dialogue, { variants = [], anchors = [] } = {}) {
   if (!cues || !cues.length) return { found: false, reason: 'no captions' };
   const targets = [dialogue, ...(variants || [])].filter(Boolean);
   if (!targets.length) return { found: false, reason: 'no dialogue text' };
 
-  let best = null;
+  const windows = [];   // har start-index ka best window
   for (const target of targets) {
     const N = Math.max(1, F.tokens(target).length);
     for (let i = 0; i < cues.length; i++) {
-      let joined = '';
-      let tokCount = 0;
+      let joined = '', tok = 0, local = null;
       for (let j = i; j < cues.length && j < i + 12; j++) {
         joined = joined ? joined + ' ' + cues[j].text : cues[j].text;
-        tokCount = F.tokens(joined).length;
-        const sc = F.score(joined, target, anchors);
-        if (!best || sc.score > best.score) {
-          best = { ...sc, start_sec: cues[i].start, end_sec: cues[j].end, i, j, matched: joined.slice(0, 200), target: target.slice(0, 120) };
-        }
-        if (tokCount >= N * 1.8 + 3) break;   // window kaafi bada ho gaya, aage na badho
+        tok = F.tokens(joined).length;
+        const base = F.score(joined, target);
+        const anchorFrac = anchorFraction(cues, i, j, anchors);
+        // raw (UNCAPPED) ranking ke liye — anchor perfect exact-match ko bhi
+        // beat sake (do occurrences: sahi wale ke paas anchor). score = capped (report).
+        const raw = +(base.score + 0.25 * anchorFrac).toFixed(4);
+        if (!local || raw > local.raw) local = { raw, score: Math.min(1, raw), base: base.score, recall: base.recall, anchorFrac, start_sec: cues[i].start, end_sec: cues[j].end, i, j, matched: joined.slice(0, 200), target: target.slice(0, 120) };
+        if (tok >= N * 1.8 + 3) break;
       }
+      if (local) windows.push(local);
     }
   }
-  return best ? { found: true, ...best } : { found: false, reason: 'no match' };
+  if (!windows.length) return { found: false, reason: 'no match' };
+  windows.sort((a, b) => b.raw - a.raw);
+  const best = windows[0];
+  let runnerUp = null;   // genuinely different occurrence (window overlap nahi)
+  for (const w of windows.slice(1)) { if (Math.abs(w.i - best.i) > 2) { runnerUp = w; break; } }
+  return { found: true, ...best, runnerUp: runnerUp ? { score: runnerUp.score, raw: runnerUp.raw, start_sec: runnerUp.start_sec, i: runnerUp.i } : null };
 }
 
-// config.dialogue thresholds se accept/review/reject faisla
+// accept tabhi jab score, recall AUR best-minus-runnerUp margin teeno pass hon.
 function decide(match, dcfg) {
   if (!match || !match.found) return { decision: 'REJECT', reason: match && match.reason ? match.reason : 'no match' };
   const { score, recall } = match;
-  if (score >= dcfg.acceptScore && recall >= dcfg.acceptRecall)
-    return { decision: 'ACCEPT', reason: `score ${score} recall ${recall}` };
+  const ruRaw = match.runnerUp ? (match.runnerUp.raw ?? match.runnerUp.score) : 0;
+  const margin = +((match.raw ?? score) - ruRaw).toFixed(4);   // uncapped ranking gap
+  if (score >= dcfg.acceptScore && recall >= dcfg.acceptRecall && margin >= dcfg.acceptMargin)
+    return { decision: 'ACCEPT', reason: `score ${score} recall ${recall} margin ${margin}` };
+  if (score >= dcfg.acceptScore && recall >= dcfg.acceptRecall && margin < dcfg.acceptMargin)
+    return { decision: 'REVIEW', reason: `ambiguous: margin ${margin} < ${dcfg.acceptMargin} (repeated/close dialogue) — context chahiye` };
   if (score >= dcfg.reviewFloor)
-    return { decision: 'REVIEW', reason: `borderline score ${score} recall ${recall} (episode+context evidence chahiye)` };
+    return { decision: 'REVIEW', reason: `borderline score ${score} recall ${recall}` };
   if (score >= dcfg.rejectFloor)
     return { decision: 'ASR_NEEDED', reason: `weak caption match ${score} (M2: local ASR)` };
   return { decision: 'REJECT', reason: `low match ${score}` };

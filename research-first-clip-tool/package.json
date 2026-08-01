@@ -11,7 +11,8 @@
     "check": "node src/run.js --only=check",
     "start": "node src/run.js",
     "test:mini": "node tests/run-mini-test.js",
-    "list": "node src/run.js --list"
+    "test:reg": "node tests/regression.js",
+    "test:all": "node tests/run-mini-test.js && node tests/regression.js"
   },
   "engines": {
     "node": ">=18"

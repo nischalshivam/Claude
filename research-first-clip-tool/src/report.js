@@ -11,7 +11,7 @@ const U = require('./util.js');
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const csvCell = s => `"${String(s == null ? '' : s).replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
 
-const DEC_COLOR = { ACCEPT: '#1f9d55', REVIEW: '#b7791f', REJECT: '#e3342f', NEEDS_SOURCE: '#e3342f', FALLBACK_GRAPHIC: '#3182ce' };
+const DEC_COLOR = { RESOLVED: '#1f9d55', NEEDS_REVIEW: '#b7791f', NEEDS_SOURCE: '#e3342f', FALLBACK_GRAPHIC: '#3182ce' };
 
 // thumbnail ko base64 data-URI banate hain -> report.html poori tarah
 // self-contained (kahin bhi khulti hai, share ho sakti hai).
@@ -30,28 +30,29 @@ function thumb(id, clipRel, momentId) {
 module.exports = function report(spec, cfg, st, resolved, tl) {
   const id = spec.id;
 
-  // ---- NEEDS_SOURCE.csv ----
-  const needs = resolved.filter(e => e.status === 'NEEDS_SOURCE');
-  const csv = ['moment_id,pack_id,script_cue_exact,reason,attempts'];
-  for (const e of needs) {
+  // ---- NEEDS_SOURCE.csv (fail + review moments, status column ke sath) ----
+  const actionable = resolved.filter(e => e.status === 'NEEDS_SOURCE' || e.status === 'NEEDS_REVIEW');
+  const csv = ['status,moment_id,pack_id,script_cue_exact,reason,attempts'];
+  for (const e of actionable) {
     const att = (e.attempts || []).map(a => `${a.type}/${a.source_id || ''}:${a.result}`).join(' | ');
-    csv.push([csvCell(e.moment_id), csvCell(e.pack_id), csvCell(e.script_cue_exact), csvCell(e.reason), csvCell(att)].join(','));
+    csv.push([csvCell(e.status), csvCell(e.moment_id), csvCell(e.pack_id), csvCell(e.script_cue_exact), csvCell(e.reason || e.review_reason), csvCell(att)].join(','));
   }
   fs.writeFileSync(U.p(id, 'NEEDS_SOURCE.csv'), csv.join('\n'));
 
-  // ---- counts ----
-  const n = { total: resolved.length, resolved: 0, review: 0, graphic: 0, needs: needs.length };
+  // ---- counts (honest: sirf status RESOLVED = clean accept jo final mein gaya) ----
+  const n = { total: resolved.length, resolved: 0, review: 0, graphic: 0, needs: 0 };
   for (const e of resolved) {
-    if (e.status === 'RESOLVED') { n.resolved++; if (e.decision === 'REVIEW') n.review++; }
+    if (e.status === 'RESOLVED' && e.clip) n.resolved++;
+    else if (e.status === 'NEEDS_REVIEW') n.review++;
     else if (e.status === 'FALLBACK_GRAPHIC') n.graphic++;
+    else n.needs++;   // NEEDS_SOURCE (aur koi bhi RESOLVED bina clip)
   }
-  const precisionBase = n.resolved;
-  const cleanAccept = n.resolved - n.review;
 
   // ---- HTML rows ----
   const rows = resolved.map(e => {
-    const th = (e.status === 'RESOLVED' && e.clip) ? thumb(id, e.clip, e.moment_id) : null;
-    const dec = e.status === 'RESOLVED' ? e.decision : e.status;
+    const clipRel = e.clip || e.review_clip;
+    const th = clipRel ? thumb(id, clipRel, e.moment_id) : null;
+    const dec = e.status;
     const color = DEC_COLOR[dec] || '#666';
     const src = e.url ? `<a href="${esc(e.url)}" target="_blank">${esc((e.url).slice(0, 48))}</a>` : (e.local_file ? esc(path.basename(e.local_file)) : '—');
     const ts = e.cut ? `${e.cut.start}s → ${e.cut.end}s (${e.cut.dur}s)` : '—';
@@ -66,7 +67,7 @@ module.exports = function report(spec, cfg, st, resolved, tl) {
           <div class="loc">${esc(e.locator_type || '—')}</div>
           <div class="meta">${esc(sc)}</div></td>
       <td>${src}<div class="meta">${esc(ts)}</div></td>
-      <td class="reason">${esc(e.reason || '')}${qaFlags}</td>
+      <td class="reason">${esc(e.reason || '')}${e.review_reason ? `<div class="qa">held out: ${esc(e.review_reason)}</div>` : ''}${qaFlags}</td>
     </tr>`;
   }).join('\n');
 
@@ -88,12 +89,11 @@ img{width:200px;border-radius:6px;display:block}
 a{color:#63b3ed}
 </style></head><body>
 <h1>Quality Report — ${esc(spec.pack.project_title || id)}</h1>
-<div class="sub">Milestone 1 (deterministic, no Gemini). Har faisla evidence ke sath. Precision = accepted clips jo sahi hain.</div>
+<div class="sub">Milestone 1.1 (deterministic, no Gemini). Sirf RESOLVED clips final.mp4 mein jaate hain. NEEDS_REVIEW/NEEDS_SOURCE held out (final mein card).</div>
 <div class="cards">
   <div class="card"><b>${n.total}</b><span>moments</span></div>
-  <div class="card"><b style="color:#1f9d55">${n.resolved}</b><span>resolved clips</span></div>
-  <div class="card"><b style="color:#48bb78">${cleanAccept}</b><span>clean ACCEPT</span></div>
-  <div class="card"><b style="color:#b7791f">${n.review}</b><span>REVIEW</span></div>
+  <div class="card"><b style="color:#1f9d55">${n.resolved}</b><span>RESOLVED (in final)</span></div>
+  <div class="card"><b style="color:#b7791f">${n.review}</b><span>NEEDS_REVIEW</span></div>
   <div class="card"><b style="color:#3182ce">${n.graphic}</b><span>graphic/text</span></div>
   <div class="card"><b style="color:#e3342f">${n.needs}</b><span>NEEDS_SOURCE</span></div>
 </div>
