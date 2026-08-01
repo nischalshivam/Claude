@@ -11,6 +11,39 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — GPT review accepted; over-claims retracted
+
+GPT's review of STRATEGY_FINAL.md + this changelog was correct on the
+substance. Corrections made (STRATEGY_FINAL.md updated):
+
+1. **Gus 100% / Hank 15% retracted as proven.** Gus labels were reconstructed
+   from the user's screenshot (~100% usable, 0 wrong) but the raw
+   `mi gold --score` output + labelled `gold.csv` are still needed to stand
+   as evidence — treated as indicative, not proven. Hank "15%" is an eyeball
+   estimate, NOT gold-labelled. No "100%/works for every essay/fully
+   automatic" claim stands until frozen human labels prove it.
+2. **"Never wrong footage" marked as GOAL, not current state.** Today, an
+   unverified interpolated/paced shot still ships as a moving clip in
+   Balanced. Fixing that (P0.5 fail-closed) now leads the build order.
+3. **Dialogue match is a LOCATOR, not Tier A.** Strategy updated: a real
+   Tier A needs locator + occurrence + required-character + action + final-
+   crop verification. The tool has the locator only today.
+4. **P1 circularity fixed.** Character-still fallback now requires minimum
+   identity verification (user reference portraits + face/quality filter +
+   unknown→reject), not blind Gemini picks. Full tracking stays P3.
+5. **Gold should be per visual-request/shot, not per scene** — acknowledged;
+   the per-scene sheet hides a 2-right-3-wrong scene under one "ok". Per-shot
+   labelling to be added, plus dev/frozen/audit split.
+6. **Input evidence statuses adopted:** VERIFIED / SUPPORTED / UNVERIFIED /
+   CONTRADICTED; clean narration is authority, Genspark is a proposal.
+7. **P2 is hierarchical retrieval,** not sparse coarse frames alone; NONE OF
+   THESE mandatory.
+
+Revised build order: **P0.5 fail-closed → P1 character-still with identity →
+P2 hierarchical location → P3 face tracking.**
+
+---
+
 ## 2026-08-01 — Final strategy decided (see STRATEGY_FINAL.md)
 
 After the gold benchmark showed Gus = 100% usable / Hank = ~15%, the

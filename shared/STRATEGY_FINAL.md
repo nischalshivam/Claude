@@ -1,18 +1,34 @@
 # Final Strategy — the one plan the tool is built around
 
-Decided after measuring, not guessing. The gold benchmark showed the truth:
-the Gus video (one long scene) came out **100% usable by the user's own
-labels**; the Hank video (a "greatest hits" essay across 15 episodes) came
-out ~15%. So the tool already works when it has a tight scene, and fails when
-a beat is a brief reference with no dialogue and a wide window. Everything
-below is aimed at that one gap, and at never shipping garbage in the meantime.
+## Evidence status (read first — corrects the earlier over-claim)
 
-## The product promise
+An earlier version of this file stated "Gus = 100% usable, Hank = ~15%" as if
+both were gold-measured. That was not honest and GPT was right to flag it.
+The accurate position:
+
+- **Gus:** the user labelled a Gus build by hand (screenshot). Reconstructing
+  those labels gives ~100% *usable* (exact+ok) with 0 wrong — but this needs
+  the user's own `mi gold --score` output + the labelled `gold.csv` to stand
+  as evidence. Until that raw output is attached, treat it as *indicative,
+  not proven*.
+- **Hank:** "~15%" is the user's eyeball estimate. It has **not** been
+  gold-labelled. It is not a measured number.
+
+No claim of "100% usable", "works for every essay", or "fully automatic" is
+made until a frozen, human-labelled set proves it.
+
+## The product promise (this is the GOAL, not the current state)
 
 > Every video is watchable. Where the tool is sure, it places the exact
 > clip. Where it is not, it places a clean still of the character or scene
 > the narration is talking about — from the same movie. It never fills the
 > timeline with wrong moving footage.
+
+**Current state does NOT yet meet this.** Today, a guessed (interpolated /
+paced) shot that the vision model does not verify still ships as a moving
+clip in Balanced mode. Closing that gap — unverified motion must become a
+verified still or a card, never confident wrong motion — is the very next
+work, ahead of everything else (see "Build order").
 
 This is the user's Option 2, and it is what GPT's recovery strategy also
 concludes. It works for every kind of essay the user makes:
@@ -28,8 +44,15 @@ concludes. It works for every kind of essay the user makes:
 
 Tried in order; the first that succeeds wins:
 
-1. **Sure clip.** A line of dialogue from the beat is found in the local
-   subtitles → the exact millisecond. **Works today.** (Tier A.)
+1. **Located clip (dialogue).** A line of dialogue from the beat is found in
+   the local subtitles → the exact millisecond *of the line*. This is a
+   **locator, not proof** — it does not by itself prove the required
+   character is on screen, that the speaker is visible, that the action is
+   happening then, or that it is not a recap / offscreen line. A true Tier A
+   needs: locator **+** correct occurrence **+** required character verified
+   **+** requested action verified **+** the exported 4–6s crop verified.
+   Today the tool has the locator only; the rest is P2/P3. So a dialogue
+   match is currently "located", not "verified".
 2. **Located clip.** No line, but the character/scene is known → Gemini
    locates the exact moment inside the local movie by a **coarse→dense frame
    search** (wide sample to find the region, then a dense sample inside it).
@@ -81,17 +104,45 @@ movie without an `.srt` will be much weaker.
 
 ## Build order (measured at each step against the gold set)
 
-- **P1 — Character-still safety net (next).** Reuses the Gemini integration:
-  for an unsure beat with a known character, Gemini picks a clean still of
-  that character from the local movie instead of leaving wrong footage. This
-  alone turns "10-15% usable" Hank-type videos into "watchable everywhere",
-  which is the user's Option 2 and the biggest single improvement available.
-- **P2 — Coarse→dense exact-clip location.** Gemini locates the exact moment
-  inside a wide window in two passes, fixing the sparse-frame bottleneck.
-- **P3 — Real face recognition.** Makes the still bank clean and reliable,
-  and lets "required character present" become a hard filter.
+- **P0.5 — Fail-closed runtime (FIRST, before P1).** GPT is right that the
+  promise is violated while guessed motion still ships. So the immediate
+  change: a shot placed by interpolation/pacing that the vision model did
+  **not** verify must not render as a confident moving clip. It becomes a
+  still (a frozen frame is honest — "roughly this scene" — not a claim of the
+  moment) or, if even the scene is unknown, a card. This holds the promise
+  without spamming black cards, and it lands before any new placement work.
 
-Face-name captions today are not face recognition; that is P3, not a claim.
+- **P1 — Character-still safety net, WITH identity verification.** GPT
+  correctly caught the circularity: a still cannot be called "safe Jesse"
+  without confirming it is Jesse. So P1 is not a blind Gemini pick. It
+  requires, at minimum: **user-provided reference portraits per character**
+  (the tool's existing Characters folder), a face/quality filter, an
+  explicit *unknown → reject → NEEDS VISUAL*, a sharpness/no-subtitle filter,
+  the source timestamp stored, and a repeat limit. A candidate still is only
+  placed when it is confirmed to be that character against the references.
+
+- **P2 — Hierarchical exact-clip location.** Not sparse coarse frames alone —
+  GPT is right that a coarse pass can also miss a 2-second moment. Full flow:
+  scene/shot boundaries → subtitle/face/action/location candidates → top-K
+  diverse regions → medium video pass → dense 3–5 FPS pass → FFmpeg crop →
+  Gemini final-crop verification, with a mandatory **NONE OF THESE**.
+
+- **P3 — Full face tracking.** Multi-frame track-level identity; makes the
+  still bank and the required-character filter fully reliable.
+
+Face-name captions today are not face recognition. Minimum identity
+verification (reference portraits + match + reject) is required for P1;
+full tracking is P3.
+
+## Input authority (GPT's point, adopted)
+
+Genspark's visual script is a **proposal**, not truth — prior audits showed
+it gets speaker, character, range and chronology wrong. Every request carries
+a status: `VERIFIED` (locally grounded) / `SUPPORTED` (consistent, not
+proven) / `UNVERIFIED` / `CONTRADICTED` (local evidence disagrees). Authority
+order: clean narration = truth; clue script = clues; Genspark = proposal;
+local subtitles/frames = evidence. A `CONTRADICTED` request is never forced —
+it abstains to fallback.
 
 ## How progress is proven from here
 
