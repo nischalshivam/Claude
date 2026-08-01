@@ -18,7 +18,7 @@ Kaam karta hai bina kisi API key ke:
 - **EXACT_TIME** locator (bounds/metadata check ke sath)
 - **DIALOGUE** locator — source ke asli captions se **fuzzy-match karke exact second** (M1 ka accuracy core)
 - `yt-dlp` se sirf zaroori range download (+ local file source support)
-- Frame-accurate FFmpeg cut — **video max 6s**, source audio **mute**
+- Frame-accurate FFmpeg cut — **video length = moment ka `preferred_clip_sec` (normally 3-9s)**, source audio **mute**
 - Beat-driven timeline (poori narration tile) — gap/fail par honest text/`NEEDS_SOURCE` card, **random footage kabhi nahi**
 - Continuous master voiceover render (video length = audio length)
 - `quality-report.html` (self-contained) + `NEEDS_SOURCE.csv`
@@ -30,11 +30,15 @@ fallbacks, chhota UI.
 
 ## Requirements (Windows)
 
-- Node.js 18+
+- Node.js 18+ (20/22 recommended)
 - FFmpeg + FFprobe (PATH mein, ya `config.json > tools`)
-- yt-dlp (`yt-dlp.exe` PATH mein)
+- yt-dlp (`yt-dlp.exe` PATH mein) — **latest version rakho**
+- **JS runtime for yt-dlp YouTube:** yt-dlp ko ab YouTube ke liye ek JS runtime
+  chahiye (nsig/PO-token challenge). **Deno** recommended (Bun/Node bhi). Bina iske
+  kuch YouTube sources/subtitles `403` de sakte hain — tab tool alternate try karta hai.
+  Ref: https://github.com/yt-dlp/yt-dlp/wiki/EJS · https://github.com/yt-dlp/yt-dlp/wiki/Po-Token-Guide
 
-`CHECK.bat` chala kar confirm karo.
+`CHECK.bat` chala kar confirm karo (ye JS runtime bhi check karta hai).
 
 ## Use
 
@@ -71,7 +75,7 @@ node src/run.js --input=<dir> --job=<id>
 1. **Timestamp guess nahi** — DIALOGUE moments mein tool khud asli caption se second nikalta hai.
 2. **EXACT_TIME bhi blindly trust nahi** — bounds/metadata/QA pass zaroori.
 3. **Doubtful ko force nahi** — verify na ho to `NEEDS_SOURCE`/fallback. Precision isi "na" se banti hai.
-4. **Har clip ≤6s, source muted, master VO continuous** — clean edit; har faisla report mein.
+4. **Clip length preferred_clip_sec (3-9s), source muted, master VO continuous** — clean edit; har faisla report mein.
 
 ## Test
 

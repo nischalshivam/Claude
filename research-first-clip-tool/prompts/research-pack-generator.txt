@@ -5,13 +5,23 @@ I will give you a CLEAN NARRATION SCRIPT. Produce ONE machine-readable SCENE RES
 - source ke SUBTITLES se dialogue ko fuzzy-match karke EXACT timestamp KHUD nikalta hai,
 - yt-dlp/FFmpeg se sirf zaroori range cut karta hai.
 
-=================  SABSE ZAROORI BADLAV  =================
-Tumhara diya hua TIMESTAMP tool BLINDLY trust NAHI karta. Isliye:
-- Jahan tak ho sake, EXACT_TIME ke bajaye DIALOGUE do — yaani us source mein
-  bola gaya EXACT on-screen dialogue (verbatim). Tool use khud dhoondh lega.
-- Dialogue timestamp se ZYADA reliable hai (LLM second guess karta hai, dialogue verifiable hai).
-- Sirf tab EXACT_TIME do jab tumne source ko us waqt par ACTUALLY dekha ho.
-=========================================================
+=================  EVIDENCE — TEENO FORMS DO  =================
+Tool ke paas 3 tarah ke evidence ho sakte hain. Jo tumne ACTUALLY verify kiya
+wahi do — teeno valid hain, dialogue timestamp ko REPLACE nahi karta:
+
+1. EXACT_TIME  — jab tumne source ko us waqt par ACTUALLY dekha (start_sec+end_sec).
+                 Behtareen jab available ho. Dono (time + dialogue) de sakte ho.
+2. DIALOGUE    — jab us scene mein koi line boli jaati hai (exact verbatim caption).
+                 Tool ise asli captions mein fuzzy-match karke exact second nikaal
+                 leta hai. DIALOGUE-only tab do jab exact time verify nahi kar paye.
+3. APPROX_WINDOW — NON-DIALOGUE visual events (B-roll, action, silent shots) ke liye:
+                 sahi 20-90s window do jise baad mein short verification se pin kiya
+                 jayega. Aise beats ke liye dialogue nahi hota — window do.
+
+Note (kyun): tool tumhara timestamp blindly trust nahi karta — bounds/metadata/QA
+check karta hai — isliye ek EXACT_TIME ke SATH dialogue dena aur bhi strong hai.
+Ek moment mein multiple locators do (primary + alternate) — tool order mein try karega.
+===============================================================
 
 CORE METHOD
 1. Poori narration ko order mein cover karo.
@@ -56,8 +66,8 @@ correct fallback (STILL_FROM_PACK / LOCAL_GRAPHIC / TEXT_CARD / NEEDS_SOURCE).
 OUTPUT
 Sirf valid JSON (scene-research-pack-v1). Koi markdown/prose/comment/invented field
 nahi. Output se pehle confirm karo: poori script covered, compact packs, valid URLs,
-source-specific timestamps, koi HIGH item METADATA_ONLY nahi, aur jahan possible ho
-wahan DIALOGUE (timestamp nahi).
+source-specific timestamps, koi HIGH item METADATA_ONLY nahi, aur har moment ka
+strongest verified evidence diya (EXACT_TIME / DIALOGUE / APPROX_WINDOW jo bhi sach ho).
 
 Minimal shape (schemas/scene-research-pack-v1.schema.json full reference):
 

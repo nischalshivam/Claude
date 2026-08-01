@@ -9,9 +9,10 @@
   },
 
   "clip": {
-    "_note": "User ka pakka usool: koi bhi VIDEO clip 6 second se zyada nahi. Image 10-20s chal jati hai.",
-    "videoMaxSeconds": 6,
-    "videoMinSeconds": 2,
+    "_note": "Har moment ka preferred_clip_sec follow hota hai (normally 3-9s). Koi hard 6s cap nahi. Image/still 10-20s.",
+    "defaultClipSeconds": 6,
+    "videoMinSeconds": 3,
+    "videoMaxSeconds": 9,
     "dialoguePrePadSeconds": 0.8,
     "dialoguePostPadSeconds": 1.0,
     "downloadGuardSeconds": 3,

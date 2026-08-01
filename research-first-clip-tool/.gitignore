@@ -6,12 +6,12 @@ input/*
 !input/.gitkeep
 
 # generated test media (harness regenerate karta hai)
-tests/fixtures/episodes/
-tests/fixtures/akatsuki/
-tests/fixtures/crossshow/
+tests/fixtures/
 
 # stray media
 *.mp4
 !tests/**/*.expected.mp4
 *.rgb
 *.gray
+RAW-TEST-LOG.txt
+*.log

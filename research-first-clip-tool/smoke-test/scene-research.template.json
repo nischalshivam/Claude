@@ -1,0 +1,48 @@
+{
+  "_TEMPLATE_NOTE": "Ye SKELETON hai. <<FILL...>> ko real values se replace karo (Genspark se). URL/timestamp invent mat karna. script_cue_exact = aapki narration ki exact line.",
+  "schema_version": "scene-research-pack-v1",
+  "project_title": "<<FILL project title>>",
+  "packs": [
+    {
+      "pack_id": "P01",
+      "scope": { "kind": "SERIES", "title": "<<FILL show name>>", "year": null },
+      "sources": [
+        { "source_id": "P01_S1", "priority": 1, "url": "<<FILL real youtube url>>", "source_kind": "OFFICIAL_CLIP", "inspection_status": "TRANSCRIPT_CHECKED",
+          "_note": "repeated source: is source_id ko neeche 2 moments use karte hain" },
+        { "source_id": "P01_S2_DEAD", "priority": 2, "url": "<<FILL a wrong/unavailable url to test dead-source>>", "source_kind": "OTHER", "inspection_status": "METADATA_ONLY" },
+        { "source_id": "P01_S3_ALT", "priority": 3, "url": "<<FILL real alternate url for the same scene>>", "source_kind": "OFFICIAL_CLIP", "inspection_status": "VERIFIED_WATCHED" },
+        { "source_id": "P01_S4_NOSUB", "priority": 4, "url": "<<FILL a real url that has NO captions>>", "source_kind": "OTHER", "inspection_status": "VERIFIED_WATCHED" }
+      ],
+      "moments": [
+        { "moment_id": "M01_EXACT", "script_cue_exact": "<<narration line>>", "preferred_clip_sec": 6, "visual_role": "EXACT_SCENE",
+          "must_show": ["<<what must be visible>>"], "must_not_show": ["reaction host", "wrong show"],
+          "locators": [ { "source_id": "P01_S1", "locator_type": "EXACT_TIME", "start_sec": 0, "end_sec": 0, "confidence": "HIGH", "_note": "real verified seconds bharo" } ],
+          "fallback": { "type": "NEEDS_SOURCE" } },
+
+        { "moment_id": "M02_DIALOGUE", "script_cue_exact": "<<narration line>>", "preferred_clip_sec": 5, "visual_role": "EXACT_SCENE",
+          "must_show": ["<<...>>"],
+          "locators": [ { "source_id": "P01_S1", "locator_type": "DIALOGUE", "dialogue_exact": "<<exact spoken line in that video>>", "confidence": "HIGH", "_note": "repeated source (P01_S1)" } ],
+          "fallback": { "type": "NEEDS_SOURCE" } },
+
+        { "moment_id": "M03_DIALOGUE_REPEAT", "script_cue_exact": "<<narration line>>", "preferred_clip_sec": 5,
+          "must_show": ["<<...>>"],
+          "locators": [ { "source_id": "P01_S1", "locator_type": "DIALOGUE", "dialogue_exact": "<<a line that appears MORE THAN ONCE>>", "nearby_context_terms": ["<<word near the CORRECT occurrence>>"], "confidence": "HIGH", "_note": "overlapping/repeated dialogue -> anchor se sahi wala chune" } ],
+          "fallback": { "type": "NEEDS_SOURCE" } },
+
+        { "moment_id": "M04_DEAD_THEN_ALT", "script_cue_exact": "<<narration line>>", "preferred_clip_sec": 6,
+          "must_show": ["<<...>>"],
+          "locators": [
+            { "source_id": "P01_S2_DEAD", "locator_type": "EXACT_TIME", "start_sec": 0, "end_sec": 0, "confidence": "MEDIUM", "_note": "ye dead/unavailable -> tool alternate try karega" },
+            { "source_id": "P01_S3_ALT", "locator_type": "DIALOGUE", "dialogue_exact": "<<same scene ki exact line from alternate>>", "confidence": "HIGH" }
+          ],
+          "fallback": { "type": "NEEDS_SOURCE" } },
+
+        { "moment_id": "M05_MISSING_CAPTION", "script_cue_exact": "<<narration line>>", "preferred_clip_sec": 5,
+          "must_show": ["<<...>>"],
+          "locators": [ { "source_id": "P01_S4_NOSUB", "locator_type": "DIALOGUE", "dialogue_exact": "<<a line>>", "confidence": "MEDIUM", "_note": "captions nahi -> M1 mein controlled NEEDS_SOURCE (M2 ASR)" } ],
+          "fallback": { "type": "NEEDS_SOURCE" } }
+      ]
+    }
+  ],
+  "coverage_check": { "entire_script_covered": true, "uncovered_script_cues": [], "packs_needing_more_research": [] }
+}

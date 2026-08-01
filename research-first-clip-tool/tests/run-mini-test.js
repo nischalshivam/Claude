@@ -31,11 +31,12 @@ function ff(args) { execFileSync(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'er
 function srtTime(s) { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = Math.floor(s % 60), ms = Math.round((s % 1) * 1000); return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')},${String(ms).padStart(3,'0')}`; }
 
 // segDefs: [{colorIndex, dialogue}]  -> mp4 (colored 30s each) + srt (dialogue cue per seg)
-function makeEpisode(name, segDefs) {
-  fs.mkdirSync(EP, { recursive: true });
-  const video = path.join(EP, `${name}.mp4`);
-  const srt = path.join(EP, `${name}.srt`);
-  const tmp = path.join(EP, `_tmp_${name}`);
+function makeEpisode(name, segDefs) { return makeEpisodeAt(EP, name, segDefs); }
+function makeEpisodeAt(dir, name, segDefs) {
+  fs.mkdirSync(dir, { recursive: true });
+  const video = path.join(dir, `${name}.mp4`);
+  const srt = path.join(dir, `${name}.srt`);
+  const tmp = path.join(dir, `_tmp_${name}`);
   fs.mkdirSync(tmp, { recursive: true });
   const parts = [];
   const srtBlocks = [];
@@ -187,6 +188,40 @@ writePack(csDir, {
   ],
 });
 
+// ---------------- EDGE CASES JOB (space+Unicode path, repeated dialogue, missing caption) ----------------
+const repeat = makeEpisodeAt(path.join(EP, 'repeat épisode'), 'repeat_ep', [  // space+unicode in source path
+  { colorIndex: 0, dialogue: 'Meet me at the bridge.' },                                 // red  (repeat #1)
+  { colorIndex: 1, dialogue: 'Nothing happens in this scene.' },                         // green
+  { colorIndex: 2, dialogue: 'Meet me at the bridge tonight after the festival ends.' }, // blue (repeat #2 + anchor)
+  { colorIndex: 3, dialogue: 'The end credits roll.' },                                  // yellow
+]);
+const ecDir = path.join(FX, 'edgé cases');   // space+unicode in INPUT dir
+makeNarration(ecDir, [
+  { start: 0, end: 8, text: 'He whispers the plan, meet me at the bridge.' },
+  { start: 8, end: 16, text: 'Later a silent shot that has no caption at all.' },
+]);
+writePack(ecDir, {
+  schema_version: 'scene-research-pack-v1',
+  project_title: 'Edge Cases Mini Test',
+  packs: [{
+    pack_id: 'EC', scope: { kind: 'SERIES', title: 'Edge Show' },
+    sources: [
+      { source_id: 'REP', local_file: repeat.video, local_subs: repeat.srt, source_kind: 'OFFICIAL_EPISODE', inspection_status: 'VERIFIED_WATCHED', duration_sec: repeat.duration },
+      { source_id: 'NOSUB', local_file: repeat.video, source_kind: 'OFFICIAL_EPISODE', inspection_status: 'VERIFIED_WATCHED', duration_sec: repeat.duration },
+    ],
+    moments: [
+      // repeated dialogue: "meet me at the bridge" seg0 aur seg2 dono mein; anchor 'festival' se seg2 (blue) chune
+      { moment_id: 'EC_M01', script_cue_exact: 'He whispers the plan, meet me at the bridge.', must_show: ['bridge meeting'],
+        locators: [{ source_id: 'REP', locator_type: 'DIALOGUE', dialogue_exact: 'meet me at the bridge', nearby_context_terms: ['festival'], confidence: 'HIGH' }],
+        fallback: { type: 'NEEDS_SOURCE' } },
+      // missing caption: NOSUB source ke paas subs nahi -> controlled NEEDS_SOURCE (M2 ASR)
+      { moment_id: 'EC_M02', script_cue_exact: 'Later a silent shot that has no caption at all.', must_show: ['silent b-roll'],
+        locators: [{ source_id: 'NOSUB', locator_type: 'DIALOGUE', dialogue_exact: 'this line is not present in captions', confidence: 'MEDIUM' }],
+        fallback: { type: 'NEEDS_SOURCE' } },
+    ],
+  }],
+});
+
 // ---------------- RUN PIPELINE ----------------
 function runJob(inputDir, jobId) {
   console.log(`\n== run pipeline: ${jobId} ==`);
@@ -202,6 +237,7 @@ function runJob(inputDir, jobId) {
 
 runJob(akDir, 'akatsuki');
 runJob(csDir, 'crossshow');
+runJob(ecDir, 'edgecases');
 
 // ---------------- ASSERTIONS ----------------
 function loadResolved(jobId) { return JSON.parse(fs.readFileSync(path.join(ROOT, 'jobs', jobId, 'resolved.json'), 'utf8')); }
@@ -219,6 +255,8 @@ const expectations = [
   ['crossshow', 'CS_M02', 'RESOLVED', 'red', 'EXACT_TIME'],
   ['crossshow', 'CS_M03', 'RESOLVED', 'blue', 'DIALOGUE'],
   ['crossshow', 'CS_M04', 'NEEDS_SOURCE', null, null],
+  ['edgecases', 'EC_M01', 'RESOLVED', 'blue', 'DIALOGUE'],   // repeated dialogue, anchor 'festival' -> seg2 (blue)
+  ['edgecases', 'EC_M02', 'NEEDS_SOURCE', null, null],       // missing caption -> NEEDS_SOURCE
 ];
 
 console.log('\n' + '='.repeat(78));
@@ -248,7 +286,7 @@ for (const [job, mid, wantStatus, wantColor, wantLoc] of expectations) {
 
 // deliverables check
 console.log('\n  -- deliverables --');
-for (const job of ['akatsuki', 'crossshow']) {
+for (const job of ['akatsuki', 'crossshow', 'edgecases']) {
   for (const f of ['final.mp4', 'timeline.json', 'quality-report.html', 'NEEDS_SOURCE.csv']) {
     const p = path.join(ROOT, 'jobs', job, f);
     const exists = fs.existsSync(p);
@@ -269,7 +307,7 @@ for (const job of ['akatsuki', 'crossshow']) {
 }
 
 // NEEDS_SOURCE.csv content check
-for (const [job, mid] of [['akatsuki', 'AK_M06'], ['crossshow', 'CS_M04']]) {
+for (const [job, mid] of [['akatsuki', 'AK_M06'], ['crossshow', 'CS_M04'], ['edgecases', 'EC_M02']]) {
   const csv = fs.readFileSync(path.join(ROOT, 'jobs', job, 'NEEDS_SOURCE.csv'), 'utf8');
   const has = csv.includes(mid);
   console.log(`  [${has ? 'OK' : 'FAIL'}] ${job}/NEEDS_SOURCE.csv contains ${mid}`);

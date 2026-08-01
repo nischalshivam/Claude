@@ -71,7 +71,7 @@ async function main() {
   if (!chk.ok) { U.bad('setup incomplete — upar dekho. (local_file-only test bina yt-dlp bhi chal sakta hai)'); }
 
   const spec = loadSpec();
-  if (flag('redo') && fs.existsSync(U.jobDir(spec.id))) fs.rmSync(U.jobDir(spec.id), { recursive: true, force: true }); // stale clips/segments/cache clear
+  if (flag('redo')) cleanJob(spec.id, spec.inputDir);   // sirf GENERATED files; inputs preserve
   U.ensureDir(U.jobDir(spec.id));
   const st = flag('redo') ? { done: {}, meta: {} } : ST.load(spec.id);
   U.log(`\n  job: ${spec.id}  ->  ${path.relative(U.ROOT, U.jobDir(spec.id))}/`);
@@ -122,8 +122,19 @@ async function main() {
 }
 
 function saveResolved(id, resolved) {
-  // _rawFile jaise internal fields chhod kar likho (clean)
-  fs.writeFileSync(U.p(id, 'resolved.json'), JSON.stringify(resolved, null, 2));
+  // _rawFile/_id jaise internal (underscore) fields hata kar likho (clean)
+  const clean = resolved.map(e => { const o = {}; for (const k in e) if (!k.startsWith('_')) o[k] = e[k]; return o; });
+  fs.writeFileSync(U.p(id, 'resolved.json'), JSON.stringify(clean, null, 2));
+}
+
+// --redo: sirf GENERATED artifacts delete karo. script/voiceover/SRT/pack (jo
+// input/ ya --input dir mein hain) ko KABHI haath nahi lagate.
+function cleanJob(id, inputDir) {
+  const dir = U.jobDir(id);
+  if (path.resolve(dir) === path.resolve(inputDir || '')) { U.warn('--redo skip: job dir == input dir (inputs safe rakhe)'); return; }
+  const items = ['clips', 'segments', 'cache', 'thumbs', 'resolved.json', 'aligned.json', 'timeline.json',
+    'state.json', 'final.mp4', 'video_master.mp4', 'quality-report.html', 'NEEDS_SOURCE.csv'];
+  for (const it of items) { const p = path.join(dir, it); if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); }
 }
 
 main().catch(e => { U.bad('fatal: ' + e.message); process.exit(1); });
