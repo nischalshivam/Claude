@@ -101,26 +101,32 @@ async function main() {
   // --- preflight: URL project ke liye yt-dlp/runtime zaroori (misleading DONE se bachne ko) ---
   const hasUrlSource = spec.pack.packs.some(pk => (pk.sources || []).some(s => s.url && !s.local_file));
   if (hasUrlSource) {
-    const ytOk = chk.results.find(r => r.bin.includes('yt-dlp') && r.ok);
-    const jsOk = chk.results.find(r => r.bin.startsWith('js-runtime') && r.ok);
+    const ytOk = chk.results.find(r => r.key === 'ytdlp' && r.ok);
+    const jsOk = chk.results.find(r => r.key === 'jsruntime' && r.ok);
     if (!ytOk) { U.bad('URL sources hain par yt-dlp nahi mila — preflight STOP (misleading DONE se bachne ko).'); flushLog(spec.id); process.exit(2); }
-    if (!jsOk) U.warn('URL sources hain par koi JS runtime nahi (Deno/Node22+) — YouTube 403 de sakta hai; tool alternate/NEEDS_SOURCE try karega.');
+    if (!jsOk) { U.bad('URL sources hain par koi usable JS runtime nahi (Deno 2.3+ ya Node 22+) — preflight STOP (yt-dlp YouTube EJS chahiye).'); flushLog(spec.id); process.exit(2); }
   }
 
   // --- redo: containment-safe cleanup ---
   if (flag('redo')) cleanJob(spec.id, spec.inputDir);
   U.ensureDir(U.jobDir(spec.id));
-  U.assertInside(path.join(U.ROOT, 'jobs'), U.jobDir(spec.id), 'job dir');
+  U.assertInside(U.jobsRoot(), U.jobDir(spec.id), 'job dir');
 
   let st = flag('redo') ? { done: {}, meta: {} } : ST.load(spec.id);
 
-  // --- fingerprint: input/config/tool change -> affected+downstream invalidate ---
+  // --- fingerprint: input/config/tool change -> generated ARTIFACTS + state dono
+  //     invalidate (sirf state.done nahi — warna stale clip/final reuse ho jata tha)
+  //     aur full rerun force (invalidated prerequisite ke upar --from/--only na chale)
   const fp = fingerprint(spec, cfg, chk);
+  let invalidated = false;
   if (!flag('redo') && st.fingerprint) {
     const changed = Object.keys(fp).filter(k => st.fingerprint[k] !== fp[k]);
     if (changed.length) {
-      U.warn(`input change detected (${changed.join(', ')}) — saare stages invalidate (stale output reuse nahi hoga)`);
-      st.done = {};   // safe: full invalidation (correctness > reuse)
+      U.warn(`input change detected (${changed.join(', ')}) — generated artifacts wipe + full rerun (stale media reuse nahi)`);
+      cleanJob(spec.id, spec.inputDir);   // clips/segments/cache/final/json sab wipe (inputs safe)
+      U.ensureDir(U.jobDir(spec.id));
+      st = { done: {}, meta: {} };
+      invalidated = true;
     }
   }
   st.fingerprint = fp;
@@ -130,7 +136,9 @@ async function main() {
 
   const from = Number(arg('from', 0));
   let toRun = STAGES.slice();
-  if (only) toRun = only.split(',').map(s => s.trim()).filter(k => STAGES.includes(k));
+  if (invalidated) {
+    if (only || from) U.warn('input change ke baad --from/--only override — full rerun (stale prerequisite se bachne ko)');
+  } else if (only) toRun = only.split(',').map(s => s.trim()).filter(k => STAGES.includes(k));
   else if (from) toRun = STAGES.filter(k => STAGE_N[k] >= from);
 
   const pending = k => flag('redo') || !ST.isDone(st, k);
@@ -185,7 +193,7 @@ function saveResolved(id, resolved) {
 function cleanJob(id, inputDir) {
   U.assertSafeId(id, 'job id');
   const dir = U.jobDir(id);
-  U.assertInside(path.join(U.ROOT, 'jobs'), dir, 'job dir');
+  U.assertInside(U.jobsRoot(), dir, 'job dir');
   if (path.resolve(dir) === path.resolve(inputDir || '')) { U.warn('--redo skip: job dir == input dir (inputs safe)'); return; }
   const items = ['clips', 'segments', 'cache', 'thumbs', 'resolved.json', 'aligned.json', 'timeline.json',
     'state.json', 'final.mp4', 'video_master.mp4', 'quality-report.html', 'NEEDS_SOURCE.csv', 'run.log'];

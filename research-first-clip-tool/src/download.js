@@ -22,12 +22,6 @@ function rangeKey(sourceId, segStart, segEnd, minH) {
   return `${sourceId}__${Math.round(segStart * 1000)}_${Math.round(segEnd * 1000)}__h${minH}.mp4`;
 }
 
-function ytRuntimeArgs(cfg) {
-  // chosen JS runtime yt-dlp ko explicitly pass (EJS). config.tools.jsRuntime = 'deno'|'node[:path]'|...
-  const jr = cfg.tools && cfg.tools.jsRuntime;
-  return jr ? ['--extractor-args', `youtube:jsi=${jr}`] : [];
-}
-
 // ek candidate materialize karo (download/local). {ok, raw_file, raw_offset, raw_kind, via, error}
 function downloadCandidate(id, cfg, cand) {
   if (cand.local_file) {
@@ -58,9 +52,11 @@ function downloadCandidate(id, cfg, cand) {
     } catch {}
   }
 
+  // stale/mismatch cache file hata do warna yt-dlp "already downloaded" bol ke purane bytes rakh sakta hai
+  try { if (fs.existsSync(rawFile)) fs.rmSync(rawFile, { force: true }); if (fs.existsSync(manFile)) fs.rmSync(manFile, { force: true }); } catch {}
   const fmt = `bv*[height>=${minH}][ext=mp4]/bv*[ext=mp4]/bv*/b[height>=${minH}]/b`;
   const args = ['-f', fmt, '--download-sections', `*${segStart.toFixed(3)}-${segEnd.toFixed(3)}`,
-    '--force-keyframes-at-cuts', '--merge-output-format', 'mp4', ...ytRuntimeArgs(cfg),
+    '--force-keyframes-at-cuts', '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
     '-o', rawFile, '--no-playlist', '--no-warnings', cand.url];
   const r = U.ytdlp(args, { timeout: 300000 });
   if (!r.ok || !fs.existsSync(rawFile)) {

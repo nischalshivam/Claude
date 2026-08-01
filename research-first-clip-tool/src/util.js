@@ -96,8 +96,26 @@ function probe(file) {
   return { ok: true, width, height, duration, codec: cm ? cm[1] : '', via: 'ffmpeg' };
 }
 
+// ---------- yt-dlp JS runtime (EJS) — ek shared builder (meta+subs+download) ----------
+// Official option: --js-runtimes deno[:path] | node | bun. Deno 2.3+ preferred.
+let _jsSpec;
+function jsRuntimeSpec(cfg) {
+  if (_jsSpec !== undefined) return _jsSpec;
+  cfg = cfg || config();
+  const configured = cfg.tools && cfg.tools.jsRuntime;
+  if (configured && String(configured).trim()) { _jsSpec = String(configured).trim(); return _jsSpec; }
+  const d = run('deno', ['--version'], { timeout: 15000 });   // Deno 2.3+ ?
+  if (d.ok) { const m = String(d.stdout).match(/deno\s+(\d+)\.(\d+)\.(\d+)/i); if (m && (+m[1] > 2 || (+m[1] === 2 && +m[2] >= 3))) { _jsSpec = 'deno'; return _jsSpec; } }
+  const nodeMajor = parseInt(String(process.versions.node).split('.')[0], 10) || 0;   // Node 22+ ?
+  if (nodeMajor >= 22) { _jsSpec = 'node'; return _jsSpec; }
+  _jsSpec = null; return _jsSpec;
+}
+function ytRuntimeArgs(cfg) { const s = jsRuntimeSpec(cfg); return s ? ['--js-runtimes', s] : []; }
+
 // ---------- paths + safety ----------
-const jobDir = id => path.join(ROOT, 'jobs', id);
+// jobs root override (test isolation): RFC_JOBS_DIR set ho to wahi, warna ROOT/jobs
+function jobsRoot() { const e = process.env.RFC_JOBS_DIR; return (e && e.trim()) ? path.resolve(e.trim()) : path.join(ROOT, 'jobs'); }
+const jobDir = id => path.join(jobsRoot(), id);
 const outDir = () => path.join(ROOT, 'output');
 const p = (id, ...rest) => path.join(jobDir(id), ...rest);
 function ensureDir(d) { fs.mkdirSync(d, { recursive: true }); return d; }
@@ -125,7 +143,8 @@ function hashStr(s) { return sha256(Buffer.from(String(s))); }
 module.exports = {
   ROOT, log, ok, warn, bad, step,
   config, env, tool, run, ffmpeg, ffmpegRaw, ytdlp, probe,
-  jobDir, outDir, p, ensureDir, slug,
+  jobDir, jobsRoot, outDir, p, ensureDir, slug,
   isSafeId, assertSafeId, isInside, assertInside,
   sha256, hashFile, hashStr,
+  jsRuntimeSpec, ytRuntimeArgs,
 };

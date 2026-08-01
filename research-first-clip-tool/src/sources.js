@@ -39,7 +39,7 @@ function getMeta(id, source, cfg) {
         : { ok: false, available: false, error: `local_file probe fail: ${pr.error}`, kind: 'local', abs };
     }
   } else if (source.url) {
-    const r = U.ytdlp(['--dump-single-json', '--no-warnings', '--no-playlist', source.url], { timeout: 90000 });
+    const r = U.ytdlp(['--dump-single-json', '--no-warnings', '--no-playlist', ...U.ytRuntimeArgs(cfg), source.url], { timeout: 90000 });
     if (!r.ok) {
       meta = { ok: false, available: false, kind: 'url', error: (r.stderr || 'yt-dlp fail').slice(0, 200) };
     } else {
@@ -75,7 +75,8 @@ function getSubs(id, source, cfg) {
     const stem = path.join(dir, 'sub');
     const args = ['--skip-download', '--write-subs', '--write-auto-subs',
       '--sub-langs', 'en.*,en', '--sub-format', 'srt/vtt/best',
-      '--convert-subs', 'srt', '-o', stem + '.%(ext)s', '--no-warnings', '--no-playlist', source.url];
+      '--convert-subs', 'srt', '-o', stem + '.%(ext)s', '--no-warnings', '--no-playlist',
+      ...U.ytRuntimeArgs(cfg), source.url];
     const r = U.ytdlp(args, { timeout: 120000 });
     // koi bhi .srt/.vtt file jo bani ho
     if (fs.existsSync(dir)) {

@@ -5,10 +5,12 @@
 // ============================================================
 const U = require('./util.js');
 
-function checkOne(bin, versionArgs, { required = true, optionalNote = '' } = {}) {
+// har result mein stable KEY (bin path naam pe nirbhar nahi — custom RFC_YTDLP/
+// config.tools path ke sath bhi preflight reliably kaam kare)
+function checkOne(bin, versionArgs, { required = true, optionalNote = '', key = '' } = {}) {
   const r = U.run(bin, versionArgs, { timeout: 20000 });
   const line = (r.stdout || r.stderr || '').split('\n')[0].trim();
-  return { bin, ok: r.ok, version: r.ok ? line.slice(0, 80) : '', required, optionalNote, error: r.ok ? '' : (r.stderr || 'not found').slice(0, 120) };
+  return { key, bin, ok: r.ok, version: r.ok ? line.slice(0, 80) : '', required, optionalNote, error: r.ok ? '' : (r.stderr || 'not found').slice(0, 120) };
 }
 
 module.exports = function check() {
@@ -16,22 +18,22 @@ module.exports = function check() {
   const results = [];
 
   // node
-  results.push({ bin: 'node', ok: true, version: process.version, required: true });
+  results.push({ key: 'node', bin: 'node', ok: true, version: process.version, required: true });
 
   // ffmpeg (zaroori)
-  results.push(checkOne(U.tool('ffmpeg'), ['-version'], { required: true }));
+  results.push(checkOne(U.tool('ffmpeg'), ['-version'], { required: true, key: 'ffmpeg' }));
 
   // ffprobe (optional — ffmpeg -i se metadata nikal lete hain)
-  const fp = checkOne(U.tool('ffprobe'), ['-version'], { required: false, optionalNote: 'optional (ffmpeg fallback hai)' });
+  const fp = checkOne(U.tool('ffprobe'), ['-version'], { required: false, optionalNote: 'optional (ffmpeg fallback hai)', key: 'ffprobe' });
   results.push(fp);
 
   // drawtext filter (text cards ke liye) — kuch static builds mein missing
   const filters = U.run(U.tool('ffmpeg'), ['-hide_banner', '-filters']);
   const drawtext = !!(filters.ok && /\bdrawtext\b/.test(filters.stdout || ''));
-  results.push({ bin: 'ffmpeg:drawtext', ok: drawtext, version: drawtext ? 'available' : '', required: false, optionalNote: drawtext ? 'text cards on' : 'missing -> text cards solid-color (full ffmpeg build lo)' });
+  results.push({ key: 'drawtext', bin: 'ffmpeg:drawtext', ok: drawtext, version: drawtext ? 'available' : '', required: false, optionalNote: drawtext ? 'text cards on' : 'missing -> text cards solid-color (full ffmpeg build lo)' });
 
   // yt-dlp (zaroori download ke liye; local_file sources ke liye optional)
-  const ytdlp = checkOne(U.tool('yt-dlp'), ['--version'], { required: true });
+  const ytdlp = checkOne(U.tool('yt-dlp'), ['--version'], { required: true, key: 'ytdlp' });
   results.push(ytdlp);
 
   // yt-dlp ko ab YouTube ke liye ek JS RUNTIME chahiye (nsig/PO-token challenge —
@@ -39,18 +41,22 @@ module.exports = function check() {
   // Ref: https://github.com/yt-dlp/yt-dlp/wiki/EJS  &  .../Po-Token-Guide
   let jsFound = null;
   const deno = U.run('deno', ['--version'], { timeout: 15000 });
-  if (deno.ok) jsFound = { name: 'deno', ver: (deno.stdout || '').split('\n')[0].trim() };
+  if (deno.ok) {
+    const m = String(deno.stdout).match(/deno\s+(\d+)\.(\d+)\.(\d+)/i);
+    if (m && (+m[1] > 2 || (+m[1] === 2 && +m[2] >= 3))) jsFound = { name: 'deno', ver: (deno.stdout || '').split('\n')[0].trim() };
+    else results.push({ key: 'jsruntime', bin: 'js-runtime', ok: false, required: false, optionalNote: `deno ${(m ? m[0] : '?')} EJS ke liye purana (2.3+ chahiye)`, error: 'deno <2.3' });
+  }
   if (!jsFound) { const bun = U.run('bun', ['--version'], { timeout: 15000 }); if (bun.ok) jsFound = { name: 'bun', ver: (bun.stdout || '').trim() }; }
   if (!jsFound) {
     const node = U.run('node', ['--version'], { timeout: 15000 });
     if (node.ok) {
       const major = parseInt(String(node.stdout).replace(/^v/, '').split('.')[0], 10) || 0;
       if (major >= 22) jsFound = { name: 'node', ver: node.stdout.trim() };
-      else results.push({ bin: 'js-runtime', ok: false, required: false, optionalNote: `node ${node.stdout.trim()} EJS ke liye purana (Node 22+ ya Deno chahiye)`, error: 'node <22' });
+      else results.push({ key: 'jsruntime', bin: 'js-runtime', ok: false, required: false, optionalNote: `node ${node.stdout.trim()} EJS ke liye purana (Node 22+ ya Deno chahiye)`, error: 'node <22' });
     }
   }
-  if (jsFound) results.push({ bin: `js-runtime(${jsFound.name})`, ok: true, version: jsFound.ver.slice(0, 40), required: false, optionalNote: 'yt-dlp YouTube EJS' });
-  else if (!results.some(r => r.bin === 'js-runtime')) results.push({ bin: 'js-runtime', ok: false, required: false, optionalNote: 'Deno (recommended) ya Node 22+ install karo', error: 'koi EJS-capable JS runtime nahi' });
+  if (jsFound) results.push({ key: 'jsruntime', bin: `js-runtime(${jsFound.name})`, ok: true, version: jsFound.ver.slice(0, 40), required: false, optionalNote: 'yt-dlp YouTube EJS' });
+  else if (!results.some(r => r.key === 'jsruntime')) results.push({ key: 'jsruntime', bin: 'js-runtime', ok: false, required: false, optionalNote: 'Deno (recommended) ya Node 22+ install karo', error: 'koi EJS-capable JS runtime nahi' });
 
   // report
   let hardFail = false;

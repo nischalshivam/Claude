@@ -80,10 +80,13 @@ node src/run.js --input=<dir> --job=<id>
 ## Test
 
 ```
-npm run test:all      # content (13) + regression (18)
+npm run test:all      # content (13) + regression (21)
 npm run test:mini     # 13 content cases
-npm run test:reg      # 18 M1.1 correctness/blocker cases
+npm run test:reg      # 21 correctness/blocker cases
 ```
+
+> Tests **isolated jobs root** (`tests/tmp/`) mein chalte hain — production `jobs/`
+> ko kabhi touch nahi karte (sentinel test se verify).
 
 Synthetic "episode" videos (color-coded time regions) + subtitle tracks se poori
 pipeline offline chalti hai (YouTube ke bina).
@@ -96,6 +99,15 @@ pipeline offline chalti hai (YouTube ke bina).
   repeated-dialogue runner-up margin; exact range-cache collision; black/low-res QA;
   QA/download candidate fallback; segment-failure no-drift; final duration equality;
   per-beat sampling; URL-project preflight stop.
+
+## Milestone 1.2 changes (re-audit fixes)
+
+- **No stale media reuse:** input/timestamp/source change → generated clips/segments/
+  cache/final wipe + full rerun (sirf state nahi). Per-clip dependency manifest —
+  clip reuse tabhi jab source/range/canvas match kare. (red→blue test ab clip+final verify karta hai)
+- **yt-dlp official `--js-runtimes`** via ek shared arg builder (metadata + subtitle +
+  range-download teeno). Deno 2.3+ detect (warna Node 22+); URL preflight fail if none.
+- **Tests isolated** — `tests/tmp/` job root; production `jobs/` kabhi delete nahi (sentinel test).
 
 ## Milestone 1.1 changes (audit fixes)
 

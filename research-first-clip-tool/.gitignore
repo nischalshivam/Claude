@@ -5,8 +5,9 @@ output/
 input/*
 !input/.gitkeep
 
-# generated test media (harness regenerate karta hai)
+# generated test media + isolated test job roots (harness regenerate karta hai)
 tests/fixtures/
+tests/tmp/
 
 # stray media
 *.mp4

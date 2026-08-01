@@ -8,6 +8,9 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+// ISOLATED jobs root — production ROOT/jobs ko kabhi haath nahi (M1.2-C).
+const JOBS = path.join(ROOT, 'tests', 'tmp', 'reg_' + process.pid);
+process.env.RFC_JOBS_DIR = JOBS;   // spawned run.js isko inherit karega
 const FX = path.join(ROOT, 'tests', 'fixtures', 'reg');
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
 const SEG = 20;
@@ -46,14 +49,14 @@ function runRFC(args, env = {}) { return spawnSync('node', ['src/run.js', ...arg
 function dur(f) { try { execFileSync(FFMPEG, ['-hide_banner', '-i', f], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { const m = String(e.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/); return m ? +m[1] * 3600 + +m[2] * 60 + parseFloat(m[3]) : 0; } return 0; }
 function colorAt(f, t) { const tmp = f + `.${t}.rgb`; ff(['-ss', String(t), '-i', f, '-frames:v', '1', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', tmp]); const b = fs.readFileSync(tmp); fs.rmSync(tmp, { force: true }); return [b[0], b[1], b[2]]; }
 function nearest(rgb) { let best; for (const k in PRGB) { const d = Math.hypot(rgb[0] - PRGB[k][0], rgb[1] - PRGB[k][1], rgb[2] - PRGB[k][2]); if (!best || d < best.d) best = { k, d: Math.round(d) }; } return best; }
-const jf = (job, f) => JSON.parse(fs.readFileSync(path.join(ROOT, 'jobs', job, f), 'utf8'));
+const jf = (job, f) => JSON.parse(fs.readFileSync(path.join(JOBS, job, f), 'utf8'));
 
 const results = [];
 function check(name, cond, detail = '') { results.push({ name, ok: !!cond, detail }); console.log(`  [${cond ? 'PASS' : 'FAIL'}] ${name}${detail ? '  — ' + detail : ''}`); }
 
 console.log('== M1.1 REGRESSION SUITE ==');
 fs.rmSync(FX, { recursive: true, force: true });
-fs.rmSync(path.join(ROOT, 'jobs'), { recursive: true, force: true });
+fs.rmSync(JOBS, { recursive: true, force: true }); fs.mkdirSync(JOBS, { recursive: true });
 
 // shared good episode
 const good = makeEp(path.join(FX, 'ep'), 'good', [
@@ -69,7 +72,7 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'Base', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt }], moments: [{ moment_id: 'M1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] }] });
   const r = runRFC([`--input=${d}`, '--job=../evil', '--redo']);
   const rejected = r.status !== 0 && /unsafe job id/i.test((r.stdout || '') + (r.stderr || ''));
-  const noEvil = !fs.existsSync(path.join(ROOT, 'evil')) && !fs.existsSync(path.join(ROOT, 'jobs', '..', 'evil'));
+  const noEvil = !fs.existsSync(path.join(ROOT, 'evil')) && !fs.existsSync(path.join(JOBS, '..', 'evil'));
   check('T1 path-traversal --job rejected & nothing created outside jobs/', rejected && noEvil, `exit=${r.status}`);
   // malicious moment_id in pack -> validation rejects
   writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'Base', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt }], moments: [{ moment_id: '../hack', script_cue_exact: 'x', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7 }] }] }] });
@@ -87,13 +90,13 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   writePack(d, pack);
   // one-shot reference
   runRFC([`--input=${d}`, '--job=reg_oneshot', '--redo']);
-  const oneClips = fs.readdirSync(path.join(ROOT, 'jobs', 'reg_oneshot', 'clips')).filter(f => f.endsWith('.mp4')).length;
+  const oneClips = fs.readdirSync(path.join(JOBS, 'reg_oneshot', 'clips')).filter(f => f.endsWith('.mp4')).length;
   // resume: process A (through download), process B fresh (cut onward)
   const a = runRFC([`--input=${d}`, '--job=reg_resume', '--redo', '--only=align,locate,download']);
   const resolvedAfterDl = jf('reg_resume', 'resolved.json');
   const rawPersisted = resolvedAfterDl.filter(e => e.raw_file).length;
   const b = runRFC([`--input=${d}`, '--job=reg_resume', '--from=5']);   // fresh node process
-  const resumeClips = fs.existsSync(path.join(ROOT, 'jobs', 'reg_resume', 'clips')) ? fs.readdirSync(path.join(ROOT, 'jobs', 'reg_resume', 'clips')).filter(f => f.endsWith('.mp4')).length : 0;
+  const resumeClips = fs.existsSync(path.join(JOBS, 'reg_resume', 'clips')) ? fs.readdirSync(path.join(JOBS, 'reg_resume', 'clips')).filter(f => f.endsWith('.mp4')).length : 0;
   const tl = jf('reg_resume', 'timeline.json');
   const vids = tl.slots.filter(s => s.kind === 'video').length;
   check('T2 raw_file persisted after download', rawPersisted === 2, `${rawPersisted}/2`);
@@ -101,18 +104,34 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   check('T2 resumed timeline has video slots', vids === 2, `video=${vids}`);
 })();
 
-// ---------- T3: changed input invalidation ----------
+// ---------- T3: red->blue timestamp change — resolved.json + CLIP + FINAL all change ----------
 (() => {
-  const d = path.join(FX, 'invaild'); makeNarr(d, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
+  const d = path.join(FX, 'inv'); makeNarr(d, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
   const mk = (start, end) => ({ schema_version: 'scene-research-pack-v1', project_title: 'Inv', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt }], moments: [{ moment_id: 'IV', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: start, end_sec: end, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] }] });
-  writePack(d, mk(2, 7));
+  const clipCol = () => nearest(colorAt(path.join(JOBS, 'reg_inv', jf('reg_inv', 'resolved.json').find(e => e.moment_id === 'IV').clip), 1)).k;
+  const finalCol = () => nearest(colorAt(path.join(JOBS, 'reg_inv', 'final.mp4'), 3)).k;
+  writePack(d, mk(2, 7));                                       // seg0 red
   runRFC([`--input=${d}`, '--job=reg_inv', '--redo']);
-  const cut1 = jf('reg_inv', 'resolved.json').find(e => e.moment_id === 'IV').cut.start;
-  writePack(d, mk(42, 47));   // change timestamp (seg2 region)
-  const r = runRFC([`--input=${d}`, '--job=reg_inv']);   // NO --redo
-  const invalidated = /input change detected/i.test(r.stdout || '');
-  const cut2 = jf('reg_inv', 'resolved.json').find(e => e.moment_id === 'IV').cut.start;
-  check('T3 changed pack invalidates state (no stale reuse)', invalidated && Math.abs(cut2 - 42) < 1 && cut1 !== cut2, `cut ${cut1}->${cut2}`);
+  const cut1 = jf('reg_inv', 'resolved.json').find(e => e.moment_id === 'IV').cut.start, clip1 = clipCol(), final1 = finalCol();
+  writePack(d, mk(42, 47));                                     // seg2 blue
+  const r = runRFC([`--input=${d}`, '--job=reg_inv']);          // NO --redo
+  const invalidated = /input change/i.test(r.stdout || '');
+  const cut2 = jf('reg_inv', 'resolved.json').find(e => e.moment_id === 'IV').cut.start, clip2 = clipCol(), final2 = finalCol();
+  check('T3 timestamp change red->blue reflects in resolved.json + CLIP + FINAL (no stale media)',
+    invalidated && cut1 !== cut2 && clip1 === 'red' && clip2 === 'blue' && final1 === 'red' && final2 === 'blue',
+    `resolved ${cut1}->${cut2} | clip ${clip1}->${clip2} | final ${final1}->${final2}`);
+})();
+
+// ---------- T3b: source (local_file) change, same source_id+range -> clip bytes/content change ----------
+(() => {
+  const redEp = makeEp(path.join(FX, 'ep'), 'redonly', [{ color: 'red', dialogue: 'the alarm rings across the base' }]);
+  const blueEp = makeEp(path.join(FX, 'ep'), 'blueonly', [{ color: 'blue', dialogue: 'the alarm rings across the base' }]);
+  const d = path.join(FX, 'srcchg'); makeNarr(d, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
+  const mk = (ep) => ({ schema_version: 'scene-research-pack-v1', project_title: 'Src', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: ep.video, local_subs: ep.srt }], moments: [{ moment_id: 'SC', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] }] });
+  const col = () => nearest(colorAt(path.join(JOBS, 'reg_src', jf('reg_src', 'resolved.json')[0].clip), 1)).k;
+  writePack(d, mk(redEp)); runRFC([`--input=${d}`, '--job=reg_src', '--redo']); const c1 = col();
+  writePack(d, mk(blueEp)); runRFC([`--input=${d}`, '--job=reg_src']); const c2 = col();  // same id/range, diff file
+  check('T3b source local_file change (same id/range) -> clip content changes red->blue', c1 === 'red' && c2 === 'blue', `${c1}->${c2}`);
 })();
 
 // ---------- T4/T5: repeated dialogue margin + REVIEW excluded from final ----------
@@ -130,11 +149,11 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   runRFC([`--input=${d}`, '--job=reg_rep', '--redo']);
   const res = jf('reg_rep', 'resolved.json');
   const RA = res.find(e => e.moment_id === 'RA'), RB = res.find(e => e.moment_id === 'RB');
-  check('T5 repeated dialogue WITH anchor -> ACCEPT correct occurrence (blue)', RA.status === 'RESOLVED' && nearest(colorAt(path.join(ROOT, 'jobs', 'reg_rep', RA.clip), 1)).k === 'blue', `RA=${RA.status}`);
+  check('T5 repeated dialogue WITH anchor -> ACCEPT correct occurrence (blue)', RA.status === 'RESOLVED' && nearest(colorAt(path.join(JOBS, 'reg_rep', RA.clip), 1)).k === 'blue', `RA=${RA.status}`);
   check('T5 repeated dialogue WITHOUT context -> NEEDS_REVIEW (ambiguous)', RB.status === 'NEEDS_REVIEW', `RB=${RB.status}`);
   // T4: final at RB's beat must be a REVIEW card, not the clip
   const tl = jf('reg_rep', 'timeline.json'); const rbSlot = tl.slots.find(s => s.moment_id === 'RB');
-  const finalCol = nearest(colorAt(path.join(ROOT, 'jobs', 'reg_rep', 'final.mp4'), (rbSlot.start + rbSlot.end) / 2));
+  const finalCol = nearest(colorAt(path.join(JOBS, 'reg_rep', 'final.mp4'), (rbSlot.start + rbSlot.end) / 2));
   check('T4 NEEDS_REVIEW excluded from final (review card, not clip)', rbSlot.kind === 'needs_review' && finalCol.k === 'review', `slot=${rbSlot.kind} col=${finalCol.k}`);
 })();
 
@@ -183,34 +202,38 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   runRFC([`--input=${d}`, '--job=reg_qa', '--redo']);
   const res = jf('reg_qa', 'resolved.json');
   const q1 = res.find(e => e.moment_id === 'QA1'), q2 = res.find(e => e.moment_id === 'QA2'), q3 = res.find(e => e.moment_id === 'QA3');
-  const q1col = q1.clip ? nearest(colorAt(path.join(ROOT, 'jobs', 'reg_qa', q1.clip), 1)).k : '-';
+  const q1col = q1.clip ? nearest(colorAt(path.join(JOBS, 'reg_qa', q1.clip), 1)).k : '-';
   check('T7/T12 QA rejects BLACK, recovers via alternate (green)', q1.status === 'RESOLVED' && q1.source_id === 'GOOD' && q1col === 'green', `${q1.status}/${q1.source_id}/${q1col}`);
   check('T12 download-time DEAD source -> alternate (RESOLVED via GOOD)', q2.status === 'RESOLVED' && q2.source_id === 'GOOD', `${q2.status}/${q2.source_id}`);
   check('T7 low-res source rejected -> NEEDS_SOURCE', q3.status === 'NEEDS_SOURCE', `${q3.status}`);
 })();
 
-// ---------- T8: segment failure -> no timeline drift ----------
+// ---------- T8: segment failure -> fallback card, no drift (render ACTUALLY reruns) ----------
 (() => {
-  // reuse reg_oneshot job: corrupt one clip, re-render, assert duration preserved
   const job = 'reg_oneshot';
   const tl = jf(job, 'timeline.json');
   const vslot = tl.slots.find(s => s.kind === 'video');
-  const clipAbs = path.join(ROOT, 'jobs', job, vslot.video);
-  fs.writeFileSync(clipAbs, 'CORRUPT');   // break one clip
-  const r = runRFC([`--input=${path.join(FX, 'resume')}`, `--job=${job}`, '--from=8']);  // render+report only
-  const fdur = dur(path.join(ROOT, 'jobs', job, 'final.mp4'));
-  check('T8 corrupt segment -> fallback card, no drift (final dur == timeline total)', Math.abs(fdur - tl.total) < 0.4, `final=${fdur.toFixed(2)} total=${tl.total}`);
+  fs.writeFileSync(path.join(JOBS, job, vslot.video), 'CORRUPT');   // break one clip
+  // render/report ko force rerun karao (warna checkpoint skip kar deta — GPT ne ye pakda tha)
+  const stf = path.join(JOBS, job, 'state.json'); const st = JSON.parse(fs.readFileSync(stf, 'utf8'));
+  delete st.done.render; delete st.done.report; fs.writeFileSync(stf, JSON.stringify(st));
+  for (const f of ['final.mp4', 'video_master.mp4']) { const p = path.join(JOBS, job, f); if (fs.existsSync(p)) fs.rmSync(p); }
+  fs.rmSync(path.join(JOBS, job, 'segments'), { recursive: true, force: true });
+  const r = runRFC([`--input=${path.join(FX, 'resume')}`, `--job=${job}`, '--from=8']);
+  const rendered = /render fail -> fallback card|render: final\.mp4/.test(r.stdout || '');
+  const fdur = dur(path.join(JOBS, job, 'final.mp4'));
+  check('T8 corrupt segment -> fallback card, render reruns, no drift (final dur == total)', rendered && Math.abs(fdur - tl.total) < 0.5, `final=${fdur.toFixed(2)} total=${tl.total}`);
 })();
 
 // ---------- T9 + T10: final duration equality + per-beat sampling ----------
 (() => {
   const job = 'reg_qa';
   const tl = jf(job, 'timeline.json');
-  const fdur = dur(path.join(ROOT, 'jobs', job, 'final.mp4'));
+  const fdur = dur(path.join(JOBS, job, 'final.mp4'));
   check('T9 final.mp4 duration == timeline total (±0.4s)', Math.abs(fdur - tl.total) < 0.4, `final=${fdur.toFixed(2)} total=${tl.total}`);
   let allBeatsOk = true, detail = '';
   for (const s of tl.slots) {
-    const col = nearest(colorAt(path.join(ROOT, 'jobs', job, 'final.mp4'), Math.min(tl.total - 0.2, (s.start + s.end) / 2)));
+    const col = nearest(colorAt(path.join(JOBS, job, 'final.mp4'), Math.min(tl.total - 0.2, (s.start + s.end) / 2)));
     const isCard = ['review', 'needs', 'text'].includes(col.k);
     const okSlot = s.kind === 'video' ? !isCard : true;   // video slot ka rang palette color hona chahiye
     if (!okSlot) { allBeatsOk = false; detail += `${s.kind}@${s.start}:${col.k} `; }
@@ -224,8 +247,47 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'Url', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', url: 'https://www.youtube.com/watch?v=TESTID12345', video_id: 'TESTID12345' }], moments: [{ moment_id: 'U1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] }] });
   const r = runRFC([`--input=${d}`, '--job=reg_url', '--redo'], { RFC_YTDLP: '/nonexistent/yt-dlp-xyz' });
   const stopped = r.status === 2 && /preflight STOP/i.test(r.stdout || '');
-  const noFinal = !fs.existsSync(path.join(ROOT, 'jobs', 'reg_url', 'final.mp4'));
+  const noFinal = !fs.existsSync(path.join(JOBS, 'reg_url', 'final.mp4'));
   check('T11 URL project + missing yt-dlp -> preflight STOP (exit 2, no misleading DONE)', stopped && noFinal, `exit=${r.status}`);
+})();
+
+// ---------- T-JS: yt-dlp --js-runtimes in ALL 3 calls (mocked yt-dlp) ----------
+(() => {
+  const mock = path.join(FX, 'mock-ytdlp.js');
+  const mockSrc = [
+    '#!/usr/bin/env node',
+    'const fs=require("fs"),cp=require("child_process");const a=process.argv.slice(2);',
+    'if(process.env.RFC_YTDLP_LOG)fs.appendFileSync(process.env.RFC_YTDLP_LOG,JSON.stringify(a)+"\\n");',
+    'const has=x=>a.includes(x);',
+    'if(has("--version")){process.stdout.write("9999.99.99\\n");process.exit(0);}',
+    'if(has("--dump-single-json")){process.stdout.write(JSON.stringify({id:"TESTID12345",duration:600,title:"Mock",channel:"Mock",subtitles:{},automatic_captions:{}}));process.exit(0);}',
+    'if(has("--write-subs")){const o=a[a.indexOf("-o")+1];const stem=o.replace(".%(ext)s","");fs.writeFileSync(stem+".en.srt","1\\n00:00:02,000 --> 00:00:07,000\\nthey meet on the rooftop at night\\n");process.exit(0);}',
+    'if(has("--download-sections")){const o=a[a.indexOf("-o")+1];cp.execFileSync(process.env.FFMPEG_BIN||"ffmpeg",["-y","-hide_banner","-loglevel","error","-f","lavfi","-i","color=c=red:s=1280x720:r=30:d=6","-c:v","libx264","-pix_fmt","yuv420p","-t","6",o]);process.exit(0);}',
+    'process.exit(0);',
+  ].join('\n');
+  fs.writeFileSync(mock, mockSrc); fs.chmodSync(mock, 0o755);
+  const log = path.join(FX, 'ytdlp-calls.log'); fs.writeFileSync(log, '');
+  const d = path.join(FX, 'urljs'); makeNarr(d, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }, { start: 6, end: 12, text: 'They meet on the rooftop at night.' }]);
+  writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'UrlJs', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', url: 'https://www.youtube.com/watch?v=TESTID12345', video_id: 'TESTID12345' }], moments: [
+    { moment_id: 'J1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 5, end_sec: 10, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+    { moment_id: 'J2', script_cue_exact: 'They meet on the rooftop at night.', locators: [{ source_id: 'S', locator_type: 'DIALOGUE', dialogue_exact: 'they meet on the rooftop at night', confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+  ] }] });
+  runRFC([`--input=${d}`, '--job=reg_js', '--redo'], { RFC_YTDLP: mock, RFC_YTDLP_LOG: log });
+  const lines = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+  const carries = kind => lines.some(a => a.includes(kind)) && lines.filter(a => a.includes(kind)).every(a => a.includes('--js-runtimes'));
+  const meta = carries('--dump-single-json'), subs = carries('--write-subs'), dl = carries('--download-sections');
+  check('T-JS meta+subs+download calls all carry official --js-runtimes', meta && subs && dl, `meta=${meta} subs=${subs} dl=${dl}`);
+})();
+
+// ---------- T-SENT: production jobs/ never touched by any test suite ----------
+(() => {
+  const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });
+  const keep = path.join(prod, 'keep.txt'); fs.writeFileSync(keep, 'DO NOT DELETE');
+  const miniJobs = path.join(ROOT, 'tests', 'tmp', 'sentinel_mini_' + process.pid);
+  const m = spawnSync('node', ['tests/run-mini-test.js'], { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: { ...process.env, RFC_JOBS_DIR: miniJobs } });
+  const survived = fs.existsSync(keep) && fs.readFileSync(keep, 'utf8') === 'DO NOT DELETE';
+  check('T-SENT production ROOT/jobs untouched by both suites (isolated job root)', survived && m.status === 0, `mini exit=${m.status} sentinel survived=${survived}`);
+  fs.rmSync(prod, { recursive: true, force: true }); fs.rmSync(miniJobs, { recursive: true, force: true });
 })();
 
 // ---------- summary ----------

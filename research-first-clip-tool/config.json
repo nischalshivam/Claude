@@ -59,10 +59,11 @@
   },
 
   "tools": {
-    "_note": "Windows par agar PATH mein na ho to yahan poora path daal do. Khaali = PATH se dhoondo.",
+    "_note": "Windows par PATH mein na ho to poora path daalo. Khaali = PATH se dhoondo. jsRuntime khaali = auto (Deno 2.3+ prefer, warna Node 22+); ya 'deno' / 'deno:C:\\\\path\\\\deno.exe' / 'node'.",
     "ffmpeg": "",
     "ffprobe": "",
-    "ytDlp": ""
+    "ytDlp": "",
+    "jsRuntime": ""
   },
 
   "concurrency": {

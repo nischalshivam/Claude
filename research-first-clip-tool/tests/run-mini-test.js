@@ -13,6 +13,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+// ISOLATED jobs root — production ROOT/jobs ko kabhi haath nahi (M1.2-C).
+const JOBS = process.env.RFC_JOBS_DIR && process.env.RFC_JOBS_DIR.trim() ? path.resolve(process.env.RFC_JOBS_DIR.trim()) : path.join(ROOT, 'tests', 'tmp', 'mini_' + process.pid);
+process.env.RFC_JOBS_DIR = JOBS;   // spawned run.js isko inherit karega
 const FX = path.join(ROOT, 'tests', 'fixtures');
 const EP = path.join(FX, 'episodes');
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
@@ -248,7 +251,7 @@ runJob(csDir, 'crossshow');
 runJob(ecDir, 'edgecases');
 
 // ---------------- ASSERTIONS ----------------
-function loadResolved(jobId) { return JSON.parse(fs.readFileSync(path.join(ROOT, 'jobs', jobId, 'resolved.json'), 'utf8')); }
+function loadResolved(jobId) { return JSON.parse(fs.readFileSync(path.join(JOBS, jobId, 'resolved.json'), 'utf8')); }
 function findM(res, id) { return res.find(r => r.moment_id === id); }
 
 const expectations = [
@@ -282,7 +285,7 @@ for (const [job, mid, wantStatus, wantColor, wantLoc] of expectations) {
     if (m.status !== wantStatus) { ok = false; notes.push(`status ${m.status}!=${wantStatus}`); }
     if (wantLoc && m.locator_type !== wantLoc) { ok = false; notes.push(`locator ${m.locator_type}!=${wantLoc}`); }
     if (wantColor && m.status === 'RESOLVED' && m.clip) {
-      const clipAbs = path.join(ROOT, 'jobs', job, m.clip);
+      const clipAbs = path.join(JOBS, job, m.clip);
       if (!fs.existsSync(clipAbs)) { ok = false; notes.push('clip file missing'); }
       else { const got = nearestColor(domColor(clipAbs)); if (got.name !== wantColor || got.d > 60) { ok = false; notes.push(`color ${got.name}(d${got.d})!=${wantColor}`); } else notes.push(`color ${got.name} ok`); }
     }
@@ -297,14 +300,14 @@ for (const [job, mid, wantStatus, wantColor, wantLoc] of expectations) {
 console.log('\n  -- deliverables --');
 for (const job of ['akatsuki', 'crossshow', 'edgecases']) {
   for (const f of ['final.mp4', 'timeline.json', 'quality-report.html', 'NEEDS_SOURCE.csv']) {
-    const p = path.join(ROOT, 'jobs', job, f);
+    const p = path.join(JOBS, job, f);
     const exists = fs.existsSync(p);
     const sz = exists ? fs.statSync(p).size : 0;
     console.log(`  [${exists && sz > 0 ? 'OK' : 'MISS'}] ${job}/${f} ${exists ? '(' + sz + ' bytes)' : ''}`);
     if (!exists || !sz) { fail++; failures.push(`${job}/${f} missing/empty`); }
   }
   // final duration ~ narration
-  const finalP = path.join(ROOT, 'jobs', job, 'final.mp4');
+  const finalP = path.join(JOBS, job, 'final.mp4');
   if (fs.existsSync(finalP)) {
     try {
       const out = execFileSync(FFMPEG, ['-hide_banner', '-i', finalP], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -317,7 +320,7 @@ for (const job of ['akatsuki', 'crossshow', 'edgecases']) {
 
 // NEEDS_SOURCE.csv content check
 for (const [job, mid] of [['akatsuki', 'AK_M06'], ['crossshow', 'CS_M04'], ['edgecases', 'EC_M02']]) {
-  const csv = fs.readFileSync(path.join(ROOT, 'jobs', job, 'NEEDS_SOURCE.csv'), 'utf8');
+  const csv = fs.readFileSync(path.join(JOBS, job, 'NEEDS_SOURCE.csv'), 'utf8');
   const has = csv.includes(mid);
   console.log(`  [${has ? 'OK' : 'FAIL'}] ${job}/NEEDS_SOURCE.csv contains ${mid}`);
   if (!has) { fail++; failures.push(`${job} NEEDS_SOURCE.csv missing ${mid}`); }

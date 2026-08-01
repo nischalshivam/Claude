@@ -11,6 +11,22 @@ const path = require('path');
 const U = require('./util.js');
 const DL = require('./download.js');
 
+// clip kis source/range/canvas se bani — manifest. Reuse sirf exact match par.
+function clipManifest(cfg, e) {
+  return {
+    source_id: e.source_id || null, url: e.url || null, local_file: e.local_file || null,
+    raw_file: e.raw_file || null, raw_offset: e.raw_offset || 0,
+    start: e.cut && e.cut.start, end: e.cut && e.cut.end, dur: e.cut && e.cut.dur,
+    W: cfg.canvas.width, H: cfg.canvas.height, FPS: cfg.canvas.fps, crf: cfg.render.crf, preset: cfg.render.preset,
+  };
+}
+const manPath = (id, mid) => U.p(id, `clips/clip_${mid}.json`);
+function manifestMatches(id, cfg, e) {
+  const f = manPath(id, e.moment_id);
+  if (!fs.existsSync(f)) return false;
+  try { return JSON.stringify(JSON.parse(fs.readFileSync(f, 'utf8'))) === JSON.stringify(clipManifest(cfg, e)); } catch { return false; }
+}
+
 // entry ka final clip banao. { ok, clip(rel), error }
 function cutClip(id, cfg, e) {
   const W = cfg.canvas.width, H = cfg.canvas.height, FPS = cfg.canvas.fps;
@@ -43,6 +59,7 @@ function cutClip(id, cfg, e) {
     '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out], { timeout: 300000 });
   if (!r.ok || !fs.existsSync(out)) return { ok: false, error: `ffmpeg cut fail: ${(r.stderr || '').slice(0, 140)}` };
   e.cut.dur = +dur.toFixed(3);
+  fs.writeFileSync(manPath(id, e.moment_id), JSON.stringify(clipManifest(cfg, e)));   // dependency manifest
   return { ok: true, clip: outRel };
 }
 
@@ -52,7 +69,8 @@ module.exports = function cut(spec, cfg, st, resolved) {
   for (const e of resolved) {
     if (e.kind !== 'video' || (e.status !== 'RESOLVED' && e.status !== 'NEEDS_REVIEW')) continue;
     const outRel = `clips/clip_${e.moment_id}.mp4`;
-    if (fs.existsSync(U.p(id, outRel)) && U.probe(U.p(id, outRel)).ok) { e.clip = outRel; ok++; continue; }  // resume
+    // resume: reuse SIRF tab jab clip probeable ho AUR manifest (source/range/canvas) match kare
+    if (fs.existsSync(U.p(id, outRel)) && U.probe(U.p(id, outRel)).ok && manifestMatches(id, cfg, e)) { e.clip = outRel; ok++; continue; }
     const res = cutClip(id, cfg, e);
     if (res.ok) { e.clip = res.clip; ok++; }
     else { e.clip = null; e.status = 'NEEDS_SOURCE'; e.reason = res.error; fail++; }
