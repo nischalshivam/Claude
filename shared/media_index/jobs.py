@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 
@@ -203,6 +204,45 @@ def straighten(text: str) -> str:
     return text
 
 
+def _escape_inner_quotes(text: str) -> str:
+    """Escape straight double-quotes so curly ones can become the delimiters.
+
+    A model's web page can hand back the worst of both worlds: the JSON
+    string delimiters are typographic (curly) quotes, but a phrase quoted
+    *inside* the text keeps ordinary straight quotes —
+
+        "narration": "You said "good" and smiled"
+                     ^curly       ^^straight^^  ^curly
+
+    Straightening alone then turns the curly delimiters into straight quotes
+    that collide with the untouched `"good"`, and the file still will not
+    parse — on a real Joker script, every narration line broke this way.
+
+    Escaping the straight quotes *first* keeps them as content once the curly
+    quotes become the delimiters. Like `straighten`, this is only a repair
+    attempt: the result is used only if it parses, so a file that was already
+    valid JSON (straight delimiters, inner quotes already escaped) never
+    reaches this path — it parses on the first, untouched try.
+    """
+    return re.sub(r'(?<!\\)"', r'\\"', text)
+
+
+def _repairs(raw: str):
+    """The raw text, then progressively bolder repairs of it.
+
+    Yielded in order of least to most interference, so the first one that
+    parses is the gentlest reading that works. A valid file parses at `raw`
+    and no repair is ever applied to it.
+    """
+    yield raw
+    straight = straighten(raw)
+    if straight != raw:
+        yield straight
+    escaped = straighten(_escape_inner_quotes(raw))
+    if escaped not in (raw, straight):
+        yield escaped
+
+
 def _documents(raw: str) -> tuple:
     """([every JSON value in the file], whatever prose followed them).
 
@@ -274,9 +314,16 @@ def script_extras(path: str) -> tuple:
     """
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
-            docs, note = _documents(f.read())
-    except (OSError, ValueError):
+            raw = f.read()
+    except OSError:
         return {}, ""
+    docs, note = [], ""
+    for candidate in _repairs(raw):
+        try:
+            docs, note = _documents(candidate)
+            break
+        except (json.JSONDecodeError, ValueError):
+            continue
     for doc in docs:
         if isinstance(doc, dict) and isinstance(doc.get("summary"), dict):
             return doc["summary"], note
@@ -286,16 +333,14 @@ def script_extras(path: str) -> tuple:
 def read_beats(path: str) -> list:
     with open(path, "r", encoding="utf-8-sig") as f:
         raw = f.read()
-    try:
-        return _beats_in(_documents(raw)[0])
-    except json.JSONDecodeError as first:
-        straight = straighten(raw)
-        if straight == raw:
-            raise
+    first = None
+    for candidate in _repairs(raw):
         try:
-            return _beats_in(_documents(straight)[0])
-        except json.JSONDecodeError:
-            raise first from None            # the real fault is the first one
+            return _beats_in(_documents(candidate)[0])
+        except json.JSONDecodeError as err:
+            if first is None:
+                first = err                  # the untouched file's real fault
+    raise first
 
 
 def _apply_clues(job: Job, rep: JobReport, add, log) -> None:

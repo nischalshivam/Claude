@@ -83,6 +83,28 @@ class TestAScriptWithMoreThanOneDocument(unittest.TestCase):
                            + "\n" + json.dumps(SUMMARY))
         self.assertEqual(len(jobs.read_beats(path)), 1)
 
+    def test_curly_delimiters_with_straight_inner_quotes_are_repaired(self):
+        """The Joker-script case: every JSON delimiter is a curly quote, but
+        a phrase quoted inside the narration keeps straight quotes. Escaping
+        the inner quotes before straightening the delimiters is what lets it
+        open at all."""
+        text = ('[\n{\n“beat”: 1,\n'
+                '“narration”: “She said "good" and smiled”,\n'
+                '“shots”: []\n}\n]')
+        path = self._write(text)
+        beats = jobs.read_beats(path)
+        self.assertEqual(len(beats), 1)
+        self.assertIn('"good"', beats[0]["narration"])
+
+    def test_a_valid_file_is_never_touched_by_the_inner_quote_repair(self):
+        """A normal script with straight delimiters and escaped inner quotes
+        parses on the first, untouched try — the bolder repair never runs and
+        cannot corrupt it."""
+        beats = [{"beat": 1, "narration": 'He said "no" clearly.', "shots": []}]
+        path = self._write(json.dumps(beats))
+        got = jobs.read_beats(path)
+        self.assertEqual(got[0]["narration"], 'He said "no" clearly.')
+
     def test_a_script_that_will_not_open_reports_nothing_rather_than_raising(self):
         summary, note = jobs.script_extras(os.path.join(self.tmp, "nope.txt"))
         self.assertEqual((summary, note), ({}, ""))

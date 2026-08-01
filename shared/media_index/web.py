@@ -160,9 +160,15 @@ def script_facts(path: str) -> dict:
     episodes = sorted({se for r in reqs for se in r.episodes_declared})
     labelled = [f"S{int(s):02d}E{int(e):02d}" for s, e in episodes]
     summary, note = jobs_mod.script_extras(path)
+    from . import characters as characters_mod
+    cast_needed = characters_mod.needed(beats)
     return {"path": os.path.abspath(path), "beats": len(beats),
             "shots": shots, "titles": [r.title for r in reqs],
             "episodes": labelled[:24], "episodes_total": len(labelled),
+            # Whose face the tool will need reference photos of, read straight
+            # from the script — shown here so the user gathers those photos
+            # before building, not after a wrong-person still ships.
+            "cast_needed": cast_needed,
             # The timings box, already filled in from what the script said.
             # The script's ranges are the model's guesses and some of them
             # are ten minutes wide — which is exactly why they belong in an

@@ -925,6 +925,16 @@
         : "",
       scriptError: state.scriptError,
       scriptNote: state.script ? (state.script.note || "") : "",
+      // Whose photos to gather, read straight from the chosen script. Shown
+      // the moment the script is picked so the cast folder can be built
+      // before the video is, not discovered missing halfway through.
+      castNeededShow: !!(state.script && state.script.cast_needed
+                         && (state.script.cast_needed.main || []).length),
+      castNeeded: (state.script && state.script.cast_needed
+                   ? (state.script.cast_needed.main || []) : []).map(
+        function (c) { return c.name; }),
+      castNeededPhotos: (state.script && state.script.cast_needed
+                         && state.script.cast_needed.photos_each) || 7,
 
       audioPath: f.audio,
       setAudio: function (ev) { accept("audio", ev.target.value.trim()); },

@@ -11,6 +11,50 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — Genspark script now loads (curly delimiters + straight inner quotes) + P1 character detection
+
+Two things, both foundation work the user asked for ("sabse pehle foundation
+clear karo"), tested against the real Joker (2019) genspark script.
+
+**1. The genspark script would not parse at all.** It used typographic
+(curly) quotes as its JSON string *delimiters* but ordinary straight quotes
+*inside* the text — `"narration": "You said "good" and smiled"`. `straighten`
+converts the curly delimiters to straight quotes, which then collide with the
+untouched `"good"`, and the file still failed to open. Every narration line
+in the file broke this way, so the whole 27-beat script was unusable and the
+Joker test could not even begin. Fix: `jobs._escape_inner_quotes` escapes the
+straight quotes *first*, so they survive as content once the curly delimiters
+become straight. `read_beats`/`script_extras` now try, in order: the untouched
+file → `straighten` → escape-then-straighten, using the first that parses. A
+valid file parses on the untouched try and is never touched by the repair
+(test locks this in). Result: the real Joker genspark loads — 27 beats, 103
+shots, summary + note extracted.
+
+**2. P1 foundation — the tool now reads the script and says whose photos it
+needs.** New `characters.py`: `needed(beats)` ranks the people a build will
+need reference photos of, most central first, read straight from each shot's
+`characters` field (with caption/narration text used only to *weight* names
+already found — never to mint new ones, which would hallucinate). Wired into
+`script_facts`, so the moment a script is chosen the New Video page shows
+`cast\Arthur\`, `cast\Murray\` … with "~7 photos each". On the real Joker
+script it correctly returns exactly Arthur (97 mentions) and Murray (25) —
+the two faces this essay actually leans on. This closes the gap GPT/the user
+flagged: the user no longer has to *guess* which cast folders to build; the
+tool derives the list. The existing `cast.py` (embedding-based identity
+match against those folders) is the engine that consumes them; identity
+verification at placement time is the next step on top of this.
+
+**Measured.** 6 new `characters` tests + 2 new script-repair tests, all green.
+Model-free and offline — counting names the script already wrote cannot
+invent a character who is not in the file.
+
+**Still open (honest):** character detection reads *named* people; a face the
+script only ever describes ("his mother") without a name is not offered yet
+(alias-merge / model pass is later). And having the cast list is not yet
+identity *verification* at placement — that is the P1b step this unblocks.
+
+---
+
 ## 2026-08-01 — "subtitle present but empty" is now a distinct, honest state
 
 **Change.** `subtitles.load_for_video` used to collapse two very different
