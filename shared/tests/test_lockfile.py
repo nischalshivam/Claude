@@ -62,6 +62,25 @@ class TestHoldingALibrary(unittest.TestCase):
             lockfile.touch(self.db)
             self.assertTrue(lockfile.held_by(self.db))
 
+    def test_a_lock_whose_process_is_gone_is_abandoned_at_once(self):
+        """An interrupted run must not block for 30 minutes. A freshly
+        written lock owned by a process that has since exited is cleared the
+        instant someone else asks — this is the bug that made a one-second
+        subtitle re-read look impossible."""
+        import subprocess
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()                              # this pid is now dead
+        with open(lockfile.path_for(self.db), "w", encoding="utf-8") as f:
+            f.write(f"pictures padhna (pid {p.pid})")   # fresh mtime, dead pid
+        self.assertEqual(lockfile.held_by(self.db), ())
+        # and the ghost file is tidied away, so it cannot mislead later
+        self.assertFalse(os.path.exists(lockfile.path_for(self.db)))
+
+    def test_a_lock_whose_process_is_alive_still_holds(self):
+        with open(lockfile.path_for(self.db), "w", encoding="utf-8") as f:
+            f.write(f"pictures padhna (pid {os.getpid()})")
+        self.assertTrue(lockfile.held_by(self.db))
+
     def test_two_different_libraries_do_not_block_each_other(self):
         other = os.path.join(self.tmp, "got.db")
         with lockfile.held(self.db), lockfile.held(other):

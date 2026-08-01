@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import time
 
 # A lock nobody has touched for this long belonged to something that is no
@@ -39,6 +40,7 @@ import time
 # a CPU), so a working run can never be mistaken for an abandoned one.
 STALE_S = 1800.0
 SUFFIX = ".lock"
+_PID = re.compile(r"pid\s+(\d+)")
 
 
 class Busy(Exception):
@@ -47,6 +49,44 @@ class Busy(Exception):
 
 def path_for(db_path: str) -> str:
     return os.path.abspath(db_path) + SUFFIX
+
+
+def _alive(pid: int) -> bool:
+    """Is a process with this id running right now? Never disturbs it.
+
+    The reason this module leaned on a heartbeat alone was that the obvious
+    liveness check, `os.kill(pid, 0)`, is not portable: on Windows Python's
+    `os.kill` calls `TerminateProcess`, so asking "are you alive" would kill
+    the very process being asked about. So each OS is asked the read-only
+    way. This turns an interrupted run — a closed window, Ctrl-C, a crash,
+    the tool restarted — from a 30-minute wait into an immediate all-clear:
+    a lock whose owner no longer exists is not holding anything.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        QUERY = 0x1000                        # PROCESS_QUERY_LIMITED_INFORMATION
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(QUERY, False, pid)
+        if not handle:
+            return False                      # no such process
+        try:
+            code = wintypes.DWORD()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True                   # exists; couldn't read: assume alive
+            return code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)                       # signal 0 only checks, never sends
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True                           # exists, just not ours to signal
+    return True
 
 
 def held_by(db_path: str) -> tuple:
@@ -62,6 +102,15 @@ def held_by(db_path: str) -> tuple:
             what = f.read(200).strip() or "kuch"
         idle = time.time() - os.path.getmtime(lock)
     except OSError:
+        return ()
+    # A lock whose owning process is gone is abandoned no matter how recently
+    # it was written. An interrupted indexer leaves its file behind, and
+    # making a one-second subtitle re-read wait 30 minutes for that ghost to
+    # "expire" is exactly what made updating a library feel impossible.
+    m = _PID.search(what)
+    if m and not _alive(int(m.group(1))):
+        with contextlib.suppress(OSError):
+            os.remove(lock)                   # tidy the ghost away
         return ()
     if idle > STALE_S:
         return ()

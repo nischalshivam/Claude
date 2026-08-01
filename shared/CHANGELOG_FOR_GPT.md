@@ -11,6 +11,38 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — A dead indexer no longer locks a library for 30 minutes
+
+**Change.** `lockfile.held_by` now checks whether the process that wrote the
+lock is actually still running, and treats a lock owned by a gone process as
+abandoned immediately (and tidies the file away). Cross-platform liveness
+without disturbing the process: `OpenProcess`+`GetExitCodeProcess` on Windows
+(never `os.kill`, which *terminates* on Windows — the reason this check was
+avoided originally), `os.kill(pid, 0)` on POSIX.
+
+**Why.** Real user report, and a bad one: a picture-index run was interrupted
+(window closed / rebuild stopped), leaving a `.lock` whose 30-minute
+heartbeat had not yet expired. Clicking **Update** on the title returned "is
+library par pehle se 'pictures padhna (pid 28300)' chal raha hai" and refused
+to do anything — for up to half an hour — even though the owning process was
+gone. The user's words: "ek library update karna itna mushkil ho gaya."
+Because Update (`force=False`) already *skips* frames that are current
+(`visual.is_current`), the only thing standing between the user and a
+one-second subtitle re-read was this ghost lock. Restarting the tool now
+clears it at once (new pid, old pid dead → not held).
+
+**Also clarified for the user (no code):** the index does NOT live on the
+external SSD with the movie. `library.db` (subtitle/dialogue text) and
+`<db>_visual/` (frame vectors, ~4 MB/1400 frames) sit next to the tool on the
+internal drive; the movie file on E:\ is only referenced by path. So the
+index survives unplugging the SSD, but a *build* needs the SSD connected
+because frames are cut from the movie itself.
+
+**Measured.** 2 new lockfile tests (dead pid → abandoned at once + tidied;
+live pid → still held). Full lockfile suite green.
+
+---
+
 ## 2026-08-01 — Genspark script now loads (curly delimiters + straight inner quotes) + P1 character detection
 
 Two things, both foundation work the user asked for ("sabse pehle foundation
