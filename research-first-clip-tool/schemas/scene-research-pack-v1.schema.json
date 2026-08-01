@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "scene-research-pack-v1",
+  "title": "Scene Research Pack v1",
+  "description": "Machine-readable clue pack: har narration beat ke liye exact source + dialogue/timestamp evidence. Genspark/Gemini Pro se upstream banta hai. Tool ise input leta hai.",
+  "type": "object",
+  "required": ["schema_version", "project_title", "packs"],
+  "properties": {
+    "schema_version": { "const": "scene-research-pack-v1" },
+    "project_title": { "type": "string", "minLength": 1 },
+    "research_summary": {
+      "type": "object",
+      "properties": {
+        "script_word_count": { "type": "integer" },
+        "pack_count": { "type": "integer" },
+        "moment_count": { "type": "integer" },
+        "high_confidence_moments": { "type": "integer" },
+        "medium_confidence_moments": { "type": "integer" },
+        "low_or_unresolved_moments": { "type": "integer" }
+      }
+    },
+    "packs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/pack" }
+    },
+    "coverage_check": {
+      "type": "object",
+      "properties": {
+        "entire_script_covered": { "type": "boolean" },
+        "uncovered_script_cues": { "type": "array", "items": { "type": "string" } },
+        "packs_needing_more_research": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "definitions": {
+    "pack": {
+      "type": "object",
+      "required": ["pack_id", "scope", "sources", "moments"],
+      "properties": {
+        "pack_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "scope": {
+          "type": "object",
+          "required": ["kind", "title"],
+          "properties": {
+            "kind": { "enum": ["SERIES", "FILM", "DOCUMENTARY", "REAL_WORLD", "GRAPHIC", "MULTI_SOURCE"] },
+            "title": { "type": "string" },
+            "year": { "type": ["integer", "null"] },
+            "season": { "type": ["integer", "string", "null"] },
+            "episode_title": { "type": ["string", "null"] },
+            "episode_number": { "type": ["integer", "string", "null"] },
+            "continuity_or_era": { "type": ["string", "null"] }
+          }
+        },
+        "script_range": {
+          "type": "object",
+          "properties": {
+            "start_exact": { "type": "string" },
+            "end_exact": { "type": "string" }
+          }
+        },
+        "visual_mode": { "enum": ["EXACT_SCENE", "CONTEXT_SCENE", "LOCAL_GRAPHIC", "MULTI_SOURCE_MONTAGE", "STILL_FROM_VERIFIED_SOURCE"] },
+        "reuse_pack_ids": { "type": "array", "items": { "type": "string" } },
+        "search_queries": { "type": "array", "items": { "type": "string" } },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/source" }
+        },
+        "moments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/moment" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["source_id"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "priority": { "type": "integer" },
+        "url": { "type": ["string", "null"] },
+        "video_id": { "type": ["string", "null"] },
+        "local_file": { "type": ["string", "null"], "description": "M1 testing/offline: seedha local video file source. url ke bajaye use hota hai." },
+        "local_subs": { "type": ["string", "null"], "description": "Local .srt/.vtt for DIALOGUE (jab yt-dlp se subs na aayen ya offline test ho)." },
+        "title": { "type": ["string", "null"] },
+        "channel": { "type": ["string", "null"] },
+        "duration_sec": { "type": ["number", "null"] },
+        "source_kind": { "enum": ["OFFICIAL_EPISODE", "OFFICIAL_CLIP", "LICENSED_UPLOAD", "CLEAN_SCENE", "COMPILATION", "OTHER"] },
+        "inspection_status": { "enum": ["VERIFIED_WATCHED", "TRANSCRIPT_CHECKED", "METADATA_ONLY"] },
+        "source_notes": { "type": ["string", "null"] }
+      }
+    },
+    "moment": {
+      "type": "object",
+      "required": ["moment_id", "script_cue_exact", "locators"],
+      "properties": {
+        "moment_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "script_cue_exact": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string" },
+        "visual_role": { "enum": ["EXACT_SCENE", "CONTEXT_SCENE", "LOCAL_GRAPHIC", "MULTI_SOURCE_MONTAGE", "STILL_FROM_VERIFIED_SOURCE"] },
+        "must_show": { "type": "array", "items": { "type": "string" } },
+        "must_not_show": { "type": "array", "items": { "type": "string" } },
+        "preferred_clip_sec": { "type": "number" },
+        "semantic_anchor": { "type": "string" },
+        "locators": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/locator" }
+        },
+        "fallback": {
+          "type": "object",
+          "properties": {
+            "type": { "enum": ["ANOTHER_VERIFIED_MOMENT", "STILL_FROM_PACK", "LOCAL_GRAPHIC", "MULTI_SOURCE_MONTAGE", "TEXT_CARD", "NEEDS_SOURCE"] },
+            "reuse_pack_ids": { "type": "array", "items": { "type": "string" } },
+            "text": { "type": "string" }
+          }
+        }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "required": ["source_id", "locator_type"],
+      "properties": {
+        "source_id": { "type": "string" },
+        "locator_type": { "enum": ["EXACT_TIME", "DIALOGUE", "APPROX_WINDOW", "SEARCH_ONLY", "UNRESOLVED"] },
+        "start_sec": { "type": ["number", "null"] },
+        "end_sec": { "type": ["number", "null"] },
+        "dialogue_exact": { "type": ["string", "null"] },
+        "dialogue_variants_verified": { "type": "array", "items": { "type": "string" } },
+        "nearby_context_terms": { "type": "array", "items": { "type": "string" } },
+        "verification_method": { "type": ["string", "null"] },
+        "confidence": { "enum": ["HIGH", "MEDIUM", "LOW", "NONE"] }
+      }
+    }
+  }
+}

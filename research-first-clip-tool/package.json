@@ -1,0 +1,20 @@
+{
+  "name": "research-first-clip-tool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Research-first, local-first clip automation. Ek Scene Research Pack se exact clips cut karke narration ke sath align karta hai. Milestone 1: deterministic core (EXACT_TIME + DIALOGUE), koi Gemini/UI/discovery nahi.",
+  "type": "commonjs",
+  "bin": {
+    "rfc": "src/run.js"
+  },
+  "scripts": {
+    "check": "node src/run.js --only=check",
+    "start": "node src/run.js",
+    "test:mini": "node tests/run-mini-test.js",
+    "list": "node src/run.js --list"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,71 @@
+{
+  "_readme": "Har setting yahan se badalti hai. Milestone 1 mein Gemini/discovery/ASR band hain (wo M2 mein aayenge).",
+
+  "canvas": {
+    "_note": "Final video ka size aur fps.",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+
+  "clip": {
+    "_note": "User ka pakka usool: koi bhi VIDEO clip 6 second se zyada nahi. Image 10-20s chal jati hai.",
+    "videoMaxSeconds": 6,
+    "videoMinSeconds": 2,
+    "dialoguePrePadSeconds": 0.8,
+    "dialoguePostPadSeconds": 1.0,
+    "downloadGuardSeconds": 3,
+    "stillSeconds": 12,
+    "stillMinSeconds": 10,
+    "stillMaxSeconds": 20
+  },
+
+  "align": {
+    "_note": "script_cue_exact ko SRT/script line se match karne ke thresholds (handoff Stage 2).",
+    "acceptSimilarity": 0.92,
+    "runnerUpMargin": 0.08
+  },
+
+  "dialogue": {
+    "_note": "DIALOGUE locator ke subtitle-match thresholds (handoff Stage 4). M1 mein sirf inhi se accept hota hai — koi Gemini nahi.",
+    "acceptScore": 0.88,
+    "acceptRecall": 0.82,
+    "acceptMargin": 0.06,
+    "reviewFloor": 0.78,
+    "rejectFloor": 0.65
+  },
+
+  "qa": {
+    "_note": "Local quality checks. blackFrameRatio = kitni frames tak kaali/froze ho to reject.",
+    "minHeight": 480,
+    "blackFrameMaxRatio": 0.5,
+    "duplicateHammingMax": 6,
+    "durationTolerance": 0.5
+  },
+
+  "render": {
+    "crf": 21,
+    "preset": "veryfast",
+    "kenBurnsZoom": 0.1,
+    "_note": "Stills par halka Ken Burns motion. Video clips as-is (already frame-accurate)."
+  },
+
+  "validation": {
+    "_note": "Handoff Stage 1 rules.",
+    "minExactOrDialogueRatio": 0.7,
+    "requireEntireScriptCoverage": true
+  },
+
+  "tools": {
+    "_note": "Windows par agar PATH mein na ho to yahan poora path daal do. Khaali = PATH se dhoondo.",
+    "ffmpeg": "",
+    "ffprobe": "",
+    "ytDlp": ""
+  },
+
+  "concurrency": {
+    "_note": "Ek sath kitne moments process hon. Dheema laptop ho to 1 kar do.",
+    "locate": 3,
+    "render": 4
+  }
+}
