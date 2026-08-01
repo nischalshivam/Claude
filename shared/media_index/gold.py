@@ -153,6 +153,21 @@ def read_labels(text: str) -> list:
             scene = int(raw.get("scene") or 0)
         except (TypeError, ValueError):
             continue
+        # The verdict is meant to go in the `verdict` column, but people
+        # naturally type into the LAST column (note) or the first empty one
+        # they see — a real user did exactly that. So a verdict is taken from
+        # `verdict` if present, otherwise from `note`, otherwise from ANY
+        # cell that holds one of the four words. Losing 30 hand-typed
+        # verdicts to a column mix-up would be the worst possible outcome.
+        verdict = normalise(raw.get("verdict"))
+        if not verdict:
+            verdict = normalise(raw.get("note"))
+        if not verdict:
+            for v in raw.values():
+                got = normalise(v)
+                if got:
+                    verdict = got
+                    break
         out.append(Row(
             request_id=(raw.get("request_id") or request_id(scene)).strip(),
             scene=scene,
@@ -160,7 +175,7 @@ def read_labels(text: str) -> list:
             placed=(raw.get("tool_placed") or "").strip(),
             method=(raw.get("method") or "none").strip(),
             tier=(raw.get("tier") or "C").strip(),
-            verdict=normalise(raw.get("verdict")),
+            verdict=verdict,
             note=(raw.get("note") or "").strip(),
         ))
     return out
