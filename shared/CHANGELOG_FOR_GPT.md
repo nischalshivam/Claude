@@ -11,6 +11,23 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — Final strategy decided (see STRATEGY_FINAL.md)
+
+After the gold benchmark showed Gus = 100% usable / Hank = ~15%, the
+architecture is locked to a **precision-first four-layer placement**: (1)
+sure clip from dialogue anchor [works today], (2) Gemini locates the exact
+moment in the LOCAL movie via coarse->dense frame search [P2], (3) clean
+character/scene still from the local movie when the exact moment is not found
+[P1, next], (4) NEEDS VISUAL card only if the character is unknown.
+
+Decided and recorded: local movie files are the only footage source;
+YouTube/yt-dlp is optional-only (copyright + quality + availability);
+Gemini API is the brain, not the source; no browser-automation of the Gemini
+website. Build order: P1 character-still safety net (next) -> P2 exact-clip
+location -> P3 face recognition.
+
+---
+
 ## 2026-08-01 — Gold benchmark & honest metrics (P0, per GPT's plan)
 
 **Change.** New `media_index/gold.py` + `mi gold` command. It turns a
