@@ -319,6 +319,41 @@ class TestSubtitlesFolderBesideTheVideos(unittest.TestCase):
         finally:
             shutil.rmtree(room, ignore_errors=True)
 
+    def test_a_yts_named_movie_srt_is_found(self):
+        """Brackets in a scene-release name must not break the sidecar glob."""
+        room = tempfile.mkdtemp(prefix="yts_")
+        try:
+            stem = "Joker.2019.1080p.WEBRip.x264-[YTS.LT]"
+            open(os.path.join(room, stem + ".mp4"), "w").close()
+            with open(os.path.join(room, stem + ".srt"), "w") as fh:
+                fh.write("1\n00:00:01,000 --> 00:00:03,000\nHello there.\n")
+            got = subtitles.find_sidecar(os.path.join(room, stem + ".mp4"))
+            self.assertEqual(os.path.basename(got), stem + ".srt")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
+    def test_a_present_but_empty_srt_reports_empty_not_none(self):
+        """A ~1 KB broken download is 'empty', a distinct, honest state.
+
+        The file is right there; it just has no readable cues. Reporting
+        'no subtitles found' sends the user hunting for a missing file that
+        is not missing.
+        """
+        room = tempfile.mkdtemp(prefix="broken_")
+        try:
+            stem = "Joker.2019.1080p.WEBRip.x264-[YTS.LT]"
+            open(os.path.join(room, stem + ".mp4"), "w").close()
+            # Looks like a file, holds nothing a parser can use.
+            with open(os.path.join(room, stem + ".srt"), "w") as fh:
+                fh.write("<html><body>Download failed</body></html>\n")
+            kind, path, cues = subtitles.load_for_video(
+                os.path.join(room, stem + ".mp4"))
+            self.assertEqual(kind, "empty")
+            self.assertEqual(cues, [])
+            self.assertTrue(path.endswith(".srt"))
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
     def test_the_text_that_loads_is_the_right_episode(self):
         _kind, _path, cues = subtitles.load_for_video(os.path.join(
             self.season, "Breaking Bad Season 2 Episode 7.mp4"))

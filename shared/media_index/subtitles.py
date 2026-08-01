@@ -377,19 +377,32 @@ def bitmap_only(video_path: str) -> bool:
 def load_for_video(video_path: str) -> tuple[str, str, list[Cue]]:
     """Return (source_kind, source_path, cues).
 
-    source_kind is "sidecar" | "embedded" | "bitmap_only" | "none". The
-    bitmap_only case matters: the file DOES have subtitles, they just cannot
-    be read as text, and saying "no subtitles found" would send the user
-    hunting for a problem that is really "download an .srt for this file".
+    source_kind is "sidecar" | "embedded" | "bitmap_only" | "empty" | "none".
+
+    The bitmap_only case matters: the file DOES have subtitles, they just
+    cannot be read as text, and saying "no subtitles found" would send the
+    user hunting for a problem that is really "download an .srt for this file".
+
+    The "empty" case matters for the same reason. A subtitle file sits right
+    next to the video, but it parses to zero readable cues — the classic
+    symptom of a broken ~1 KB download (an HTML error page or a placeholder
+    saved with a .srt name). Reporting "no subtitles found" there is a lie
+    that sends the user looking for a missing file that is not missing; the
+    real fix is "replace this .srt, it is junk". We remember that a file was
+    present so the caller can say exactly that.
     """
+    empty_side = ""
     side = find_sidecar(video_path)
     if side:
         cues = parse_file(side)
         if cues:
             return "sidecar", side, cues
+        empty_side = side          # found, but nothing readable inside it
     emb = extract_embedded(video_path)
     if emb:
         return "embedded", video_path, emb[1]
     if bitmap_only(video_path):
         return "bitmap_only", "", []
+    if empty_side:
+        return "empty", empty_side, []
     return "none", "", []

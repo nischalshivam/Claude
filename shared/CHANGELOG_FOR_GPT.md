@@ -11,6 +11,31 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — "subtitle present but empty" is now a distinct, honest state
+
+**Change.** `subtitles.load_for_video` used to collapse two very different
+situations into `"none"`: (a) no subtitle file exists, and (b) a subtitle
+file sits right next to the video but parses to **zero** readable cues — the
+classic broken ~1 KB download (an HTML error page or placeholder saved with
+a `.srt` name). It now returns a new kind `"empty"` for case (b), carrying
+the path of the file it found. `library.py` turns that into a precise
+message: *"a subtitle file is present but has no readable lines — probably a
+broken download (a real movie .srt is tens of KB, not ~1 KB); replace it and
+re-index."* Also added a test proving a scene-release name with brackets —
+`Joker.2019.1080p.WEBRip.x264-[YTS.LT].srt` — is still found by the sidecar
+glob (`glob.escape` already handled it; the test locks it in).
+
+**Why.** Real user report: a freshly downloaded Joker (2019) movie showed
+"subtitle hai hi nahi" (no subtitle) even though a `.srt` named identically
+to the `.mp4` was in the folder. The `.srt` was 1 KB — junk. The old message
+sent the user looking for a missing file that was not missing. This is a
+diagnosis fix, not a placement fix: it changes what the tool *says*, so the
+user fixes the right thing (swap the broken .srt) in one step.
+
+**Measured.** 2 new tests; full subtitle + web + queue suite green (105).
+
+---
+
 ## 2026-08-01 — P0.5 fail-closed: a guess never ships as moving footage
 
 **Change.** `runner.py`: a moving clip is now cut only for a placement whose

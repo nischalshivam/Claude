@@ -372,10 +372,19 @@ def build(media_root: str, db_path: str, log=print,
             # it back rather than reaching for a variable it owns.
             sk = con.execute("SELECT sub_kind FROM media WHERE path=?",
                              (path,)).fetchone()
-            reason = ("subtitles are image-based (PGS/VobSub) — they need an "
-                      ".srt download or OCR"
-                      if sk and sk["sub_kind"] == "bitmap_only"
-                      else "no subtitles found")
+            sub_kind = sk["sub_kind"] if sk else None
+            if sub_kind == "bitmap_only":
+                reason = ("subtitles are image-based (PGS/VobSub) — they need "
+                          "an .srt download or OCR")
+            elif sub_kind == "empty":
+                # A file is right there next to the video; it just has no
+                # readable lines. Almost always a broken ~1 KB download.
+                reason = ("a subtitle file is present but has no readable "
+                          "lines — it is probably a broken download (a real "
+                          "movie .srt is tens of KB, not ~1 KB); replace it "
+                          "with a proper English .srt and re-index")
+            else:
+                reason = "no subtitles found"
             res.no_subs.append((path, reason))
             log(f"  [{i}/{len(files)}] {mid.label}  —  NO SUBTITLES")
         else:
