@@ -82,8 +82,13 @@ function locateDialogue(cues, dialogue, { variants = [], anchors = [] } = {}) {
   if (!windows.length) return { found: false, reason: 'no match' };
   windows.sort((a, b) => b.raw - a.raw);
   const best = windows[0];
-  let runnerUp = null;   // genuinely different occurrence (window overlap nahi)
-  for (const w of windows.slice(1)) { if (Math.abs(w.i - best.i) > 2) { runnerUp = w; break; } }
+  // runner-up = genuinely alag occurrence. Cue-RANGE disjointness se tay hota hai,
+  // start-index distance se nahi (align.js jaisa hi fix — same bug class):
+  //  - overlapping sliding window ab jhootha runner-up nahi banega (false REVIEW gaya)
+  //  - paas-paas ki asli repetition ab miss nahi hogi (false ACCEPT gaya)
+  const isDisjoint = (a, b) => a.j < b.i || a.i > b.j;
+  let runnerUp = null;
+  for (const w of windows.slice(1)) { if (isDisjoint(w, best)) { runnerUp = w; break; } }
   return { found: true, ...best, runnerUp: runnerUp ? { score: runnerUp.score, raw: runnerUp.raw, start_sec: runnerUp.start_sec, i: runnerUp.i } : null };
 }
 

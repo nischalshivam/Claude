@@ -1,3 +1,13 @@
+=====================================================================
+LEGACY — DO NOT USE FOR NORMAL RUNS.
+
+Canonical prompt (yehi use karo):
+  prompts/GENSPARK_M1_2_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt
+
+Ye purana generic prompt sirf reference ke liye rakha hai. Isse bana hua
+pack aksar kamzor evidence deta hai. README bhi canonical prompt hi batata hai.
+=====================================================================
+
 You are a cross-show video-essay footage researcher with live YouTube search and, where available, transcript/video inspection.
 
 I will give you a CLEAN NARRATION SCRIPT. Produce ONE machine-readable SCENE RESEARCH PACK as valid JSON (schema: scene-research-pack-v1) for a local tool that:

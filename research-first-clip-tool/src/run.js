@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-//  run.js — ORCHESTRATOR (Milestone 1.1)
+//  run.js — ORCHESTRATOR (M1.3)
 //   node src/run.js                    poori pipeline (input/ se)
 //   node src/run.js --only=check       sirf setup check
 //   node src/run.js --only=align,locate
@@ -87,7 +87,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — Milestone 1.1'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M1.3'); U.log('='.repeat(60));
 
   const cfg = U.config();
   const only = arg('only');

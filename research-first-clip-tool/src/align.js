@@ -13,7 +13,15 @@ const U = require('./util.js');
 const SUB = require('./subtitles.js');
 const F = require('../lib/fuzzy.js');
 
-// best + runner-up (door wala) window dhoondo
+// Do candidate windows ek hi occurrence hain ya alag? Cue-RANGE overlap se tay
+// hota hai, start-index distance se nahi.
+//   [147..155] aur [151..155] overlap karte hain -> ek hi occurrence (sliding window)
+//   [151..155] aur [266..276] disjoint -> alag occurrence (asli runner-up)
+// Purana `Math.abs(w.i - best.i) > 3` dense micro-cue SRT mein overlapping window
+// ko "alag occurrence" samajh leta tha -> jhoota chhota margin -> false AMBIGUOUS.
+const isDisjoint = (a, b) => a.j < b.i || a.i > b.j;
+
+// best + genuinely-separate runner-up window dhoondo
 function bestWindows(cues, target) {
   const N = Math.max(1, F.tokens(target).length);
   const perStart = [];   // { i, j, score, start, end }
@@ -31,7 +39,8 @@ function bestWindows(cues, target) {
   perStart.sort((a, b) => b.score - a.score);
   const best = perStart[0] || null;
   let runnerUp = null;
-  for (const w of perStart.slice(1)) { if (!best || Math.abs(w.i - best.i) > 3) { runnerUp = w; break; } }
+  // runner-up sirf wahi jo best ke cue-interval se POORI tarah disjoint ho
+  for (const w of perStart.slice(1)) { if (!best || isDisjoint(w, best)) { runnerUp = w; break; } }
   return { best, runnerUp };
 }
 

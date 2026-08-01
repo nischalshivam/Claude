@@ -251,6 +251,50 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   check('T11 URL project + missing yt-dlp -> preflight STOP (exit 2, no misleading DONE)', stopped && noFinal, `exit=${r.status}`);
 })();
 
+// ---------- T-A / T-B: dense micro-cue SRT runner-up (align.js disjointness) ----------
+// Real bug: 409-cue Whisper SRT mein ek phrase kai chhote cues par phaila hota hai.
+// Sliding windows overlap karte hain -> purana code unhe "alag occurrence" samajh
+// kar false AMBIGUOUS deta tha (production: 29 OK + 53 false AMBIGUOUS).
+(() => {
+  // dense micro-cues (har cue 2-4 shabd) — asli Whisper SRT jaisa
+  const denseCues = (lines, t0 = 0) => lines.map((text, k) => ({ start: t0 + k * 1.5, end: t0 + k * 1.5 + 1.4, text }));
+  const writeSrt = (file, cues) => fs.writeFileSync(file, cues.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`).join('\n'));
+
+  // Test A: phrase SIRF EK BAAR, par kai micro-cues par phaili -> OK rehna chahiye
+  const aDir = path.join(FX, 'denseA'); fs.mkdirSync(aDir, { recursive: true });
+  const aCues = denseCues([
+    'Second place is', 'first place for', 'losers. Say that', 'to an adult,', 'and it is a',
+    'motivational poster.', 'Say it to a', 'child, and it is', 'an operating system,', 'the parents go further.',
+  ]);
+  writeSrt(path.join(aDir, 'voiceover.srt'), aCues);
+  ff(['-f', 'lavfi', '-i', `sine=frequency=220:duration=${aCues[aCues.length - 1].end}`, '-c:a', 'aac', path.join(aDir, 'voiceover.m4a')]);
+  writePack(aDir, { schema_version: 'scene-research-pack-v1', project_title: 'DenseA', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt }], moments: [
+    { moment_id: 'DA', script_cue_exact: 'Second place is first place for losers. Say that to an adult, and it is a motivational poster.',
+      locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+  ] }] });
+  runRFC([`--input=${aDir}`, '--job=reg_denseA', '--redo', '--only=align,locate']);
+  const A = jf('reg_denseA', 'aligned.json').moments[0];
+  check('T-A dense SRT: overlapping sliding windows are NOT independent runner-ups (stays OK)',
+    A.align_flag === 'OK', `flag=${A.align_flag} score=${A.align_score} runnerUp=${A.align_runnerup}`);
+
+  // Test B: WAHI phrase do bilkul alag (disjoint) jagah -> AMBIGUOUS rehna chahiye
+  const bDir = path.join(FX, 'denseB'); fs.mkdirSync(bDir, { recursive: true });
+  const phrase = ['She has to be', 'the best, and', 'nothing was ever enough.'];
+  const filler = ['Then the show', 'cuts to a', 'completely different', 'unrelated quiet', 'evening scene.'];
+  const bCues = [...denseCues(phrase, 0), ...denseCues(filler, 10), ...denseCues(phrase, 25)];
+  writeSrt(path.join(bDir, 'voiceover.srt'), bCues);
+  ff(['-f', 'lavfi', '-i', `sine=frequency=220:duration=${bCues[bCues.length - 1].end}`, '-c:a', 'aac', path.join(bDir, 'voiceover.m4a')]);
+  writePack(bDir, { schema_version: 'scene-research-pack-v1', project_title: 'DenseB', packs: [{ pack_id: 'P', scope: { kind: 'SERIES', title: 'X' }, sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt }], moments: [
+    { moment_id: 'DB', script_cue_exact: 'She has to be the best, and nothing was ever enough.',
+      locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+  ] }] });
+  runRFC([`--input=${bDir}`, '--job=reg_denseB', '--redo', '--only=align,locate']);
+  const B = jf('reg_denseB', 'aligned.json').moments[0];
+  const Bres = jf('reg_denseB', 'resolved.json')[0];
+  check('T-B genuine disjoint repetition IS still caught (AMBIGUOUS, held out of final)',
+    B.align_flag === 'AMBIGUOUS' && Bres.status === 'NEEDS_REVIEW', `flag=${B.align_flag} status=${Bres.status} best=${B.align_score} ru=${B.align_runnerup}`);
+})();
+
 // ---------- T-JS: yt-dlp --js-runtimes in ALL 3 calls (mocked yt-dlp) ----------
 (() => {
   const mock = path.join(FX, 'mock-ytdlp.js');

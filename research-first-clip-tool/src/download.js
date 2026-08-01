@@ -87,32 +87,53 @@ module.exports = function download(spec, cfg, st, resolved) {
   const id = spec.id;
   let ok = 0, fail = 0, local = 0, switched = 0, reused = 0;
 
-  for (const e of resolved) {
-    if (e.kind !== 'video' || (e.status !== 'RESOLVED' && e.status !== 'NEEDS_REVIEW')) continue;
+  const todo = resolved.filter(e => e.kind === 'video' && (e.status === 'RESOLVED' || e.status === 'NEEDS_REVIEW'));
+  const secs = t0 => ((Date.now() - t0) / 1000).toFixed(1);
+  U.log(`   ${todo.length} video moments — serially download honge (har clip sirf zaroori range).`);
+  U.log(`   note: ek yt-dlp attempt zyada se zyada ${Math.round((cfg.download && cfg.download.timeoutMs || 300000) / 1000)}s tak chup reh sakta hai — ye normal hai, hang nahi.`);
+
+  let n = 0;
+  for (const e of todo) {
+    n++;
+    const label = `[download ${n}/${todo.length}] ${e.moment_id} | source ${e.source_id || '-'}`;
 
     // resume: pehle se valid raw hai to skip
+    const t0 = Date.now();
     const existing = resolveRaw(id, e);
-    if (existing && fs.existsSync(existing) && U.probe(existing).ok) { e.download = { ok: true, via: 'resume-cache' }; ok++; reused++; continue; }
+    if (existing && fs.existsSync(existing) && U.probe(existing).ok) {
+      e.download = { ok: true, via: 'resume-cache' }; ok++; reused++;
+      U.log(`${label} | RESUME-CACHE (pehle se maujood, dobara download nahi) ${secs(t0)}s`);
+      continue;
+    }
 
     const cands = candList(e);
+    U.log(`${label} | starting (${cands.length} candidate${cands.length > 1 ? 's' : ''})`);
     const dlAttempts = [];
     let done = false;
     for (let ci = 0; ci < cands.length; ci++) {
+      const t1 = Date.now();
+      U.log(`     attempt ${ci + 1}/${cands.length} ${cands[ci].source_id}${cands[ci].url ? ' (yt-dlp range)' : ' (local file)'} ...`);
       const res = downloadCandidate(id, cfg, cands[ci]);
       if (res.ok) {
         if (ci > 0) switched++;
         promote(e, cands[ci], ci, res);
         e.download = { ok: true, via: res.via, candidate: ci, attempts: dlAttempts };
         if (res.via === 'local') local++;
+        const tag = res.via === 'cache' ? 'RANGE-CACHE (pehle se download, reuse)' : (ci > 0 ? `ALTERNATE ok via ${res.via}` : `READY via ${res.via}`);
+        U.log(`     ${tag} in ${secs(t1)}s`);
         ok++; done = true; break;
       }
       dlAttempts.push({ candidate: ci, source_id: cands[ci].source_id, error: res.error });
+      const more = ci + 1 < cands.length;
+      U.log(`     FAILED in ${secs(t1)}s — ${String(res.error).slice(0, 110)}`);
+      if (more) U.log(`     -> agla alternate candidate try kar rahe hain`);
     }
     if (!done) {
       e.status = 'NEEDS_SOURCE';
       e.reason = `all ${cands.length} candidate(s) failed: ` + dlAttempts.map(a => `${a.source_id}:${a.error}`).join(' | ');
       e.download = { ok: false, attempts: dlAttempts };
       fail++;
+      U.log(`${label} | NEEDS_SOURCE (saare candidates fail — random footage NAHI lagayi jayegi)`);
     }
   }
 

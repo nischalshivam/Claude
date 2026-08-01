@@ -89,7 +89,7 @@ img{width:200px;border-radius:6px;display:block}
 a{color:#63b3ed}
 </style></head><body>
 <h1>Quality Report — ${esc(spec.pack.project_title || id)}</h1>
-<div class="sub">Milestone 1.1 (deterministic, no Gemini). Sirf RESOLVED clips final.mp4 mein jaate hain. NEEDS_REVIEW/NEEDS_SOURCE held out (final mein card).</div>
+<div class="sub">M1.3 (deterministic, no Gemini/API). Sirf RESOLVED clips final.mp4 mein jaate hain. NEEDS_REVIEW/NEEDS_SOURCE held out (final mein card).</div>
 <div class="cards">
   <div class="card"><b>${n.total}</b><span>moments</span></div>
   <div class="card"><b style="color:#1f9d55">${n.resolved}</b><span>RESOLVED (in final)</span></div>
