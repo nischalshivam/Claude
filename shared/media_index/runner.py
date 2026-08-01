@@ -173,6 +173,17 @@ STILL_WINDOW_S = 1.5
 # than timeline.MAX_CLIP_S; a test asserts that they agree.
 CLIP_HEADROOM_S = 6.0
 
+# Fail-closed: a MOVING clip says "watch this happen — this is the moment".
+# Only a placement that was actually located or verified may make that claim.
+# A guess (interpolated between anchors, paced across a stretch, or filler)
+# is shown as a STILL instead — a frozen frame is an honest "roughly this
+# scene", where wrong motion is a confident lie. This is GPT's point: until a
+# verified-still fallback exists, unverified motion must never ship. Stills
+# still play (with a slow hold), so nothing goes black; the video just stops
+# pretending a guessed moment is real.
+MOTION_OK = frozenset({"anchor", "stated", "chosen", "verified", "vlm",
+                       "picture"})
+
 # Two assets taken from within this much of the same moment of the same
 # episode are the same picture, whatever the placement says.
 #
@@ -474,7 +485,9 @@ def build_scene(job, index: int, beat: dict, placements: list,
             res.confidence = p.confidence
 
         try:
-            if not _wants_still(shot):
+            # A moving clip only when the placement earned it. A guess
+            # becomes a still below — never confident wrong motion.
+            if not _wants_still(shot) and p.method in MOTION_OK:
                 clip_path = os.path.join(scene_dir, f"clip_{n:02d}.mp4")
                 # Cut the LONGEST the timeline could ever ask for, not the
                 # nominal clip length. These two disagreed: clips were cut

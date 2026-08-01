@@ -11,6 +11,34 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-01 — P0.5 fail-closed: a guess never ships as moving footage
+
+**Change.** `runner.py`: a moving clip is now cut only for a placement whose
+method is trusted — `anchor / stated / chosen / verified / vlm / picture`
+(`MOTION_OK`). An interpolated, paced or filler guess no longer becomes a
+moving clip; it is shown as a STILL (a frozen frame is an honest "roughly
+this scene"; wrong motion is a confident lie). Stills still play with a slow
+hold, so nothing goes black — the video just stops pretending a guessed
+moment is real. This is GPT review point #2, implemented without reverting to
+Strict / black cards.
+
+**Effect.** Confident wrong MOTION can no longer ship. Guessed placements
+survive only as stills, which are softer and, on a wrong-moment guess, far
+less jarring. Trusted placements (dialogue-located, VLM-verified) still get
+moving clips as before.
+
+**Measured.** New test asserts every moving clip in a real build comes from a
+MOTION_OK method and that an interpolated shot appears only as a still. 785
+tests pass. The real precision delta will come from the next gold labelling
+pass on a rebuilt video.
+
+**Still open (honest):** a dialogue-located clip is still not fully verified
+(character/action/crop) — that is P2/P3. And the still shown for a guess is
+still from roughly-the-right scene, not yet a verified character still — that
+is P1.
+
+---
+
 ## 2026-08-01 — GPT review accepted; over-claims retracted
 
 GPT's review of STRATEGY_FINAL.md + this changelog was correct on the

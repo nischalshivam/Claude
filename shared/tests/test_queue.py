@@ -276,10 +276,25 @@ class TestQueueRun(_QueueCase):
         placed_by = [a["placed_by"] for s in man["scenes"] for a in s["assets"]]
         self.assertIn("anchor", placed_by)
         self.assertIn("interpolated", placed_by)
-        by_method = {a["placed_by"]: a["score"]
-                     for s in man["scenes"] for a in s["assets"]
-                     if a["kind"] == "video"}
-        self.assertLess(by_method["interpolated"], by_method["anchor"])
+
+    def test_a_guess_never_becomes_a_moving_clip(self):
+        """Fail-closed: a moving clip claims 'this is the moment', so only a
+        located/verified placement may make it. An interpolated guess is shown
+        as a STILL — an honest 'roughly this scene' — never confident motion."""
+        with open(os.path.join(self.tmp, "run", "b", "manifest.json"),
+                  encoding="utf-8") as f:
+            man = json.load(f)
+        video_methods = {a["placed_by"] for s in man["scenes"]
+                         for a in s["assets"] if a["kind"] == "video"}
+        # Every moving clip is from a trusted method; no guess among them.
+        self.assertTrue(video_methods)
+        self.assertTrue(video_methods <= runner.MOTION_OK,
+                        f"a guess shipped as motion: {video_methods}")
+        self.assertNotIn("interpolated", video_methods)
+        # ...but the interpolated shot is still present, as a still.
+        still_methods = {a["placed_by"] for s in man["scenes"]
+                         for a in s["assets"] if a["kind"] == "image"}
+        self.assertIn("interpolated", still_methods)
 
     def test_a_run_with_no_anchor_never_reaches_rendering(self):
         """Interpolation needs something to interpolate between.
