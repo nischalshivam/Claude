@@ -340,6 +340,51 @@ def cmd_gpu(a):
     return 0 if after.usable else 1
 
 
+def cmd_gold(a):
+    """Turn a build into a labelling sheet, or score a filled one.
+
+    The whole point is that the number at the end was written by a person
+    watching the video, not produced by the same solver it is meant to
+    judge. Two commands, one file between them:
+
+        mi gold --template output/manifest.json   # makes gold.csv
+        ... fill the 'verdict' column: exact / ok / wrong / none ...
+        mi gold --score gold.csv                  # prints real accuracy
+    """
+    from . import gold                                     # noqa: PLC0415
+
+    if a.template:
+        if not os.path.isfile(a.template):
+            print(f"  manifest nahi mila: {a.template}")
+            return 1
+        with open(a.template, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        rows = gold.rows_from_manifest(manifest)
+        if not rows:
+            print("  is manifest me koi scene nahi mila")
+            return 1
+        with open(a.out, "w", encoding="utf-8", newline="") as f:
+            f.write(gold.write_template(rows))
+        print(f"  {len(rows)} scene ki sheet bani: {a.out}")
+        print("  ab video dekho aur har row ki 'verdict' me likho:")
+        print("      exact  = sahi moment    ok = sahi scene, thoda idhar-udhar")
+        print("      wrong  = galat footage  none = card/khaali")
+        print(f"  phir chalao:  mi gold --score {a.out}")
+        return 0
+
+    if a.score:
+        if not os.path.isfile(a.score):
+            print(f"  sheet nahi mili: {a.score}")
+            return 1
+        with open(a.score, "r", encoding="utf-8") as f:
+            rows = gold.read_labels(f.read())
+        print(gold.score(rows).summary())
+        return 0
+
+    print("  --template <manifest.json>  ya  --score <gold.csv>  do")
+    return 1
+
+
 def cmd_gemini(a):
     """Is the vision verifier configured, and can it be reached?
 
@@ -879,6 +924,16 @@ def main(argv=None):
     ge = sub.add_parser("gemini", parents=[common],
                         help="kya vision model (silent shots ke liye) set hai")
     ge.set_defaults(func=cmd_gemini)
+
+    go = sub.add_parser("gold", parents=[common],
+                        help="ek build ko haath se label karke asli accuracy naapo")
+    go.add_argument("--template",
+                    help="is build ki manifest.json se labelling sheet banao")
+    go.add_argument("--score",
+                    help="bhari hui sheet (.csv) se asli accuracy nikaalo")
+    go.add_argument("--out", default="gold.csv",
+                    help="sheet kahan likhni hai (default gold.csv)")
+    go.set_defaults(func=cmd_gold)
 
     se = sub.add_parser("see", parents=[common],
                         help="describe a picture, get the real frames back")

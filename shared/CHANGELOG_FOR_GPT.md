@@ -1,0 +1,124 @@
+# Changelog — what Claude changed (for GPT to review)
+
+This file is kept up to date so it can be handed to GPT. Each entry says
+what changed, why, and — where it can be honestly measured — how much it
+helped or hurt. Newest first.
+
+The single most important honest note: until the **gold set** (below) is
+filled in by a human, every "% better/worse" is an estimate from logs, not a
+measured fact. That is exactly the gap GPT's recovery strategy calls out,
+and the gold evaluator is the first thing built to close it.
+
+---
+
+## 2026-08-01 — Gold benchmark & honest metrics (P0, per GPT's plan)
+
+**Change.** New `media_index/gold.py` + `mi gold` command. It turns a
+finished build's `manifest.json` into a labelling sheet (`gold.csv`), one row
+per scene with the narration and what the tool placed. A person watches the
+video once and writes a verdict per scene: `exact` / `ok` / `wrong` / `none`.
+`mi gold --score gold.csv` then prints the only numbers that mean anything:
+
+- **usable precision** = (exact + ok) / auto-placed
+- **exact precision** = exact / auto-placed
+- **coverage** = scenes filled / all scenes
+- a **per-method breakdown** so a wrong "Tier B" can no longer hide inside a
+  healthy-looking total.
+
+**Why.** GPT's strategy §11 P0: *"Before solver changes, build a 40–50
+request semantic gold set and evaluator. Never use placeable, moved,
+rendered or non-black as accuracy."* This is that. Nothing here changes a
+build — it measures one, and the solver may never again be tuned against a
+number the solver itself produced.
+
+**Measured.** 12 new tests. On the Gus-4 (Strict) manifest the evaluator
+correctly separates 16 anchor-placed scenes from 20 declined (card) scenes.
+Real accuracy numbers await the human labelling pass — that is the point.
+
+**What the user must do:** run `mi gold --template <manifest.json>`, watch
+the video, fill the `verdict` column, run `mi gold --score gold.csv`. That
+produces the first honest accuracy number this project has ever had.
+
+---
+
+## 2026-08-01 — Vision model given every guessed shot
+
+**Change.** `refine.py`: the VLM (Gemini) was offered only wide interpolated
+shots. Now it is offered every GUESSED shot — interpolated, paced, and
+homeless — down to a 30-second window, and a homeless shot it recognises is
+rescued into a real placement instead of becoming filler.
+
+**Measured.** Hank build: shots offered to the VLM went 20 → 36; shots moved
+went 7 → 13. **But** the finished video was still poor by eye. This is the
+evidence behind GPT's key point: the bottleneck is no longer how many shots
+the model is *asked* about, it is that the right frame is often not among the
+~16 sampled across a 5–8 minute window (retrieval recall, not model
+intelligence). See GPT strategy §2.2 and §8.
+
+---
+
+## 2026-08-01 — Default mode changed Strict → Balanced
+
+**Change.** New Video defaulted to Strict, which turns every non-dialogue
+shot into a black card. A build came back >50% black cards with nothing
+broken. Default is now Balanced.
+
+**Note for GPT:** GPT's strategy §3 flags that Balanced can hide weak footage
+inside a complete-looking timeline — this is correct, and the gold evaluator
+above is what will expose it. The right end state (GPT §9) is a
+precision-first ladder: exact clip → curated still → NEEDS VISUAL, never
+wrong moving footage. That is the next architecture, not yet built.
+
+---
+
+## 2026-08-01 — Gemini (GPT/Gemini vision API) integration
+
+**Change.** `gemini.py` + `refine.py`: OpenAI-compatible vision call, key
+read from `settings.txt` (never committed). For silent/no-dialogue shots the
+model is shown candidate frames of a window and picks the one matching the
+shot's description. Graceful: not configured / network error / abstention
+all leave the shot where it was. `mi gemini` diagnoses key + endpoint with a
+text ping then an image ping, and shows the real HTTP error instead of
+"no answer".
+
+**Measured.** The picks the model logs look correct (e.g. Walt driving the
+Aztek with Hank; the family dinner with all four at the table). Coverage
+limited by the frame-sampling bottleneck above.
+
+---
+
+## 2026-07-31 → 08-01 — The correctness bugs that caused bad builds
+
+Each was a real, measured failure, all now fixed and covered by tests:
+
+1. **Subtitle mis-linking (the big one).** "…Season 4 Episode 1.mp4" was
+   indexed against "…Episode 13.srt" (glob `stem + "*"` matched 1/10/11/12/13,
+   tie-break preferred the largest file). Every quoted line was "found" at a
+   real millisecond of the *wrong* episode — dashboard read 99% while the
+   video was 95% wrong. Fixed: a subtitle whose own episode number
+   contradicts the video's is refused.
+2. **One episode ≠ one scene.** S04E01's 31 shots were three sequences; as
+   one run their anchors couldn't all increase in time, so the solver
+   dropped line after line (31 shots → 1 anchor). Fixed: runs split by
+   `scene_range` into scene-sequences.
+3. **Clue lines duplicated.** A clue covering 10 beats wrote its 3 lines into
+   all 10, so each line claimed 10 positions and was thrown out. Fixed: each
+   line placed once, spread across the scene's empty shots.
+4. **`(beat, shot)` window keying**, **anchor clustering**, **contradicted-
+   range rejection** — earlier fixes to the same family of "the window
+   belonged to the wrong thing" bugs.
+
+**Note for GPT:** the document `PROJECT_STATE_FOR_GPT.md` claimed "every
+anchor/Tier A is correct". GPT correctly pushed back (§3): a matched subtitle
+proves the *time of the line*, not that the required character/action is
+on screen at that time. This is now treated as an open item — dialogue is a
+locator, not proof of the visual — and is part of why the gold set matters.
+
+---
+
+## Baseline capabilities that work and should be preserved
+
+Local episode ingest; subtitle sidecar matching (now episode-safe); dialogue
+search; per-`(beat,shot)` windows; clue-script grounding; narration/voiceover
+timeline; FFmpeg cutter/render; queue/resume/editor; Strict/Balanced/Draft;
+NEEDS VISUAL placeholders; episode-scoped lookup; Gemini error surfacing.
