@@ -473,8 +473,8 @@ function buildWorkOrder() {
   P('       "allowed_pack_ids": ["P01"],');
   P('       "allowed_source_ids": ["S01_EP12"],');
   P('       "frame_hints": [');
-  P('         {"source_id":"S01_EP12","time_sec":412,"what":"Nicole gusse mein, close-up"},');
-  P('         {"source_id":"S01_EP12","time_sec":455,"what":"Nicole aur Richard saath"}');
+  P('         {"source_id":"S01_EP12","time_sec":412,"reason":"Nicole gusse mein, close-up"},');
+  P('         {"source_id":"S01_EP12","time_sec":455,"reason":"Nicole aur Richard saath"}');
   P('       ]');
   P('     }');
   P('   frame_hints se engine wahi frame nikaal kar still/graphic banata hai —');
@@ -578,7 +578,7 @@ function buildWorkOrder() {
         P('    Har moment ke liye sirf ye do (text screen par engine khud daalta hai):');
         P('      "fallback_plan": {');
         P(`        "allowed_pack_ids": [${(showScopes.length ? (packsByScope[showScopes[0]] || []) : []).slice(0, 4).map(x => `"${x}"`).join(', ')}],`);
-        P('        "frame_hints": [ {"source_id":"<us show ka source>","time_sec":123,"what":"kya dikh raha hai"} ],');
+        P('        "frame_hints": [ {"source_id":"<us show ka source>","time_sec":123,"reason":"kya dikh raha hai"} ],');
         P('        "overlay_text": "screen par jo 3-6 word likhna hai"');
         P('      }');
         P('    Yaani: analysis line ke peeche us show ka SAHI frame chalega, khali gradient nahi.');

@@ -448,6 +448,59 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     `exit=${C.status} narr=${C.rep ? C.rep.narration_seconds : '?'}s`);
 })();
 
+// ---------- T-MERGE: split-mode pack merging (Genspark 1-message-per-day) ----------
+// Alag accounts wahi IDs (P01, P01_S01) generate karte hain aur show ka naam
+// alag likh dete hain. Merge tool ko dono sambhalne chahiye, warna merged pack
+// ya to invalid hoga ya chupke se galat scope bana dega.
+(() => {
+  const d = path.join(FX, 'merge');
+  fs.mkdirSync(d, { recursive: true });
+  const mkPart = (title, cue, mid) => ({
+    schema_version: 'scene-research-pack-v1', project_title: 'Split Test',
+    packs: [{ pack_id: 'P01', scope: { kind: 'SERIES', title }, // dono parts mein WAHI ids -> collision
+      sources: [{ source_id: 'P01_S01', local_file: good.video, local_subs: good.srt, video_id: 'SAMEVID' }],
+      moments: [{ moment_id: mid, script_cue_exact: cue,
+        locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }],
+        fallback_plan: { allowed_pack_ids: ['P01'], allowed_source_ids: ['P01_S01'], frame_hints: [{ source_id: 'P01_S01', time_sec: 5 }] },
+        fallback: { type: 'NEEDS_SOURCE' } }] }],
+    coverage_check: { entire_script_covered: true, uncovered_script_cues: [], packs_needing_more_research: [] },
+  });
+  const p1 = path.join(d, 'part1.json'), p2 = path.join(d, 'part2.json'), out = path.join(d, 'merged.json');
+  fs.writeFileSync(p1, JSON.stringify(mkPart('The Amazing World of X', 'The alarm rings across the base.', 'P01_M01')));
+  fs.writeFileSync(p2, JSON.stringify(mkPart('The Wonderfully Amazing World of X', 'They meet on the rooftop at night.', 'P01_M01')));
+
+  const run = (extra = []) => spawnSync('node', ['tools/merge-packs.js', p1, p2, '-o', out, ...extra], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  const A = run();
+  let M = null; try { M = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
+  const ids = M ? M.packs.map(p => p.pack_id) : [];
+  const mids = M ? M.packs.flatMap(p => p.moments.map(x => x.moment_id)) : [];
+  const val = M ? require(path.join(ROOT, 'src', 'validate.js')).validateFile(out) : { ok: false, errors: ['no file'] };
+  check('T-MERGE1 colliding IDs from two accounts are prefixed, merged pack stays valid',
+    A.status === 0 && val.ok && new Set(ids).size === 2 && new Set(mids).size === 2,
+    `exit=${A.status} valid=${val.ok} packs=${JSON.stringify(ids)}`);
+  // prefix lagne ke baad har reference bhi update hona chahiye, warna scope tootega
+  const refsOk = M && M.packs.every(p => p.moments.every(m =>
+    m.locators.every(L => p.sources.some(s => s.source_id === L.source_id)) &&
+    m.fallback_plan.allowed_pack_ids.every(x => ids.includes(x)) &&
+    m.fallback_plan.allowed_source_ids.every(x => p.sources.some(s => s.source_id === x)) &&
+    m.fallback_plan.frame_hints.every(h => p.sources.some(s => s.source_id === h.source_id))));
+  check('T-MERGE2 renaming rewrites every reference (locators, allowed_*, frame_hints)',
+    !!refsOk, `refsOk=${refsOk}`);
+  check('T-MERGE3 near-duplicate show titles are reported, not silently merged',
+    /SCOPE TITLE MISMATCH/.test(A.stdout) && M && new Set(M.packs.map(p => p.scope.title)).size === 2,
+    `titles=${M ? JSON.stringify([...new Set(M.packs.map(p => p.scope.title))]) : 'n/a'}`);
+  const B = run(['--unify-titles']);
+  let M2 = null; try { M2 = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
+  check('T-MERGE4 --unify-titles collapses them only when explicitly asked',
+    B.status === 0 && M2 && new Set(M2.packs.map(p => p.scope.title)).size === 1,
+    `titles=${M2 ? JSON.stringify([...new Set(M2.packs.map(p => p.scope.title))]) : 'n/a'}`);
+  // invalid part chupke se merge nahi hona chahiye
+  const bad = path.join(d, 'bad.json'); fs.writeFileSync(bad, '{"schema_version":"scene-research-pack-v1","packs":[]}');
+  const C = spawnSync('node', ['tools/merge-packs.js', p1, bad, '-o', path.join(d, 'x.json')], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  check('T-MERGE5 invalid part stops the merge loudly (no half-broken pack)',
+    C.status === 1 && /FAIL/.test(C.stdout), `exit=${C.status}`);
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });

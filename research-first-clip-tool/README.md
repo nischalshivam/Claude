@@ -44,16 +44,35 @@ Sab kuch free, open-source tools par chalta hai (Node + FFmpeg + yt-dlp).
 
 ### Step 1 — research pack (ye ek manual step hai)
 
-1. `prompts/GENSPARK_M1_2_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt` kholo. **Yehi
-   canonical prompt hai** (isi se test kiya hua pack bana tha).
+1. `prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt` kholo. **Yehi
+   canonical prompt hai.**
 2. Usme sirf `<PASTE CLEAN NARRATION SCRIPT HERE>` ki jagah apni **poori clean
    script** paste karo. Aur kuch mat badlo.
 3. Genspark (ya koi bhi browsing research AI: Gemini Pro, ChatGPT with search,
    Perplexity) se live YouTube search + transcript inspection ke sath chalwao.
 4. Jo **JSON object** aaye, use `input/scene-research.json` mein save karo.
+5. `CHECKPACK.bat` chalao (section 1b) — render se pehle hi pata chal jayega ki
+   pack theek hai ya nahi.
 
-> `prompts/LEGACY-research-pack-generator.txt` purana generic prompt hai — normal
-> use ke liye **mat** lo.
+**Ye prompt ek-shot ke liye bana hai.** Genspark ek account par din mein ek hi
+message deta hai, isliye isme wo saari galtiyan already band ki gayi hain jo
+pichhle packs mein mili thi: seconds-based coverage, har verified moment par
+DIALOGUE **aur** EXACT_TIME dono, har pack mein ek jaisa `scope.title`, har
+moment par `fallback_plan`, aur analysis beats ke liye `frame_hints`.
+
+**Lambi script (12+ min)?** `prompts/SPLIT_MODE_ADDENDUM.txt` padho — script ko
+2-3 accounts par baant kar chalao, phir:
+
+```
+node tools\merge-packs.js part1.json part2.json -o input\scene-research.json
+```
+
+Merge tool ID collision, duplicate sources aur scope-title mismatch khud
+sambhalta hai.
+
+> `prompts/GENSPARK_M1_2_ONE_SHOT_...txt` pichhla version hai aur
+> `prompts/LEGACY-research-pack-generator.txt` usse bhi purana — normal use ke
+> liye **mat** lo.
 
 ### Step 2 — input files
 
@@ -257,7 +276,17 @@ khatam).
   `frame_hints` chahiye.
 - **~4x tez alignment** — `lib/fuzzy.js` mein bounded memoization (normalize /
   tokens / trigrams). Pack check 29.6s → 7.9s; poore run ka Stage-2 bhi utna hi tez.
-- 7 naye regression tests (T-PACK1..7). Suite ab **30 PASS / 0 FAIL**.
+- **Naya canonical prompt** `prompts/GENSPARK_M2_5_ONE_SHOT_...txt` — one-shot ke
+  liye likha gaya (Genspark ka 1-message-per-day limit). Isme wo paanch galtiyan
+  naam lekar band ki gayi hain jo asli packs mein measure hui thi, aur coverage
+  ab seconds mein maangi jati hai.
+- **Split mode + `tools/merge-packs.js`** — lambi script ko 2-3 accounts par
+  baant kar chalao aur locally merge karo. ID collision par automatic prefix
+  (saare references bhi rewrite hote hain), duplicate sources report hote hain,
+  aur scope-title mismatch sirf batata hai — apne-aap merge nahi karta
+  (`--unify-titles` explicitly maango), kyunki "Naruto" aur "Naruto Shippuden"
+  sach mein alag show hain.
+- 12 naye regression tests (T-PACK1..7, T-MERGE1..5). Suite ab **35 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping

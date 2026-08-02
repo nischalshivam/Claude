@@ -1,0 +1,66 @@
+======================================================================
+SPLIT MODE — jab ek Genspark account se poori script cover na ho
+======================================================================
+
+Kab use karna hai
+-----------------
+Genspark ek account par din mein ek hi message deta hai. Agar script lambi hai
+(12+ minute narration) to ek hi response mein poori research aana mushkil hai —
+model beech mein compress karne lagta hai, ya JSON truncate ho jata hai.
+
+Us surat mein script ko 2-3 hisson mein baant kar alag-alag accounts par ek hi
+din mein chalao, aur phir locally merge kar lo:
+
+  node tools/merge-packs.js part1.json part2.json -o input\scene-research.json
+  CHECKPACK.bat
+
+Kaise chalana hai
+-----------------
+1. Apni clean script ko paragraph boundaries par 2 (ya 3) barabar hisson mein
+   baanto. Beech mein se sentence mat kaato.
+
+2. Har account par canonical prompt
+   (GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt) waisa ka waisa paste karo,
+   aur uske SABSE NEECHE, script se ठीक pehle, ye block joddo — sirf PART number
+   badal kar:
+
+----------------------------8<----------------------------
+SPLIT MODE: this is PART 1 OF 2 of a longer narration script.
+
+- The text below is only my script's part 1. Research and return moments for
+  THIS PART ONLY. Do not invent, summarise, or reference the other part.
+- Everything else in the instructions above still applies to this part in full:
+  seconds-based coverage, paired DIALOGUE + EXACT_TIME locators, fallback_plan on
+  every moment, frame_hints for analysis beats, and the identical-scope-title
+  rule.
+- ID PREFIX: begin every pack_id, source_id and moment_id in your output with
+  "A_" (part 1). If you are told PART 2, use "B_". PART 3, use "C_".
+  Example: A_P01, A_P01_S01, A_P01_M01.
+- SHOW TITLE: use the show's canonical official title exactly as it appears on
+  its official channel/Wikipedia. Do not add descriptors, seasons, or nicknames.
+  The parts will be merged, and two spellings of one show break the merge.
+- coverage_check must describe THIS PART only.
+----------------------------8<----------------------------
+
+3. Har account ka JSON alag file mein save karo: part1.json, part2.json, ...
+
+4. Merge karo:
+
+     node tools/merge-packs.js part1.json part2.json -o input\scene-research.json
+
+   Merge tool khud handle karta hai: ID collision (prefix laga deta hai),
+   duplicate sources (ek hi video do jagah — download phir bhi ek hi baar hoga),
+   aur coverage_check jodna.
+
+5. CHECKPACK.bat chalao. Agar wo bole "SCOPE TITLE MISMATCH" — matlab do accounts
+   ne ek hi show ka naam alag likha. Do options:
+     - JSON mein title khud ek jaisa kar do (sabse safe), ya
+     - node tools/merge-packs.js part1.json part2.json -o input\scene-research.json --unify-titles
+   --unify-titles apne-aap nahi lagta kyunki "Naruto" aur "Naruto Shippuden" sach
+   mein alag show hain — ye faisla tumhara hona chahiye, tool ka nahi.
+
+Zaroori baat
+------------
+Split tabhi karo jab zaroorat ho. Ek hi response mein poori script aa jaye to
+wahi behtar hai — tab model ko poore script ka context milta hai aur wo ek hi
+episode ko kai beats ke liye reuse kar pata hai.
