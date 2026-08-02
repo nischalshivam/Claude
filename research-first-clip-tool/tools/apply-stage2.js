@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // ============================================================
-//  APPLY-ROUND2 — round-2 ka JSON array pack mein merge karta hai.
+//  APPLY-STAGE2 — stage-2 ka JSON array pack mein merge karta hai.
 //
 //  83 moments ko haath se merge karna galti ka nyota hai. Ye tool har entry ko
 //  check karke lagata hai, aur jo galat hai use LAGATA NAHI — batata hai.
+//  Stage 2 sources bhi theek karta hai (dead URL ki jagah naya), wo bhi yahin
+//  lagta hai — par sirf tab jab naya URL dhang ka ho.
 //
-//    node tools/apply-round2.js input/scene-research.json round2.json
-//    node tools/apply-round2.js input/scene-research.json r1.json r2.json -o merged.json
+//    node tools/apply-stage2.js input/scene-research.json stage2.json
+//    node tools/apply-stage2.js input/scene-research.json s1.json s2.json -o merged.json
 //
 //  Default: pack ko usi jagah update karta hai (backup .bak ke saath).
 //  Reject hone ki wajahein (chup-chaap kabhi nahi):
@@ -26,13 +28,13 @@ const outFile = oIdx >= 0 ? argv[oIdx + 1] : null;
 // -o ke baad wali value output path hai, input nahi. (oIdx -1 ho to kuch skip mat karo.)
 const files = argv.filter((a, i) => !a.startsWith('-') && !(oIdx >= 0 && i === oIdx + 1));
 const packFile = files[0];
-const roundFiles = files.slice(1);
+const stageFiles = files.slice(1);
 
 const die = m => { console.log('  [FAIL] ' + m); process.exit(1); };
 const line = (c = '=') => console.log(c.repeat(66));
 
-line(); console.log('  APPLY ROUND-2 — locators ko pack mein lagao'); line();
-if (!packFile || !roundFiles.length) die('usage: node tools/apply-round2.js input/scene-research.json round2.json');
+line(); console.log('  APPLY STAGE-2 — verified sources + locators pack mein lagao'); line();
+if (!packFile || !stageFiles.length) die('usage: node tools/apply-stage2.js input/scene-research.json stage2.json');
 if (!fs.existsSync(packFile)) die(`pack nahi mila: ${packFile}`);
 
 const v = validate.validateFile(packFile);
@@ -46,10 +48,10 @@ const sourcesById = {};
 for (const pk of pack.packs) for (const s of (pk.sources || [])) sourcesById[s.source_id] = { ...s, pack_id: pk.pack_id };
 const showPacks = pack.packs.filter(pk => pk.scope && pk.scope.kind !== 'GRAPHIC').map(pk => pk.pack_id);
 
-// round-2 entries padho (array, ya {entries:[...]}, ya JSON lines)
-const entries = [], broken = [];
-for (const f of roundFiles) {
-  if (!fs.existsSync(f)) die(`round-2 file nahi mili: ${f}`);
+// stage-2 entries padho (array, ya {entries:[...]}, ya ek hi object)
+const entries = [], broken = [], replaceSrc = [], srcUpdates = [];
+for (const f of stageFiles) {
+  if (!fs.existsSync(f)) die(`stage-2 file nahi mili: ${f}`);
   let raw = fs.readFileSync(f, 'utf8').trim();
   // AI kabhi-kabhi ```json fence laga deta hai — hata do
   raw = raw.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim();
@@ -58,12 +60,50 @@ for (const f of roundFiles) {
   catch (e) { die(`${path.basename(f)} valid JSON nahi hai: ${e.message.slice(0, 90)}`); }
   const arr = Array.isArray(j) ? j : (Array.isArray(j.entries) ? j.entries : [j]);
   for (const e of arr) {
-    if (e && Array.isArray(e.broken_sources)) { broken.push(...e.broken_sources); continue; }
-    if (e && e.moment_id) entries.push(e);
+    if (!e) continue;
+    if (Array.isArray(e.broken_sources)) { broken.push(...e.broken_sources); continue; }
+    if (Array.isArray(e.replace_sources)) { replaceSrc.push(...e.replace_sources); continue; }
+    if (Array.isArray(e.source_updates)) { srcUpdates.push(...e.source_updates); continue; }
+    if (e.moment_id) entries.push(e);
   }
   console.log(`  [ok] ${path.basename(f).padEnd(24)} ${arr.length} entries`);
 }
-if (!entries.length && !broken.length) die('koi usable entry nahi mili.');
+if (!entries.length && !broken.length && !replaceSrc.length && !srcUpdates.length) die('koi usable entry nahi mili.');
+
+// ---------- sources pehle theek karo (locators inhi par check honge) ----------
+// Ye pehle isliye hota hai kyunki naye duration ke hisaab se hi timestamps
+// validate honge. Purana galat duration rakhein to sahi timestamp bhi reject ho.
+const srcNotes = [];
+const findSourceObj = sid => { for (const pk of pack.packs) for (const s of (pk.sources || [])) if (s.source_id === sid) return s; return null; };
+const looksLikeUrl = u => /^https?:\/\/[^\s"']+$/i.test(String(u || ''));
+
+for (const r of replaceSrc) {
+  const s = findSourceObj(r.source_id);
+  if (!s) { srcNotes.push(`replace_sources: "${r.source_id}" pack mein nahi — chhoda`); continue; }
+  if (!looksLikeUrl(r.url)) { srcNotes.push(`replace_sources: "${r.source_id}" ka naya URL theek nahi lagta — chhoda`); continue; }
+  const old = s.url || s.local_file || '(none)';
+  s.url = r.url;
+  if (r.video_id) s.video_id = r.video_id;
+  if (r.title) s.title = r.title;
+  if (r.channel) s.channel = r.channel;
+  if (typeof r.duration_sec === 'number' && r.duration_sec > 0) s.duration_sec = r.duration_sec;
+  if (r.source_kind) s.source_kind = r.source_kind;
+  if (typeof r.has_captions === 'boolean') s.has_captions = r.has_captions;
+  s.inspection_status = r.inspection_status || 'VERIFIED_WATCHED';
+  s.source_notes = `stage2 replaced (${r.reason || 'original unusable'})`;
+  sourcesById[r.source_id] = { ...s, pack_id: (sourcesById[r.source_id] || {}).pack_id };
+  srcNotes.push(`REPLACED ${r.source_id}: ${String(old).slice(0, 34)} -> ${String(r.url).slice(0, 34)}`);
+}
+for (const u of srcUpdates) {
+  const s = findSourceObj(u.source_id);
+  if (!s) { srcNotes.push(`source_updates: "${u.source_id}" pack mein nahi — chhoda`); continue; }
+  const bits = [];
+  if (typeof u.duration_sec === 'number' && u.duration_sec > 0 && u.duration_sec !== s.duration_sec) { bits.push(`duration ${s.duration_sec || '?'}s -> ${u.duration_sec}s`); s.duration_sec = u.duration_sec; }
+  if (typeof u.has_captions === 'boolean' && u.has_captions !== s.has_captions) { bits.push(`captions ${u.has_captions}`); s.has_captions = u.has_captions; }
+  if (u.inspection_status && u.inspection_status !== s.inspection_status) { bits.push(`${s.inspection_status || '?'} -> ${u.inspection_status}`); s.inspection_status = u.inspection_status; }
+  if (bits.length) { sourcesById[u.source_id] = { ...s, pack_id: (sourcesById[u.source_id] || {}).pack_id }; srcNotes.push(`updated ${u.source_id}: ${bits.join(', ')}`); }
+}
+if (srcNotes.length) { console.log(''); srcNotes.forEach(n => console.log('  [src] ' + n)); }
 
 // allowed scope for a moment
 function allowedSourcesFor(mid) {
@@ -139,8 +179,9 @@ for (const e of entries) {
 // ---------- report ----------
 line('-');
 console.log(`  laga diya : ${nLoc} locators + ${nHint} frame_hints  ->  ${nMom} moments`);
+if (replaceSrc.length) console.log(`  sources   : ${replaceSrc.length} replace kiye, ${srcUpdates.length} update`);
 if (broken.length) {
-  console.log(`\n  [!] AI ne ${broken.length} source ko toota bataya — inhe khud badalna padega:`);
+  console.log(`\n  [!] ${broken.length} source aisa hai jiska replacement bhi nahi mila — ye khud dhoondhna padega:`);
   broken.forEach(b => console.log(`        ${String(b.source_id).padEnd(12)} ${String(b.problem || '').slice(0, 60)}`));
 }
 if (rejects.length) {

@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 // ============================================================
-//  MAKE-ROUND2 — "sirf locators chahiye" wala focused prompt banata hai.
+//  MAKE-STAGE2 — do-stage research ka DOOSRA prompt banata hai.
 //
-//  Kyun: aksar research AI script ko theek-theek beats mein baant deta hai
-//  (cues exact, coverage poori) par ASLI research nahi karta — na timestamps,
-//  na dialogue, bas placeholder sources. Aisa pack render nahi ho sakta, par
-//  usme ka SEGMENTATION bilkul sahi hota hai. Use phenkna bewakoofi hai.
+//  Do-stage system:
+//    STAGE 1 (pehla Genspark account): script ko beats mein baanto + ASLI,
+//            chalne wale source videos dhoondho. Timestamps ki zaroorat nahi.
+//            -> prompts/STAGE1_SOURCES_AND_BEATS_PROMPT.txt
+//    STAGE 2 (doosra account): stage-1 ke sources ko KHOLO, verify karo, aur
+//            har beat ka asli timestamp/dialogue/frame nikaalo.
+//            -> ye tool wahi prompt banata hai
 //
-//  Ye tool wo segmentation utha kar ek chhota, focused prompt banata hai jisme
-//  AI ka kaam sirf ITNA hai: "in sources ke andar in moments ko dhoondho aur
-//  timestamp/dialogue do". Na script padhna, na beats banana, na source dhoondna
-//  — isliye ek hi message mein asli research hone ka chance kai guna badh jata hai.
+//  Kyun do stage: ek hi prompt mein "script baanto + video dhoondho + verify karo
+//  + timestamp nikaalo" maangne par model ka poora budget instructions follow
+//  karne mein chala jata hai aur browsing reh jati hai. Alag-alag karne se har
+//  stage ka kaam chhota hai, aur stage 2 stage-1 ke links ko VERIFY bhi karta hai
+//  (alag account, alag session — jhoothe URL wahin pakde jate hain).
 //
-//  Pehle pack ke `sources` mein ASLI URLs daalo (ya local_file), phir:
-//    node tools/make-round2.js input/scene-research.json
-//    node tools/make-round2.js input/scene-research.json --part=1/2
+//    node tools/make-stage2.js input/scene-research.json
+//    node tools/make-stage2.js input/scene-research.json --part=1/2
 //
 //  Jo JSON wapas aaye usse apply karo:
-//    node tools/apply-round2.js input/scene-research.json round2.json
+//    node tools/apply-stage2.js input/scene-research.json stage2.json
 // ============================================================
 const fs = require('fs');
 const path = require('path');
@@ -37,7 +40,7 @@ const [partNo, partTot] = partSpec.split('/').map(n => Math.max(1, parseInt(n, 1
 const die = m => { console.log('  [FAIL] ' + m); process.exit(1); };
 const line = (c = '=') => console.log(c.repeat(66));
 
-line(); console.log('  MAKE ROUND-2 PROMPT — sirf locators maangne wala prompt'); line();
+line(); console.log('  MAKE STAGE-2 PROMPT — verify + locators maangne wala prompt'); line();
 
 if (!fs.existsSync(packFile)) die(`pack nahi mila: ${packFile}`);
 const v = validate.validateFile(packFile);
@@ -64,7 +67,7 @@ const weak = all.filter(({ m }) => {
   const h = ((m.fallback_plan || {}).frame_hints || []);
   return !L.length && !h.length;
 });
-if (!weak.length) die('is pack ke saare moments ke paas already locator/frame_hints hain — round 2 ki zaroorat nahi.');
+if (!weak.length) die('is pack ke saare moments ke paas already locator/frame_hints hain — stage 2 ki zaroorat nahi.');
 
 // part split
 const per = Math.ceil(weak.length / partTot);
@@ -76,8 +79,8 @@ console.log(`  weak   : ${weak.length} moments ko evidence chahiye`);
 if (partTot > 1) console.log(`  part   : ${partNo}/${partTot} -> is prompt mein ${slice.length} moments`);
 if (placeholderish.length) {
   console.log(`\n  [!] ${placeholderish.length}/${usable.length} sources abhi METADATA_ONLY hain (yaani AI ne inhe`);
-  console.log('      sach mein khola hi nahi). Round-2 chalane se PEHLE inke URLs ko');
-  console.log('      apne haath se asli, chalne wale URLs se badlo — warna round 2 bhi');
+  console.log('      sach mein khola hi nahi). Stage-2 chalane se PEHLE inke URLs ko');
+  console.log('      apne haath se asli, chalne wale URLs se badlo — warna stage 2 bhi');
   console.log('      usi jhoothe source par timestamps banayega.');
   placeholderish.slice(0, 8).forEach(s => console.log(`        ${s.pack_id}/${s.source_id.padEnd(10)} ${String(s.url || s.local_file).slice(0, 52)}`));
 }
@@ -91,25 +94,33 @@ const showPacks = pack.packs.filter(pk => pk.scope && pk.scope.kind !== 'GRAPHIC
 P('You are a precision footage researcher with live YouTube access, page opening,');
 P('and caption/transcript inspection.');
 P('');
-P('This is a NARROW task. The script has already been segmented and approved. Do');
-P('NOT re-segment it, do NOT write new beats, do NOT change any wording, and do');
-P('NOT look for new videos. Your only job is to locate moments INSIDE the sources');
-P('listed below and report where they are.');
+P('THIS IS STAGE 2 OF 2. Another researcher already did stage 1: they split the');
+P('script into beats and found candidate source videos. Their work is below.');
 P('');
-P('Because the segmentation work is already done, spend your entire effort on the');
-P('one thing that actually needs browsing: opening these sources, reading their');
-P('captions, and reporting real timestamps and real quoted lines.');
+P('Your job is exactly two things:');
+P('  A) VERIFY their sources. Open every URL. Confirm it plays publicly right now,');
+P('     is the right show/episode, and note its REAL duration. Stage-1 researchers');
+P('     sometimes return plausible-looking URLs they never opened — catching that');
+P('     is part of your job, and it is why a different researcher does this stage.');
+P('  B) For each moment listed, report WHERE it is: a verbatim caption line and/or');
+P('     a real timestamp inside those sources.');
+P('');
+P('Do NOT re-segment the script, do NOT write new beats, and do NOT change any');
+P('narration wording. That work is finished and approved.');
+P('');
+P('Because segmentation and searching are already done, spend your entire budget on');
+P('the part that actually needs browsing: opening these videos, reading their');
+P('captions, and reporting real seconds.');
 P('');
 P('OUTPUT ONLY a JSON array. No Markdown fences, no commentary, no text before or');
 P('after. One element per moment_id you were able to locate. Omit any moment you');
 P('genuinely could not locate — an omission is fine, an invented timestamp is not.');
 P('');
 P('======================================================================');
-P('THE ONLY SOURCES YOU MAY USE');
+P('STEP A — VERIFY THESE SOURCES FIRST');
 P('======================================================================');
 P('');
-P('Use these exact source_id values. Do not invent new ones, do not substitute a');
-P('different upload, and never use a source from a different show.');
+P('Open each URL below before writing a single timestamp.');
 P('');
 for (const pk of pack.packs) {
   const srcs = (pk.sources || []).filter(s => s.url || s.local_file);
@@ -122,13 +133,32 @@ for (const pk of pack.packs) {
   }
   P('');
 }
-P('FIRST STEP, BEFORE ANYTHING ELSE: open every URL above and confirm it plays,');
-P('is the right show/episode, and note its REAL duration. If a URL is dead, wrong,');
-P('or not the stated content, say so by returning it in the "broken_sources" object');
-P('described at the end — and do not build timestamps on top of it.');
+P('For each source, one of three things is true:');
+P('');
+P('  1. IT WORKS. It plays, it is the right content. Use it. If its real duration');
+P('     differs from the stated one, report the real number (see "source_updates").');
+P('');
+P('  2. IT IS DEAD OR WRONG — unavailable, private, region-locked, or simply not');
+P('     the show/episode it claims. FIND A REPLACEMENT YOURSELF for that same');
+P('     episode/film, following the source-quality rules below, and return it under');
+P('     "replace_sources" keeping the SAME source_id. This is expected and');
+P('     welcome — a stage-1 mistake fixed here costs nothing; carried forward it');
+P('     ruins every moment attached to it.');
+P('');
+P('  3. IT WORKS BUT HAS NO CAPTIONS. Say so in source_updates (has_captions');
+P('     false). For those, EXACT_TIME becomes essential, because the engine cannot');
+P('     find a spoken line in a video with no subtitles.');
+P('');
+P('REPLACEMENT SOURCE QUALITY: prefer an official network/studio channel full');
+P('episode, then an official clip, then a licensed upload, then a clean scene');
+P('upload you inspected. Reject anything with a reaction host, facecam,');
+P('picture-in-picture, review commentary, fan edit, AMV, speed change, mirroring,');
+P('heavy watermark or burned-in subtitles, or the wrong version of the show.');
+P('Prefer uploads that HAVE captions. Never substitute footage from a different');
+P('show — the moment would then show the wrong series entirely.');
 P('');
 P('======================================================================');
-P('WHAT TO RETURN FOR EACH MOMENT');
+P('STEP B — WHAT TO RETURN FOR EACH MOMENT');
 P('======================================================================');
 P('');
 P('For a moment tied to a specific scene, return locators. Give BOTH kinds when');
@@ -203,24 +233,42 @@ P('======================================================================');
 P('OUTPUT');
 P('======================================================================');
 P('');
-P('Return exactly one JSON array. Each element:');
+P('Return exactly one JSON array. Most elements are moments:');
 P('  { "moment_id": "...", "locators": [...], "frame_hints": [...] }');
 P('(include whichever of locators/frame_hints you actually have).');
 P('');
-P('If any listed source turned out to be dead, wrong, or unusable, add ONE extra');
-P('element at the end of the array in this shape, so it can be replaced:');
-P('  { "broken_sources": [ { "source_id": "P02_S01", "problem": "video unavailable" } ] }');
+P('Then, at the END of the array, add these three report objects. Include each one');
+P('only if it has content — they are how stage-1 mistakes get repaired:');
+P('');
+P('  { "source_updates": [');
+P('      { "source_id": "P01_S01", "duration_sec": 1312, "has_captions": true,');
+P('        "inspection_status": "TRANSCRIPT_CHECKED" } ] }');
+P('');
+P('  { "replace_sources": [');
+P('      { "source_id": "P02_S01",');
+P('        "url": "https://www.youtube.com/watch?v=REAL_WORKING_ID",');
+P('        "video_id": "REAL_WORKING_ID", "title": "Real title",');
+P('        "channel": "Real channel", "duration_sec": 1290,');
+P('        "source_kind": "OFFICIAL_EPISODE", "has_captions": true,');
+P('        "reason": "original URL was unavailable" } ] }');
+P('');
+P('  { "broken_sources": [');
+P('      { "source_id": "P05_S01", "problem": "video unavailable, no replacement found" } ] }');
+P('');
+P('Use replace_sources when you FOUND a working substitute; broken_sources only');
+P('when you could not. Keep the original source_id in both cases — everything else');
+P('in the project is already wired to it.');
 P('');
 P('Do not include moments you could not verify. Do not add explanation text.');
 P('Do not stop partway through the array.');
 
 fs.mkdirSync(outDir, { recursive: true });
-const outFile = path.join(outDir, partTot > 1 ? `ROUND2_PROMPT_part${partNo}.txt` : 'ROUND2_PROMPT.txt');
+const outFile = path.join(outDir, partTot > 1 ? `STAGE2_PROMPT_part${partNo}.txt` : 'STAGE2_PROMPT.txt');
 fs.writeFileSync(outFile, L.join('\n') + '\n');
 
 const rel = p => { const r = path.relative(ROOT, p); return r.startsWith('..') ? p : r; };
 line();
 console.log(`  likha: ${rel(outFile)}  (${Math.round(L.join('\n').length / 1024)} KB)`);
 console.log('  isse Genspark/Gemini mein paste karo. Jo JSON array aaye use save karke:');
-console.log(`     node tools/apply-round2.js ${rel(packFile)} round2.json`);
+console.log(`     node tools/apply-stage2.js ${rel(packFile)} stage2.json`);
 line();

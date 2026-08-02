@@ -24,7 +24,8 @@ const info = {
     'RAW-TEST-LOG.txt': hash('RAW-TEST-LOG.txt'),
     'RAW-REGRESSION-LOG.txt': hash('RAW-REGRESSION-LOG.txt'),
   },
-  canonical_prompt_sha256: hash('prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt'),
+  canonical_prompt_sha256: hash('prompts/STAGE1_SOURCES_AND_BEATS_PROMPT.txt'),
+  oneshot_prompt_sha256: hash('prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt'),
   previous_prompt_sha256: hash('prompts/GENSPARK_M1_2_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt'),
 };
 fs.writeFileSync(path.join(ROOT, 'BUILD_INFO.json'), JSON.stringify(info, null, 2));

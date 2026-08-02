@@ -501,14 +501,14 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     C.status === 1 && /FAIL/.test(C.stdout), `exit=${C.status}`);
 })();
 
-// ---------- T-R2: round-2 prompt + apply (evidence-less pack ko bachana) ----------
+// ---------- T-S2: two-stage research (stage-2 prompt + validating apply) ----------
 // Research AI aksar script to sahi baant deta hai par asli research nahi karta.
 // Aisa pack render nahi ho sakta, par uska segmentation sahi hota hai. Round-2
 // wahi segmentation reuse karke sirf locators maangta hai. Apply karte waqt
 // koi bhi galat locator chupke se andar nahi jana chahiye — warna hum wahi
 // jhoothi evidence wapas le aayenge jisse bachna tha.
 (() => {
-  const d = path.join(FX, 'round2');
+  const d = path.join(FX, 'stage2');
   fs.mkdirSync(d, { recursive: true });
   const pk = {
     schema_version: 'scene-research-pack-v1', project_title: 'R2',
@@ -529,12 +529,12 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     ],
   };
   const pf = path.join(d, 'pack.json'); fs.writeFileSync(pf, JSON.stringify(pk, null, 2));
-  const A = spawnSync('node', ['tools/make-round2.js', pf, `--out=${d}`], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
-  const prompt = fs.existsSync(path.join(d, 'ROUND2_PROMPT.txt')) ? fs.readFileSync(path.join(d, 'ROUND2_PROMPT.txt'), 'utf8') : '';
-  check('T-R21 round-2 prompt lists only the moments still missing evidence',
+  const A = spawnSync('node', ['tools/make-stage2.js', pf, `--out=${d}`], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  const prompt = fs.existsSync(path.join(d, 'STAGE2_PROMPT.txt')) ? fs.readFileSync(path.join(d, 'STAGE2_PROMPT.txt'), 'utf8') : '';
+  check('T-S21 stage-2 prompt lists only the moments still missing evidence',
     A.status === 0 && /P01_M01/.test(prompt) && /P02_M01/.test(prompt) && /P09_M01/.test(prompt) && !/P01_M02/.test(prompt),
     `exit=${A.status} bytes=${prompt.length} hasSolved=${/P01_M02/.test(prompt)}`);
-  check('T-R22 analysis moments are asked for frame_hints, not invented scenes',
+  check('T-S22 analysis moments are asked for frame_hints, not invented scenes',
     /P09_M01\s+\[ANALYSIS/.test(prompt) && /frame_hints only/.test(prompt), 'ANALYSIS marker present');
 
   // round-2 response: 2 valid + 4 that MUST be rejected
@@ -552,29 +552,58 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   ];
   const rf = path.join(d, 'r2.json'); fs.writeFileSync(rf, '```json\n' + JSON.stringify(resp) + '\n```');   // fence bhi test karo
   const outPack = path.join(d, 'applied.json');
-  const B = spawnSync('node', ['tools/apply-round2.js', pf, rf, '-o', outPack], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  const B = spawnSync('node', ['tools/apply-stage2.js', pf, rf, '-o', outPack], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
   let AP = null; try { AP = JSON.parse(fs.readFileSync(outPack, 'utf8')); } catch {}
   const find = id => { for (const p of (AP ? AP.packs : [])) for (const m of p.moments) if (m.moment_id === id) return m; return null; };
   const m1 = find('P01_M01'), g1 = find('P09_M01'), x1 = find('P02_M01'), m2 = find('P01_M02');
-  check('T-R23 valid locators applied, DIALOGUE ordered first (survives upload offset)',
+  check('T-S23 valid locators applied, DIALOGUE ordered first (survives upload offset)',
     B.status === 0 && m1 && m1.locators.length === 2 && m1.locators[0].locator_type === 'DIALOGUE'
       && (m1.fallback_plan.frame_hints || []).length === 1 && g1 && g1.fallback_plan.frame_hints.length === 1,
     `exit=${B.status} m1locs=${m1 ? m1.locators.length : 'n/a'}`);
-  check('T-R24 cross-scope source, past-duration time, unknown moment and 2-word dialogue all rejected',
+  check('T-S24 cross-scope source, past-duration time, unknown moment and 2-word dialogue all rejected',
     x1 && x1.locators.length === 0
       && m1 && !m1.locators.some(l => l.start_sec === 9000)
       && m2 && !m2.locators.some(l => l.locator_type === 'DIALOGUE')
       && /REJECT/.test(B.stdout) && /GHOST_M99/.test(B.stdout),
     `crossShow=${x1 ? x1.locators.length : '?'} rejectsShown=${/REJECT/.test(B.stdout)}`);
-  check('T-R25 broken sources surfaced, applied pack still validates',
+  check('T-S25 broken sources surfaced, applied pack still validates',
     /video unavailable/.test(B.stdout) && AP && require(path.join(ROOT, 'src', 'validate.js')).validateFile(outPack).ok,
     `brokenShown=${/video unavailable/.test(B.stdout)}`);
 
   // in-place mode must leave a backup (galti se pack kho na jaye)
-  const C = spawnSync('node', ['tools/apply-round2.js', pf, rf], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
-  check('T-R26 in-place apply writes a .bak before touching the pack',
+  const C = spawnSync('node', ['tools/apply-stage2.js', pf, rf], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  check('T-S26 in-place apply writes a .bak before touching the pack',
     C.status === 0 && fs.existsSync(pf + '.bak') && JSON.parse(fs.readFileSync(pf + '.bak', 'utf8')).packs.length === 3,
     `exit=${C.status} bak=${fs.existsSync(pf + '.bak')}`);
+
+  // ---- stage 2 ko stage 1 ke TOOTE sources theek karne dena ----
+  // Yahi do-stage ka asli faayda hai: stage 1 ne jo jhootha/dead URL diya, wo
+  // yahan pakda aur badla jata hai. Par naya URL bhi bina check ke andar na jaye.
+  const pf2 = path.join(d, 'pack2.json'); fs.writeFileSync(pf2, JSON.stringify(pk, null, 2));
+  const fix = [
+    { source_updates: [{ source_id: 'P01_S01', duration_sec: 1300, has_captions: true, inspection_status: 'TRANSCRIPT_CHECKED' }] },
+    { replace_sources: [{ source_id: 'P02_S01', url: 'https://www.youtube.com/watch?v=REALFIXED01', video_id: 'REALFIXED01', title: 'Real ep', channel: 'Official', duration_sec: 1250, has_captions: true, reason: 'original was unavailable' }] },
+    { replace_sources: [{ source_id: 'P01_S01', url: 'not a url at all', reason: 'junk' }] },              // reject hona chahiye
+    { replace_sources: [{ source_id: 'NOPE_S99', url: 'https://www.youtube.com/watch?v=zzzzzzzzzzz' }] },  // reject hona chahiye
+    // naye duration (1300s) ke andar ka timestamp ab valid hai — pehle 80s tha
+    { moment_id: 'P01_M01', locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 900, end_sec: 906 }] },
+  ];
+  const ff2 = path.join(d, 'fix.json'); fs.writeFileSync(ff2, JSON.stringify(fix));
+  const outPack2 = path.join(d, 'fixed.json');
+  const D = spawnSync('node', ['tools/apply-stage2.js', pf2, ff2, '-o', outPack2], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  let FP = null; try { FP = JSON.parse(fs.readFileSync(outPack2, 'utf8')); } catch {}
+  const src = sid => { for (const p of (FP ? FP.packs : [])) for (const s of (p.sources || [])) if (s.source_id === sid) return s; return null; };
+  const s1 = src('P01_S01'), s2 = src('P02_S01');
+  const fm1 = (() => { for (const p of (FP ? FP.packs : [])) for (const m of p.moments) if (m.moment_id === 'P01_M01') return m; return null; })();
+  check('T-S27 stage 2 can replace a dead stage-1 source and correct its duration',
+    D.status === 0 && s2 && /REALFIXED01/.test(s2.url || '') && s1 && s1.duration_sec === 1300 && s1.has_captions === true,
+    `exit=${D.status} p2url=${s2 ? String(s2.url).slice(-12) : 'n/a'} p1dur=${s1 ? s1.duration_sec : '?'}`);
+  check('T-S28 junk replacement URL and unknown source_id are refused',
+    s1 && /youtube|\.mp4$/i.test(String(s1.url || s1.local_file || '')) && !/not a url/.test(String(s1.url || '')) && !src('NOPE_S99'),
+    `p1src=${s1 ? String(s1.url || s1.local_file).slice(0, 26) : 'n/a'}`);
+  check('T-S29 timestamps are validated against the CORRECTED duration, not the stale one',
+    fm1 && fm1.locators.some(l => l.start_sec === 900),
+    `applied900=${fm1 ? fm1.locators.some(l => l.start_sec === 900) : 'n/a'}`);
 })();
 
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------

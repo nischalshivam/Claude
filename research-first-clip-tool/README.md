@@ -44,35 +44,52 @@ Sab kuch free, open-source tools par chalta hai (Node + FFmpeg + yt-dlp).
 
 ### Step 1 — research pack (ye ek manual step hai)
 
-1. `prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt` kholo. **Yehi
-   canonical prompt hai.**
-2. Usme sirf `<PASTE CLEAN NARRATION SCRIPT HERE>` ki jagah apni **poori clean
-   script** paste karo. Aur kuch mat badlo.
-3. Genspark (ya koi bhi browsing research AI: Gemini Pro, ChatGPT with search,
-   Perplexity) se live YouTube search + transcript inspection ke sath chalwao.
-4. Jo **JSON object** aaye, use `input/scene-research.json` mein save karo.
-5. `CHECKPACK.bat` chalao (section 1b) — render se pehle hi pata chal jayega ki
-   pack theek hai ya nahi.
+Research **do stage mein** hoti hai, do alag Genspark accounts par. Ek hi prompt
+mein "script baanto + video dhoondho + verify karo + timestamp nikaalo" maangne
+par model ka poora budget instructions follow karne mein chala jata hai aur asli
+browsing reh jati hai. Alag karne se har stage ka kaam chhota hai — aur stage 2
+stage-1 ke links ko **verify** bhi karta hai.
 
-**Ye prompt ek-shot ke liye bana hai.** Genspark ek account par din mein ek hi
-message deta hai, isliye isme wo saari galtiyan already band ki gayi hain jo
-pichhle packs mein mili thi: seconds-based coverage, har verified moment par
-DIALOGUE **aur** EXACT_TIME dono, har pack mein ek jaisa `scope.title`, har
-moment par `fallback_plan`, aur analysis beats ke liye `frame_hints`.
+**STAGE 1 — sources + beats** (pehla account)
 
-**Lambi script (12+ min)?** `prompts/SPLIT_MODE_ADDENDUM.txt` padho — script ko
-2-3 accounts par baant kar chalao, phir:
+1. `prompts/STAGE1_SOURCES_AND_BEATS_PROMPT.txt` kholo
+2. `<PASTE CLEAN NARRATION SCRIPT HERE>` ki jagah poori clean script paste karo
+3. Jo JSON aaye use `input/scene-research.json` mein save karo
+
+   Is stage ka kaam: script ko beats mein baantna aur **asli, chalne wale source
+   videos** dhoondhna. Timestamps yahan zaroori nahi — isliye model ka poora
+   budget browsing par lagta hai.
+
+**STAGE 2 — verify + timestamps** (doosra account)
 
 ```
-node tools\merge-packs.js part1.json part2.json -o input\scene-research.json
+node tools\make-stage2.js input\scene-research.json
 ```
 
-Merge tool ID collision, duplicate sources aur scope-title mismatch khud
-sambhalta hai.
+4. `output\STAGE2_PROMPT.txt` doosre account mein paste karo
+5. Jo JSON array aaye use `stage2.json` mein save karo
+6. ```
+   node tools\apply-stage2.js input\scene-research.json stage2.json
+   CHECKPACK.bat
+   ```
 
-> `prompts/GENSPARK_M1_2_ONE_SHOT_...txt` pichhla version hai aur
-> `prompts/LEGACY-research-pack-generator.txt` usse bhi purana — normal use ke
-> liye **mat** lo.
+   Is stage ka kaam: stage-1 ke har source ko **kholna aur verify karna**, dead/
+   galat URL ko **badalna**, aur har beat ka asli timestamp/dialogue/frame dena.
+
+`apply-stage2.js` bharosa nahi karta — check karta hai. Jo galat hai wo pack mein
+**jata hi nahi** aur console par wajah ke saath dikhta hai: doosre show ka source,
+episode ki length se bahar ka timestamp, pack mein na hone wala moment_id,
+do-shabd ka dialogue, ya junk replacement URL. Pack ka `.bak` bhi banta hai.
+
+Bade packs (80+ moments) ke liye stage 2 ko `--part=1/2` se do accounts mein
+baant sakte ho.
+
+> **Ek hi shot mein sab kuch chahiye?** `prompts/GENSPARK_M2_5_ONE_SHOT_...txt`
+> wo karta hai, par tabhi jab script chhoti ho (~8 min se kam). Lambi script par
+> do-stage system kaafi zyada bharosemand hai.
+>
+> `prompts/GENSPARK_M1_2_ONE_SHOT_...txt` aur
+> `prompts/LEGACY-research-pack-generator.txt` purane versions hain.
 
 ### Step 2 — input files
 
@@ -134,33 +151,19 @@ Exit codes: `0` = pack theek, `2` = weak (upgrade karo), `1` = pack padha nahi g
 
 ---
 
-## 1c. Jab research AI ne research ki hi nahi (round 2)
+## 1c. Jab research AI ne research ki hi nahi
 
 Aisa hota hai: AI script ko **theek** beats mein baant deta hai (cues exact, poori
 coverage) par live browsing nahi karta — sources `METADATA_ONLY` reh jate hain,
 locators khaali ya `APPROX_WINDOW`. Aisa pack render nahi ho sakta.
 
-Us pack ko phenkna **mat**. Segmentation sahi hai, sirf evidence missing hai.
+Us pack ko phenkna **mat**. Segmentation sahi hai, sirf evidence missing hai —
+aur wahi stage 2 ka kaam hai. Seedha `make-stage2.js` chala do (upar Step 1). Jo
+sources jhoothe the, stage 2 unhe khud pakad kar badal dega, kyunki wo alag
+account/session hai aur unhe khud khol kar dekhta hai.
 
-```
-1. pack ke `sources` mein ASLI, chalne wale URLs daalo (ya local_file)
-2. node tools\make-round2.js input\scene-research.json
-3. output\ROUND2_PROMPT.txt naye Genspark account mein paste karo
-4. jo JSON array aaye use round2.json mein save karo
-5. node tools\apply-round2.js input\scene-research.json round2.json
-6. CHECKPACK.bat
-```
-
-Round-2 prompt bahut chhota hota hai — usme AI ka kaam sirf itna hai ki diye gaye
-sources ke andar moments dhoondhe. Na script padhna, na beats banana, na video
-dhoondna. Isliye ek hi message mein asli research hone ka chance kaafi zyada hota
-hai.
-
-`apply-round2.js` har entry check karke lagata hai. Jo galat hai wo pack mein
-**jata hi nahi**, aur console par wajah ke saath dikhta hai: doosre show ka
-source, episode ki length se bahar ka timestamp, pack mein maujood na hone wala
-moment_id, ya do-shabd ka dialogue. Bade packs (83+ moments) ke liye
-`--part=1/2` se prompt do accounts mein baant sakte ho.
+`CHECKPACK.bat` har stage ke baad chalao — 8 second mein pata chal jayega ki
+kitna aage badhe.
 
 ---
 
@@ -316,11 +319,17 @@ khatam).
   aur scope-title mismatch sirf batata hai — apne-aap merge nahi karta
   (`--unify-titles` explicitly maango), kyunki "Naruto" aur "Naruto Shippuden"
   sach mein alag show hain.
-- **`tools/make-round2.js` + `tools/apply-round2.js`** — jab research AI segmentation
+- **`tools/make-stage2.js` + `tools/apply-stage2.js`** — jab research AI segmentation
   to sahi kare par live research na kare, tab us pack ko bachane ke liye. Focused
   prompt (sirf locators maangta hai) + validating merge jo galat entry ko andar
   ghusne nahi deta.
-- 18 naye regression tests (T-PACK1..7, T-MERGE1..5, T-R21..26). Suite ab **41 PASS / 0 FAIL**.
+- **Two-stage research** — `prompts/STAGE1_SOURCES_AND_BEATS_PROMPT.txt` (beats +
+  asli sources dhoondho, timestamps nahi) + `tools/make-stage2.js` (verify +
+  timestamps maangne wala prompt) + `tools/apply-stage2.js` (validating merge).
+  Stage 2 stage-1 ke dead/galat sources ko replace bhi kar sakta hai; junk URL
+  aur unknown source_id refuse hote hain, aur timestamps corrected duration par
+  check hote hain.
+- 21 naye regression tests (T-PACK1..7, T-MERGE1..5, T-S21..29). Suite ab **44 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping
