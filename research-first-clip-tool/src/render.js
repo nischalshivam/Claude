@@ -243,17 +243,26 @@ module.exports = function render(spec, cfg, st, tl) {
   const audio = spec.audio;
   const vdur = U.probe(master).duration || tl.total;
   if (audio && fs.existsSync(audio)) {
-    // VO truncate se bachne ko: video+audio dono ko MAX length tak pad karo
-    // (video = last frame freeze, audio = silence). -shortest nahi.
-    const adur = U.probe(audio).duration || vdur;
-    const target = Math.max(vdur, adur);
-    const vpad = Math.max(0, +(target - vdur).toFixed(3));
-    const aoff = spec.previewOffset ? ['-ss', String(spec.previewOffset)] : [];
+    // ---- TIMELINE hi authoritative hai (M2.1 fix) ----
+    // Purana bug: target = max(video, POORA audio). Preview mein video 122s tha
+    // aur audio 837s, isliye aakhri frame ~714 SECOND tak clone ho gaya.
+    // Ab: length = video/timeline. Audio ko preview offset se seek karke usi
+    // length tak trim karte hain (chhota pade to silence se pad — video kabhi
+    // freeze nahi hoga).
+    const offset = spec.previewOffset || 0;
+    const adurRaw = U.probe(audio).duration || 0;
+    const audioAvail = Math.max(0, adurRaw - offset);
+    const target = +vdur.toFixed(3);
+    if (!offset && adurRaw && Math.abs(adurRaw - vdur) > 1.0) {
+      U.warn(`audio ${adurRaw.toFixed(1)}s vs timeline ${vdur.toFixed(1)}s — ${Math.abs(adurRaw - vdur).toFixed(1)}s ka farak. ` +
+        `(SRT aur voiceover mismatch ho sakta hai; video timeline ke hisaab se banega.)`);
+    }
+    if (audioAvail + 0.05 < target) U.warn(`audio sirf ${audioAvail.toFixed(1)}s hai par timeline ${target.toFixed(1)}s — aakhir mein silence padega.`);
+    const aoff = offset ? ['-ss', String(offset)] : [];
     const m = U.ffmpeg(['-i', master, ...aoff, '-i', audio,
-      '-filter_complex', `[0:v]tpad=stop_mode=clone:stop_duration=${vpad}[v];[1:a]apad[a]`,
-      '-map', '[v]', '-map', '[a]', '-t', target.toFixed(3),
-      '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
-      '-pix_fmt', 'yuv420p', '-r', String(FPS), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', finalOut]);
+      '-filter_complex', `[1:a]apad[a]`,
+      '-map', '0:v:0', '-map', '[a]', '-t', target.toFixed(3),
+      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', finalOut]);
     if (!m.ok || !fs.existsSync(finalOut)) throw new Error('audio mux fail: ' + (m.stderr || '').slice(0, 200));
   } else if (cfg.render.allowSilent) {
     U.warn('voiceover audio nahi — allowSilent=true, silent video (test-only).');

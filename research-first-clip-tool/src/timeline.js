@@ -64,7 +64,11 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   function shotSpans(a, b) {
     const span = b - a;
     if (span <= MAXS) return [[a, b]];
-    const nShots = Math.max(2, Math.round(span / TARGET));
+    // HARD CAP: koi bhi single shot (clip/still/graphic) HARD_MAX se lamba nahi
+    // ho sakta. User rule: 30s se zyada bilkul nahi. Isliye shot count aisa
+    // chunte hain ki har tukda cap ke andar rahe.
+    const HARD = Math.max(2, S.hardMaxSeconds || 30);
+    const nShots = Math.max(2, Math.round(span / TARGET), Math.ceil(span / Math.min(MAXS, HARD)));
     const ideal = span / nShots;
     const bounds = [a];
     for (let k = 1; k < nShots; k++) {
@@ -110,6 +114,27 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     return [...ids].filter(Boolean);
   };
 
+  // CONTEXTUAL SCOPE: agar moment ke apne allowed sources se koi frame nahi milta
+  // (jaise analysis/GRAPHIC pack, ya aisa pack jiska scope title zara alag likha
+  // ho), to us waqt narration mein jo show chal raha hai — yaani pichhle/agle
+  // anchor ka scope — use hota hai. Cross-show essay mein bhi ye sahi rehta hai
+  // kyunki wo usi section ka show hota hai. Poore project ka bank kabhi nahi.
+  const anchorList = resolved.filter(e => e.beat_start != null).sort((a, b) => a.beat_start - b.beat_start);
+  const hasFrames = ids => ids.some(sid => bank[sid] && bank[sid].frames.length);
+  const contextAllowedFor = (e) => {
+    const own = allowedOf(e);
+    if (hasFrames(own)) return own;
+    const idx = anchorList.findIndex(x => x.moment_id === e.moment_id);
+    for (let d = 1; d < anchorList.length; d++) {           // sabse nazdeeki neighbour pehle
+      for (const j of [idx - d, idx + d]) {
+        if (j < 0 || j >= anchorList.length) continue;
+        const cand = allowedOf(anchorList[j]);
+        if (hasFrames(cand)) return cand;
+      }
+    }
+    return own;
+  };
+
   let statAssets = { video: 0, still: 0, montage: 0, graphic: 0, card: 0 };
 
   for (const a of anchors) {
@@ -121,7 +146,7 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     // keyframe still lagta hai (scope-correct, aur galat scene claim nahi karta).
     // Review mode mein wo clip report/review video mein dikhti hai.
     const hasClip = e.status === 'RESOLVED' && e.clip && fs.existsSync(U.p(id, e.clip));
-    const allowed = allowedOf(e);
+    const allowed = contextAllowedFor(e);
     const nearSec = e.cut ? e.cut.start : null;
 
     // ---- KEY IDEA: video shot kabhi clip se LAMBA nahi hota (isliye koi frozen
@@ -238,6 +263,37 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
       statAssets.generic = (statAssets.generic || 0) + 1;
     }
   }
+  slots.sort((a, b) => a.start - b.start);
+
+  // ---- HARD CAP ENFORCEMENT (final safety net) ----
+  // Koi bhi visual screen par hardMaxSeconds (default 30s) se zyada nahi rahega.
+  // Lamba slot mile to use barabar tukdon mein todkar alag-alag frames dete hain
+  // (video slot ho to baad ke tukde stills ban jaate hain — freeze nahi).
+  const HARD = Math.max(2, S.hardMaxSeconds || 30);
+  const capped = [];
+  for (const s of slots) {
+    if (s.dur <= HARD + 0.01) { capped.push(s); continue; }
+    const parts = Math.ceil(s.dur / HARD);
+    const len = s.dur / parts;
+    for (let k = 0; k < parts; k++) {
+      const a = +(s.start + len * k).toFixed(3), b = +(s.start + len * (k + 1)).toFixed(3);
+      if (k === 0) { capped.push({ ...s, start: a, end: b, dur: +(b - a).toFixed(3) }); continue; }
+      // baad ke tukde: naya scope-correct frame (wahi frame dobara nahi)
+      const alw = allowedOf(resolved.find(e => e.moment_id === s.moment_id) || {});
+      const pk = alw.length ? KF.pickFrames(bank, alw, usedFrames, 1, s.image_time != null ? s.image_time : null) : [];
+      if (pk.length) {
+        usedFrames.add(pk[0].file);
+        capped.push({ ...s, kind: 'still', asset: 'VERIFIED_SOURCE_STILL', video: null, images: null,
+          image: pk[0].file, image_source: pk[0].source_id, image_time: pk[0].t,
+          why: `hard-cap split — ${pk[0].why}`, start: a, end: b, dur: +(b - a).toFixed(3) });
+        statAssets.still++;
+      } else {
+        capped.push({ ...s, start: a, end: b, dur: +(b - a).toFixed(3), why: (s.why || '') + ' [hard-cap split]' });
+      }
+    }
+    U.warn(`shot ${s.dur.toFixed(1)}s > ${HARD}s cap — ${parts} tukdon mein toda (koi visual ${HARD}s se zyada screen par nahi rahega)`);
+  }
+  slots.length = 0; slots.push(...capped);
   slots.sort((a, b) => a.start - b.start);
   slots.forEach((s, i) => { s.i = i; });
 

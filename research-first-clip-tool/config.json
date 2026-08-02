@@ -83,7 +83,9 @@
     "maxSeconds": 7.5,
     "maxFreezeSeconds": 0.5,
     "gapAbsorbSeconds": 1.5,
-    "stillSeconds": 5
+    "stillSeconds": 5,
+    "hardMaxSeconds": 30,
+    "_hardNote": "HARD CAP: koi bhi visual (clip/still/graphic) itne second se zyada screen par nahi rahega."
   },
   "fallback": {
     "_note": "Zero-card ladder. keyframes = pehle se downloaded approved source se nikale gaye frames (free, scope-correct).",
