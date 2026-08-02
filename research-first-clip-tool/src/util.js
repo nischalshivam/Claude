@@ -73,16 +73,36 @@ const ffmpegRaw = (args, opts) => run(tool('ffmpeg'), ['-hide_banner', ...args],
 const ytdlp = (args, opts) => run(tool('yt-dlp'), args, opts);
 
 // ---------- media probe ----------
-function probe(file) {
+// STRICT: ek video asset tabhi valid hai jab usme asli video stream ho, w/h > 0,
+// duration > minDuration, aur file size sensible ho. (M1.3 bug: 262-byte empty
+// download ko `ok:true` mil jata tha -> READY print hota tha -> cut fail.)
+const MIN_MEDIA_BYTES = 4096;
+const MIN_MEDIA_SECONDS = 0.3;
+
+function probe(file, { strict = true } = {}) {
   if (!file || !fs.existsSync(file)) return { ok: false, error: 'file missing' };
+  let bytes = 0;
+  try { bytes = fs.statSync(file).size; } catch {}
+
+  const finish = (res) => {
+    if (!strict) return res;
+    if (!res.ok) return res;
+    if (bytes < MIN_MEDIA_BYTES) return { ok: false, error: `empty/truncated media (${bytes} bytes)`, bytes, ...res, ok: false };
+    if (!res.width || !res.height) return { ok: false, error: `no usable video stream (${res.width}x${res.height})`, bytes, width: res.width, height: res.height, duration: res.duration };
+    if (!(res.duration > MIN_MEDIA_SECONDS)) return { ok: false, error: `duration too small (${res.duration}s)`, bytes, width: res.width, height: res.height, duration: res.duration };
+    return { ...res, bytes };
+  };
+
   const r = run(tool('ffprobe'), ['-v', 'error', '-select_streams', 'v:0',
     '-show_entries', 'stream=width,height,duration,codec_name:format=duration', '-of', 'json', file]);
   if (r.ok && r.stdout.trim()) {
     try {
       const j = JSON.parse(r.stdout);
-      const s = (j.streams && j.streams[0]) || {};
+      const streams = Array.isArray(j.streams) ? j.streams : [];
+      const s = streams[0] || {};
       const dur = parseFloat(s.duration) || parseFloat(j.format && j.format.duration) || 0;
-      return { ok: true, width: +s.width || 0, height: +s.height || 0, duration: dur, codec: s.codec_name || '', via: 'ffprobe' };
+      if (!streams.length) return finish({ ok: false, error: 'ffprobe: zero video streams', width: 0, height: 0, duration: dur });
+      return finish({ ok: true, width: +s.width || 0, height: +s.height || 0, duration: dur, codec: s.codec_name || '', via: 'ffprobe' });
     } catch { /* fall through */ }
   }
   const f = ffmpegRaw(['-i', file]);
@@ -92,8 +112,8 @@ function probe(file) {
   const rm = txt.match(/Video:.*?,\s*(\d+)x(\d+)/);
   const width = rm ? +rm[1] : 0, height = rm ? +rm[2] : 0;
   const cm = txt.match(/Video:\s*([a-z0-9]+)/i);
-  if (!duration && !width) return { ok: false, error: 'probe failed', raw: txt.slice(0, 200) };
-  return { ok: true, width, height, duration, codec: cm ? cm[1] : '', via: 'ffmpeg' };
+  if (!duration && !width) return { ok: false, error: 'probe failed (no stream/duration)', bytes, raw: txt.slice(0, 200) };
+  return finish({ ok: true, width, height, duration, codec: cm ? cm[1] : '', via: 'ffmpeg' });
 }
 
 // ---------- yt-dlp JS runtime (EJS) — ek shared builder (meta+subs+download) ----------

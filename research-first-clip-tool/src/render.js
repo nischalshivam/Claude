@@ -71,28 +71,80 @@ module.exports = function render(spec, cfg, st, tl) {
     const dur = Math.max(0.3, s.dur);
     let r;
     if (s.kind === 'video' && s.video && fs.existsSync(U.p(id, s.video))) {
-      const vf = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1,tpad=stop=-1:stop_mode=clone`;
+      // M2: shot planner guarantee karta hai ki video slot clip se lamba na ho,
+      // isliye ab koi infinite `tpad` clone (= 7-14s frozen frame) nahi chahiye.
+      // Bas bahut chhota shortfall ho to bounded hold (<= maxFreezeSeconds).
+      const clipDur = (s.clip_dur || U.probe(U.p(id, s.video)).duration) || dur;
+      const maxFreeze = (cfg.shots && cfg.shots.maxFreezeSeconds != null) ? cfg.shots.maxFreezeSeconds : 0.5;
+      let vf = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`;
+      const shortfall = dur - clipDur;
+      if (shortfall > 0.02) vf += `,tpad=stop_mode=clone:stop_duration=${Math.min(maxFreeze, shortfall).toFixed(2)}`;
       r = U.ffmpeg(['-i', U.p(id, s.video), '-vf', vf, '-t', dur.toFixed(3),
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 300000 });
-    } else {
-      // card
-      const kind = s.kind === 'video' ? 'needs_source' : s.kind;   // clip missing -> needs_source card
-      const bg = CARD_BG[kind] || CARD_BG.text;
-      const label = (s.label === 'NEEDS SOURCE' || s.label === 'NEEDS REVIEW') ? s.label : '';
-      const body = (label ? label + '\n\n' : '') + wrap(s.text || s.cue || '');
-      const vf = ['-f', 'lavfi', '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`];
-      let filter = null;
-      if (font && drawtextOK) {
-        const txtFile = path.join(segDir, `txt_${s.i}.txt`);
-        fs.writeFileSync(txtFile, body);
-        filter = `drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=white:fontsize=44:line_spacing=14:x=(w-text_w)/2:y=(h-text_h)/2`;
+    } else if (s.kind === 'still' && s.image && fs.existsSync(U.p(id, s.image))) {
+      // STILL: Ken Burns (slow zoom/pan) + blurred background fill — dead card nahi
+      // Ken Burns = fixed-size crop jo upscaled image par PAN karta hai.
+      // (zoompan bahut mehnga tha: ~12s/still; ye ~3s/still deta hai aur dims
+      //  hamesha even/valid rehte hain.) Har still ka rukh alag — variety.
+      const z = Math.max(0.06, cfg.render.kenBurnsZoom || 0.1);
+      const SW = Math.round(W * (1 + z) / 2) * 2, SH = Math.round(H * (1 + z) / 2) * 2;
+      const dx = SW - W, dy = SH - H;
+      const D = dur.toFixed(3);
+      const moves = [
+        `x='${dx}*(t/${D})':y='${dy}/2'`,                    // left -> right
+        `x='${dx}*(1-t/${D})':y='${dy}/2'`,                  // right -> left
+        `x='${dx}/2':y='${dy}*(t/${D})'`,                    // top -> bottom
+        `x='${dx}/2':y='${dy}*(1-t/${D})'`,                  // bottom -> top
+      ];
+      const mv = moves[s.i % moves.length];
+      const vf = `scale=${SW}:${SH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H}:${mv},fps=${FPS},setsar=1`;
+      r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', U.p(id, s.image), '-t', dur.toFixed(3), '-vf', vf,
+        '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
+        '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
+      if (!r.ok) {   // zoompan fail -> simple static fit (still better than card)
+        r = U.ffmpeg(['-loop', '1', '-i', U.p(id, s.image), '-t', dur.toFixed(3),
+          '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
       }
-      const args = [...vf];
-      if (filter) args.push('-vf', filter);
-      args.push('-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
-        '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg);
-      r = U.ffmpeg(args, { timeout: 120000 });
+    } else {
+      // ---- GRAPHIC / CARD ----
+      const isDiag = ['needs_source', 'needs_review'].includes(s.kind);
+      const label = (s.label === 'NEEDS SOURCE' || s.label === 'NEEDS REVIEW') ? s.label : '';
+      const body = wrap(s.text || s.cue || '', 34);
+      if (!isDiag) {
+        // DESIGNED editorial graphic: dark gradient + accent bar + big type
+        // (M1.3 ka flat blue paragraph card nahi)
+        const grad = `gradients=s=${W}x${H}:c0=0x141a2e:c1=0x0a0d18:x0=0:y0=0:x1=${W}:y1=${H}:n=2:d=${dur.toFixed(3)}:r=${FPS}`;
+        const args = ['-f', 'lavfi', '-i', grad];
+        const filters = [`drawbox=x=140:y=(ih-360)/2:w=8:h=360:color=0x4f8cff@0.95:t=fill`];
+        if (font && drawtextOK) {
+          const txtFile = path.join(segDir, `txt_${s.i}.txt`);
+          fs.writeFileSync(txtFile, body);
+          filters.push(`drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=0xf2f5ff:fontsize=54:line_spacing=20:x=190:y=(h-text_h)/2`);
+        }
+        args.push('-vf', filters.join(','), '-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
+          '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg);
+        r = U.ffmpeg(args, { timeout: 120000 });
+        if (!r.ok) {   // gradients filter na ho to solid par wahi layout
+          const a2 = ['-f', 'lavfi', '-i', `color=c=0x141a2e:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`, '-vf', filters.join(','),
+            '-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg];
+          r = U.ffmpeg(a2, { timeout: 120000 });
+        }
+      } else {
+        // review/debug mode ka diagnostic card (production mein aata hi nahi)
+        const bg = CARD_BG[s.kind] || CARD_BG.text;
+        const txt = (label ? label + '\n\n' : '') + body;
+        const args = ['-f', 'lavfi', '-i', `color=c=${bg}:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`];
+        if (font && drawtextOK) {
+          const txtFile = path.join(segDir, `txt_${s.i}.txt`);
+          fs.writeFileSync(txtFile, txt);
+          args.push('-vf', `drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=white:fontsize=44:line_spacing=14:x=(w-text_w)/2:y=(h-text_h)/2`);
+        }
+        args.push('-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
+          '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg);
+        r = U.ffmpeg(args, { timeout: 120000 });
+      }
     }
     if (!r.ok || !fs.existsSync(seg)) {
       // NEVER skip time — same-duration fallback solid card (no drift, P1-8)

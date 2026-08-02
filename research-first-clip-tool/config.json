@@ -1,32 +1,28 @@
 {
   "_readme": "Har setting yahan se badalti hai. Milestone 1 mein Gemini/discovery/ASR band hain (wo M2 mein aayenge).",
-
   "canvas": {
     "_note": "Final video ka size aur fps.",
     "width": 1920,
     "height": 1080,
     "fps": 30
   },
-
   "clip": {
     "_note": "Har moment ka preferred_clip_sec follow hota hai (normally 3-9s). Koi hard 6s cap nahi. Image/still 10-20s.",
     "defaultClipSeconds": 6,
     "videoMinSeconds": 3,
     "videoMaxSeconds": 9,
     "dialoguePrePadSeconds": 0.8,
-    "dialoguePostPadSeconds": 1.0,
+    "dialoguePostPadSeconds": 1,
     "downloadGuardSeconds": 3,
     "stillSeconds": 12,
     "stillMinSeconds": 10,
     "stillMaxSeconds": 20
   },
-
   "align": {
     "_note": "script_cue_exact ko SRT/script line se match karne ke thresholds (handoff Stage 2).",
     "acceptSimilarity": 0.92,
     "runnerUpMargin": 0.08
   },
-
   "dialogue": {
     "_note": "DIALOGUE locator ke subtitle-match thresholds (handoff Stage 4). M1 mein sirf inhi se accept hota hai — koi Gemini nahi.",
     "acceptScore": 0.88,
@@ -35,15 +31,15 @@
     "reviewFloor": 0.78,
     "rejectFloor": 0.65
   },
-
   "qa": {
     "_note": "Local quality checks. blackFrameRatio = kitni frames tak kaali/froze ho to reject.",
     "minHeight": 480,
     "blackFrameMaxRatio": 0.5,
     "duplicateHammingMax": 6,
-    "durationTolerance": 0.5
+    "durationTolerance": 0.5,
+    "duplicateAction": "warn",
+    "_dupNote": "warn = duplicate sirf report flag (clip final mein rahegi). holdout = purana behavior."
   },
-
   "render": {
     "crf": 21,
     "preset": "veryfast",
@@ -51,13 +47,11 @@
     "allowSilent": false,
     "_note": "allowSilent=false => production ko voiceover audio zaroori (missing audio = fail, misleading DONE nahi). Test harness true set karta hai."
   },
-
   "validation": {
     "_note": "Handoff Stage 1 rules.",
     "minExactOrDialogueRatio": 0.7,
     "requireEntireScriptCoverage": true
   },
-
   "tools": {
     "_note": "Windows par PATH mein na ho to poora path daalo. Khaali = PATH se dhoondo. jsRuntime khaali = auto (Deno 2.3+ prefer, warna Node 22+); ya 'deno' / 'deno:C:\\\\path\\\\deno.exe' / 'node'.",
     "ffmpeg": "",
@@ -65,10 +59,42 @@
     "ytDlp": "",
     "jsRuntime": ""
   },
-
   "concurrency": {
     "_note": "Ek sath kitne moments process hon. Dheema laptop ho to 1 kar do.",
     "locate": 3,
     "render": 4
+  },
+  "acquire": {
+    "_note": "Source bank: chhoti/reused sources ek baar poori aati hain (<=720p), phir sab clips local se cut. Isse 53 downloads ~13 ho jaate hain.",
+    "maxHeight": 720,
+    "fullDownloadMaxSeconds": 900,
+    "fullDownloadMinUses": 2,
+    "alwaysFullUnderSeconds": 420,
+    "timeoutMs": 900000
+  },
+  "download": {
+    "_note": "Per-moment range download (jab source bank use na ho).",
+    "timeoutMs": 300000
+  },
+  "shots": {
+    "_note": "Ek narration beat ko chhote shots mein todna. Koi lamba frozen frame nahi.",
+    "targetSeconds": 5,
+    "minSeconds": 3,
+    "maxSeconds": 7.5,
+    "maxFreezeSeconds": 0.5,
+    "gapAbsorbSeconds": 1.5,
+    "stillSeconds": 5
+  },
+  "fallback": {
+    "_note": "Zero-card ladder. keyframes = pehle se downloaded approved source se nikale gaye frames (free, scope-correct).",
+    "useKeyframes": true,
+    "keyframeEverySeconds": 4,
+    "maxKeyframesPerSource": 60,
+    "montageImages": 3
+  },
+  "output": {
+    "_note": "production final.mp4 mein diagnostic cards NAHI. review.mp4 (debug) mein dikhte hain.",
+    "mode": "production",
+    "writeReviewVideo": false
   }
 }

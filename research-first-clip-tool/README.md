@@ -1,4 +1,11 @@
-# Research-First Clip Tool (M1.3)
+# Research-First Clip Tool (M2 — zero-card visual engine)
+
+> **M2 mein sabse bada badlav:** ab video mein "NEEDS SOURCE" / "NEEDS REVIEW"
+> jaise internal cards **nahi** aate. Jahan exact clip nahi milti, wahan **usi
+> approved source (usi episode) ke frames** se still/montage lagta hai — sahi
+> show, sahi character, Ken Burns motion ke saath. Diagnostic cards sirf
+> `review` mode mein dikhte hain (debugging ke liye).
+
 
 Anime / cartoon / documentary video-essays ke liye **research-first, local-first**
 clip automation. Ek **Scene Research Pack** (source + dialogue clue) se exact clips
@@ -124,6 +131,33 @@ Tests **isolated jobs root** (`tests/tmp/`) mein chalte hain — production `job
 ko kabhi touch nahi karte (sentinel test se verify).
 
 ---
+
+## 5b. M2 kaise "cards" khatm karta hai
+
+M1.3 mein video ka ~61% cards tha. Uske do kaaran the — aur dono ab fix hain:
+
+**(a) 44 cards mere code ke bugs se aa rahe the, research gap se nahi:**
+
+| Bug | Kitna nuksan | Fix |
+|---|---|---|
+| `probe()` 262-byte empty download ko valid maan raha tha | 10 clips | strict probe: video stream + w/h + duration + size zaroori; invalid file quarantine + alternate |
+| Ek middle-frame se duplicate detect (cartoon close-ups false-positive) | 6 clips | ab same-source **overlapping range** hi duplicate; visual similarity sirf warning |
+| Micro-gap (0.4-0.68s) par flash text card | 33 cards | ≤1.5s gaps adjacent visual mein absorb |
+| Low-res exact clip hard reject | 1 clip | 360p+ exact clip accept (flag ke saath), sirf <288p reject |
+
+**(b) Jahan sach mein clip nahi thi, wahan ab card ki jagah asli visual:**
+
+```
+exact clip  →  usi source ka keyframe still (Ken Burns)  →  montage
+            →  designed editorial graphic     [production mein card kabhi nahi]
+```
+
+Keyframes **already-downloaded approved source** se aate hain — isliye 100%
+sahi show/character, koi nayi API nahi, koi galat image nahi.
+
+**Aur:** ek source ab **ek hi baar** download hoti hai (53 downloads → ~13), aur
+lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
+khatam).
 
 ## 6. Changelog
 

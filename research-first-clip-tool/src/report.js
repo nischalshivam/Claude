@@ -27,6 +27,21 @@ function thumb(id, clipRel, momentId) {
   try { return 'data:image/jpeg;base64,' + fs.readFileSync(out).toString('base64'); } catch { return null; }
 }
 
+// timeline se duration-weighted visual mix (M2 ka asli metric — moment-count nahi)
+function visualMix(tl) {
+  if (!tl || !tl.slots) return null;
+  const by = {};
+  for (const s of tl.slots) { const k = s.asset || s.kind; by[k] = (by[k] || 0) + s.dur; }
+  const total = tl.total || Object.values(by).reduce((a, b) => a + b, 0) || 1;
+  const pct = v => Math.round(v / total * 1000) / 10;
+  const cards = (by.LOW_CONFIDENCE_FALLBACK || 0);
+  return {
+    total, by, pct,
+    video: pct(by.EXACT_VIDEO || 0), still: pct(by.VERIFIED_SOURCE_STILL || 0),
+    graphic: pct(by.EDITORIAL_GRAPHIC || 0), cards: pct(cards),
+  };
+}
+
 module.exports = function report(spec, cfg, st, resolved, tl) {
   const id = spec.id;
 
@@ -47,6 +62,8 @@ module.exports = function report(spec, cfg, st, resolved, tl) {
     else if (e.status === 'FALLBACK_GRAPHIC') n.graphic++;
     else n.needs++;   // NEEDS_SOURCE (aur koi bhi RESOLVED bina clip)
   }
+
+  const mix = visualMix(tl);
 
   // ---- HTML rows ----
   const rows = resolved.map(e => {
@@ -89,7 +106,14 @@ img{width:200px;border-radius:6px;display:block}
 a{color:#63b3ed}
 </style></head><body>
 <h1>Quality Report — ${esc(spec.pack.project_title || id)}</h1>
-<div class="sub">M1.3 (deterministic, no Gemini/API). Sirf RESOLVED clips final.mp4 mein jaate hain. NEEDS_REVIEW/NEEDS_SOURCE held out (final mein card).</div>
+<div class="sub">M2 zero-card engine (deterministic, no API). Har second par asli visual: clip, verified-source still, ya designed graphic. Diagnostic cards sirf review mode mein.</div>
+${mix ? `<div class="cards">
+  <div class="card"><b style="color:#1f9d55">${mix.video}%</b><span>exact video</span></div>
+  <div class="card"><b style="color:#63b3ed">${mix.still}%</b><span>verified stills</span></div>
+  <div class="card"><b style="color:#9f7aea">${mix.graphic}%</b><span>editorial graphics</span></div>
+  <div class="card"><b style="color:${mix.cards > 0 ? '#e3342f' : '#1f9d55'}">${mix.cards}%</b><span>diagnostic cards</span></div>
+  <div class="card"><b>${tl && tl.slots ? tl.slots.length : '-'}</b><span>shots</span></div>
+</div>` : ''}
 <div class="cards">
   <div class="card"><b>${n.total}</b><span>moments</span></div>
   <div class="card"><b style="color:#1f9d55">${n.resolved}</b><span>RESOLVED (in final)</span></div>

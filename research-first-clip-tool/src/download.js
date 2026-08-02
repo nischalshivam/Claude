@@ -22,8 +22,57 @@ function rangeKey(sourceId, segStart, segEnd, minH) {
   return `${sourceId}__${Math.round(segStart * 1000)}_${Math.round(segEnd * 1000)}__h${minH}.mp4`;
 }
 
+// ---------------- PER-SOURCE BANK (M2-B) ----------------
+// Ek source ko BAAR-BAAR range-download karne ke bajaye EK BAAR poora (<=720p)
+// laakar local se saare moments cut karo. Nicole run: 53 downloads -> ~13.
+// Sirf chhoti/reused sources ke liye; lambi source ke liye range download hi.
+function bankPath(id, sourceId) { return U.p(id, 'cache', '_bank', `${sourceId}.mp4`); }
+
+function acquireFullSource(id, cfg, cand, meta) {
+  const bank = bankPath(id, cand.source_id);
+  const man = bank + '.json';
+  U.ensureDir(path.dirname(bank));
+  if (fs.existsSync(bank) && fs.existsSync(man)) {
+    const pr = U.probe(bank);
+    if (pr.ok) return { ok: true, file: bank, duration: pr.duration, width: pr.width, height: pr.height, via: 'bank-cache' };
+    try { fs.rmSync(bank, { force: true }); fs.rmSync(man, { force: true }); } catch {}
+  }
+  const maxH = (cfg.acquire && cfg.acquire.maxHeight) || 720;
+  const fmt = `bv*[height<=${maxH}][ext=mp4]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/bv*[height<=${maxH}]/b`;
+  const r = U.ytdlp(['-f', fmt, '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
+    '-o', bank, '--no-playlist', '--no-warnings', cand.url],
+    { timeout: (cfg.acquire && cfg.acquire.timeoutMs) || 900000 });
+  if (!r.ok || !fs.existsSync(bank)) {
+    try { if (fs.existsSync(bank)) fs.rmSync(bank, { force: true }); } catch {}
+    return { ok: false, error: (r.stderr || 'full-source download fail').replace(/\s+/g, ' ').slice(0, 180) };
+  }
+  const pr = U.probe(bank);
+  if (!pr.ok) { try { fs.rmSync(bank, { force: true }); } catch {}; return { ok: false, error: `full source invalid: ${pr.error}` }; }
+  fs.writeFileSync(man, JSON.stringify({ url: cand.url, source_id: cand.source_id, maxH, duration: pr.duration, width: pr.width, height: pr.height, at: Date.now() }));
+  return { ok: true, file: bank, duration: pr.duration, width: pr.width, height: pr.height, via: 'yt-dlp-full' };
+}
+
+// kaunse sources ko poora laana hai? (chhote + reuse hone wale)
+function planAcquisition(cfg, resolved, metaOf) {
+  const acq = cfg.acquire || {};
+  const maxFullSec = acq.fullDownloadMaxSeconds || 900;      // <=15 min sources
+  const minUses = acq.fullDownloadMinUses || 2;
+  const uses = {};
+  for (const e of resolved) {
+    if (e.kind !== 'video') continue;
+    for (const c of candList(e)) if (c.url) uses[c.source_id] = (uses[c.source_id] || 0) + 1;
+  }
+  const plan = {};
+  for (const sid of Object.keys(uses)) {
+    const meta = metaOf(sid);
+    const dur = meta && meta.duration || 0;
+    plan[sid] = (dur > 0 && dur <= maxFullSec && uses[sid] >= minUses) || (dur > 0 && dur <= (acq.alwaysFullUnderSeconds || 420));
+  }
+  return { plan, uses };
+}
+
 // ek candidate materialize karo (download/local). {ok, raw_file, raw_offset, raw_kind, via, error}
-function downloadCandidate(id, cfg, cand) {
+function downloadCandidate(id, cfg, cand, opts = {}) {
   if (cand.local_file) {
     const abs = path.isAbsolute(cand.local_file) ? cand.local_file : path.join(U.ROOT, cand.local_file);
     if (!fs.existsSync(abs)) return { ok: false, error: `local_file missing: ${cand.local_file}` };
@@ -32,6 +81,21 @@ function downloadCandidate(id, cfg, cand) {
     return { ok: true, raw_file: cand.local_file, raw_offset: 0, raw_kind: 'local', src_w: pr.width, src_h: pr.height, via: 'local' };
   }
   if (!cand.url) return { ok: false, error: 'na url na local_file' };
+
+  // --- BANK FIRST: poori source pehle se aayi hui hai to usi se cut hoga (koi download nahi)
+  const bank = bankPath(id, cand.source_id);
+  if (opts.useBank !== false) {
+    let pr = fs.existsSync(bank) ? U.probe(bank) : { ok: false };
+    if (!pr.ok && opts.acquireBank) {
+      const got = acquireFullSource(id, cfg, cand, opts.meta);
+      if (got.ok) pr = { ok: true, width: got.width, height: got.height, duration: got.duration };
+      else if (opts.bankOnly) return { ok: false, error: got.error };
+    }
+    if (pr.ok) {
+      if (cand.cut && cand.cut.start >= pr.duration) return { ok: false, error: `requested start ${cand.cut.start}s beyond source ${Math.round(pr.duration)}s` };
+      return { ok: true, raw_file: path.relative(U.jobDir(id), bank), raw_offset: 0, raw_kind: 'job', src_w: pr.width, src_h: pr.height, via: 'source-bank' };
+    }
+  }
 
   const clip = cfg.clip, guard = clip.downloadGuardSeconds || 3, minH = cfg.qa.minHeight || 480;
   const segStart = Math.max(0, cand.cut.start - guard);
@@ -58,14 +122,26 @@ function downloadCandidate(id, cfg, cand) {
   const args = ['-f', fmt, '--download-sections', `*${segStart.toFixed(3)}-${segEnd.toFixed(3)}`,
     '--force-keyframes-at-cuts', '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
     '-o', rawFile, '--no-playlist', '--no-warnings', cand.url];
-  const r = U.ytdlp(args, { timeout: 300000 });
+  const r = U.ytdlp(args, { timeout: (cfg.download && cfg.download.timeoutMs) || 300000 });
   if (!r.ok || !fs.existsSync(rawFile)) {
     const err = (r.stderr || 'download fail').replace(/\s+/g, ' ').slice(0, 200);
     const flag = /403|forbidden|sign in|po.?token|not available|unavailable|requested format/i.test(err) ? '[403/unavailable] ' : '';
+    try { if (fs.existsSync(rawFile)) fs.rmSync(rawFile, { force: true }); } catch {}
     return { ok: false, error: flag + err };
   }
+  // STRICT: empty/streamless/short download ko kabhi READY mat bolo (M1.3 ka 262-byte bug)
   const pr = U.probe(rawFile);
-  fs.writeFileSync(manFile, JSON.stringify({ segStart, segEnd, url: cand.url, minH, at: Date.now() }));
+  if (!pr.ok) {
+    try { fs.rmSync(rawFile, { force: true }); if (fs.existsSync(manFile)) fs.rmSync(manFile, { force: true }); } catch {}
+    return { ok: false, error: `invalid media: ${pr.error} (quarantined, retry/alternate)`, invalidMedia: true };
+  }
+  // requested range actually mila? (guard ke saath segment length ~ expected)
+  const wantLen = Math.max(0.5, (cand.cut ? cand.cut.dur || (cand.cut.end - cand.cut.start) : 1));
+  if (pr.duration + 0.75 < wantLen) {
+    try { fs.rmSync(rawFile, { force: true }); } catch {}
+    return { ok: false, error: `range short: got ${pr.duration.toFixed(2)}s, need ${wantLen.toFixed(2)}s`, invalidMedia: true };
+  }
+  fs.writeFileSync(manFile, JSON.stringify({ segStart, segEnd, url: cand.url, minH, at: Date.now(), duration: pr.duration, w: pr.width, h: pr.height }));
   return { ok: true, raw_file: relRaw, raw_offset: segStart, raw_kind: 'job', src_w: pr.width, src_h: pr.height, via: 'yt-dlp' };
 }
 
@@ -89,7 +165,32 @@ module.exports = function download(spec, cfg, st, resolved) {
 
   const todo = resolved.filter(e => e.kind === 'video' && (e.status === 'RESOLVED' || e.status === 'NEEDS_REVIEW'));
   const secs = t0 => ((Date.now() - t0) / 1000).toFixed(1);
-  U.log(`   ${todo.length} video moments — serially download honge (har clip sirf zaroori range).`);
+
+  // ---- Stage 4a: SOURCE BANK — har unique source EK BAAR (<=720p) ----
+  const SRC = require('./sources.js');
+  const sources = SRC.indexSources(spec.pack);
+  const metaOf = sid => { const s = sources[sid]; return s ? SRC.getMeta(id, s, cfg) : null; };
+  const { plan, uses } = planAcquisition(cfg, resolved, metaOf);
+  const wanted = Object.keys(plan).filter(sid => plan[sid]);
+  const bankState = {};
+  if (wanted.length) {
+    U.log(`   source bank: ${wanted.length} unique source(s) ek-ek baar poore aayenge (<=${(cfg.acquire && cfg.acquire.maxHeight) || 720}p), phir sab clips local se katenge.`);
+    let bi = 0;
+    for (const sid of wanted) {
+      bi++;
+      const anyCand = todo.flatMap(e => candList(e)).find(c => c.source_id === sid && c.url);
+      if (!anyCand) continue;
+      const meta = metaOf(sid);
+      const t0 = Date.now();
+      U.log(`   [source ${bi}/${wanted.length}] ${sid} (${Math.round((meta && meta.duration) || 0)}s, ${uses[sid]} moments) downloading...`);
+      const got = acquireFullSource(id, cfg, anyCand, meta);
+      bankState[sid] = got.ok;
+      U.log(got.ok ? `   [source ${bi}/${wanted.length}] ${sid} OK via ${got.via} in ${secs(t0)}s — is source ke ${uses[sid]} clips ab bina download ke katenge`
+                   : `   [source ${bi}/${wanted.length}] ${sid} FAILED in ${secs(t0)}s — ${String(got.error).slice(0, 100)} (per-moment range par gir jayenge)`);
+    }
+  }
+
+  U.log(`   ${todo.length} video moments — ab cut ke liye media taiyaar ho raha hai.`);
   U.log(`   note: ek yt-dlp attempt zyada se zyada ${Math.round((cfg.download && cfg.download.timeoutMs || 300000) / 1000)}s tak chup reh sakta hai — ye normal hai, hang nahi.`);
 
   let n = 0;
@@ -147,3 +248,6 @@ module.exports.resolveRaw = resolveRaw;
 module.exports.promote = promote;
 module.exports.candList = candList;
 module.exports.rangeKey = rangeKey;
+module.exports.bankPath = bankPath;
+module.exports.acquireFullSource = acquireFullSource;
+module.exports.planAcquisition = planAcquisition;

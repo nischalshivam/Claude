@@ -1,0 +1,69 @@
+=====================================================================
+M2 ADDENDUM — isse canonical prompt ke NEECHE paste karo
+(canonical file: GENSPARK_M1_2_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt)
+=====================================================================
+
+Ye addendum canonical prompt ke rules NAHI badalta. Sirf do cheezein add karta
+hai jo M2 engine use karta hai. Baaki sab (anti-hallucination, exact locators,
+enum values, script coverage) waisa hi rehta hai.
+
+---------------------------------------------------------------------
+A. COVERAGE AB SECONDS SE NAAPI JAATI HAI, MOMENT-COUNT SE NAHI
+---------------------------------------------------------------------
+
+Purani galti: 82 moments mein se 65% ke paas locator tha — sunne mein theek,
+par un 19 "analysis" moments ne 242 SECONDS le liye. Yaani aadhi video bina
+footage ke thi.
+
+Isliye ab:
+
+1. Har moment ka approximate narration duration socho (script ke shabd / ~2.6
+   shabd per second). 15+ second ka ek moment mat banao — use 2-3 chhote beats
+   mein todo.
+2. Target: kam se kam 75% narration SECONDS ke paas verified EXACT_TIME ya
+   DIALOGUE evidence ho (jahan public source maujood hai).
+3. Sirf text/graphic wale moments milakar 10% seconds se zyada na hon.
+4. Abstract/analysis lines ke liye bhi pehle koi CONTEXT scene dhoondo usi
+   already-approved source se — seedha TEXT_CARD mat do.
+
+---------------------------------------------------------------------
+B. HAR MOMENT MEIN "fallback_plan" DO (naya, optional par bahut useful)
+---------------------------------------------------------------------
+
+Engine ke paas ab keyframe bank hai: jo sources tum approve karte ho, unke
+frames se hi still/montage banta hai (sahi show, sahi character — koi random
+image nahi). Usse behtar chunne ke liye ye field do:
+
+"fallback_plan": {
+  "allowed_pack_ids": ["P01"],
+  "allowed_source_ids": ["P01_S01", "P01_S02"],
+  "keyframe_queries": ["Nicole exhausted in the kitchen", "Nicole at the fridge chart"],
+  "must_show": ["Nicole Watterson"],
+  "must_not_show": ["reaction host", "wrong show", "fan art"],
+  "template": "QUOTE",
+  "overlay_text": "Nothing was ever enough."
+}
+
+Rules:
+- allowed_source_ids sirf USI pack ke verified sources ho sakte hain (cross-show
+  mixing kabhi nahi).
+- overlay_text sirf script/research se verbatim aaye — kuch invent mat karo.
+- template values: COMPARISON | QUOTE | TIMELINE | CHECKLIST | NONE
+- keyframe_queries chhote, visual, concrete rakho (jaise camera shot describe kar
+  rahe ho), taaki engine sahi frame chun sake.
+
+Agar fallback_plan na do to bhi tool chalega — wo moment ke apne source ke frames
+use kar lega. Par plan dene se selection kaafi behtar hota hai.
+
+---------------------------------------------------------------------
+C. HOOK / HARD EVIDENCE BEATS
+---------------------------------------------------------------------
+
+Jo beats sabse zaroori hain (video ka hook, ya jahan narration kehta hai "watch
+this exact scene"), unke liye:
+
+- "criticality": "HOOK" ya "HARD_EVIDENCE" field do;
+- jahan possible ho DO real candidates do (primary + alternate), taaki ek fail
+  ho to doosra chal jaye.
+
+Baaki normal beats ke liye "criticality": "NORMAL" (ya field chhod do).
