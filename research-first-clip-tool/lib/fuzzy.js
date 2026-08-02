@@ -23,7 +23,22 @@ const CONTRACTIONS = {
   "'cause": 'because', "cause": 'because', "em": 'them',
 };
 
-function normalize(text) {
+// Bounded memo: alignment/locate ek hi caption-window ko har moment ke liye
+// dobara normalize+tokenize karte hain (82 moments x ~6000 windows). Pure
+// functions hain, isliye string->result cache bilkul safe hai aur ~10x tez.
+function memo1(fn, cap = 20000) {
+  const m = new Map();
+  return (arg) => {
+    const k = typeof arg === 'string' ? arg : String(arg);
+    if (m.has(k)) return m.get(k);
+    const v = fn(arg);
+    if (m.size >= cap) m.clear();
+    m.set(k, v);
+    return v;
+  };
+}
+
+function normalizeRaw(text) {
   let s = String(text || '').toLowerCase();
   s = s.replace(/<[^>]+>/g, ' ');                     // <i> tags
   s = s.replace(/\[[^\]]*\]/g, ' ');                  // [music], [applause]
@@ -37,7 +52,8 @@ function normalize(text) {
   return s;
 }
 
-const tokens = text => normalize(text).split(' ').filter(Boolean);
+const normalize = memo1(normalizeRaw);
+const tokens = memo1(text => normalize(text).split(' ').filter(Boolean));
 
 // token F1 (multiset overlap: precision & recall)
 function tokenF1(a, b) {
@@ -72,12 +88,12 @@ function orderedLCS(a, b) {
   return lcsLen(a, b) / Math.max(a.length, b.length);
 }
 
-function trigrams(str) {
-  const s = '  ' + str.replace(/\s+/g, ' ') + '  ';
+const trigrams = memo1(function (str) {
+  const s = '  ' + String(str).replace(/\s+/g, ' ') + '  ';
   const g = new Set();
   for (let i = 0; i < s.length - 2; i++) g.add(s.slice(i, i + 3));
   return g;
-}
+});
 function charTrigram(sa, sb) {
   const A = trigrams(sa), B = trigrams(sb);
   if (!A.size || !B.size) return 0;

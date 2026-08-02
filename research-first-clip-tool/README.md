@@ -30,11 +30,17 @@ Sab kuch free, open-source tools par chalta hai (Node + FFmpeg + yt-dlp).
 1. Genspark/Gemini Pro se research pack banwao   (browser mein, ek baar)
 2. input/ mein 3 files rakho                      (pack + SRT + voiceover)
 3. CHECK.bat chalao                               (ek baar setup verify)
+3b. CHECKPACK.bat chalao                          (pack ka report card - render se PEHLE)
 4. START.bat chalao                               (poora kaam automatic)
 5. quality-report.html kholo                      (har shot ka evidence)
 6. NEEDS_SOURCE.csv dekho                         (jo missing hai wahi fix karo)
 7. final.mp4 use karo
 ```
+
+> **Step 3b sabse zyada time bachata hai.** Final video ki quality 80% research
+> pack se aati hai, tool se nahi. `CHECKPACK.bat` bina render kiye bata deta hai
+> ki pack se kya banega — aur jo kami hai uska ready-made "work order" bana deta
+> hai jo seedha Genspark mein paste karna hota hai. Details neeche section 1b.
 
 ### Step 1 — research pack (ye ek manual step hai)
 
@@ -67,6 +73,45 @@ START.bat     poori pipeline (ya beech mein ruke to resume)
 
 Output `jobs/<project>/` mein: `final.mp4`, `quality-report.html`,
 `NEEDS_SOURCE.csv`, `timeline.json`, `run.log`, `clips/`.
+
+---
+
+## 1b. CHECKPACK.bat — render se pehle pack ka report card
+
+Ye tool **45-minute render kiye bina** batata hai ki pack se kya banega.
+
+```
+CHECKPACK.bat          poora check (sources ke ASLI captions bhi verify karta hai)
+CHECKPACK.bat fast     sirf offline check (internet ke bina, ~8 second)
+```
+
+Kya check hota hai:
+
+| Check | Kyun zaroori hai |
+|---|---|
+| narration ke kitne **seconds** ke paas exact evidence hai | moment-count jhooth bolta hai — 5s aur 25s ka moment barabar nahi |
+| **dialogue asli captions mein hai ya nahi** | LLM aksar dialogue paraphrase kar deta hai. Jo line captions mein nahi, us par clip nahi lagegi |
+| **EXACT_TIME episode ki length ke andar hai ya nahi** | 22-minute episode par `start_sec: 1400` = guaranteed fail |
+| **source abhi live hai ya delete/private ho gaya** | pack purana ho to URLs mar jate hain |
+| **scope title mismatch** | ek hi show ke do alag spelling = engine unhe do alag show samajhta hai = sources aapas mein use nahi hote |
+| **alignment** | `script_cue_exact` voiceover se hubahu match hona chahiye, warna clip galat jagah lagegi |
+
+Do files banti hain `output/` mein:
+
+```
+output/pack-report.json     saare numbers (UI/automation ke liye)
+output/NEEDS_RESEARCH.txt   Genspark mein paste karne wala READY work order
+```
+
+`NEEDS_RESEARCH.txt` mein sirf **jo missing hai** wahi hota hai — poora pack
+dobara nahi banwana padta. Loop aisa hai:
+
+```
+CHECKPACK.bat  ->  NEEDS_RESEARCH.txt Genspark mein paste  ->  naya JSON merge
+   ->  CHECKPACK.bat dobara  ->  verdict OK  ->  tab PREVIEW/START
+```
+
+Exit codes: `0` = pack theek, `2` = weak (upgrade karo), `1` = pack padha nahi gaya.
 
 ---
 
@@ -192,6 +237,27 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M2.5**
+- **`CHECKPACK.bat` / `tools/check-pack.js`** — research pack ka report card
+  render se pehle. Narration ko **seconds** ke hisaab se tolta hai (moment-count
+  nahi), asli pipeline ka hi alignment (`align.bestWindows`) aur wahi scope-rules
+  use karta hai jo `locate.js` use karta hai — isliye iski prediction aur asli
+  render ek hi jagah se aate hain.
+- **Live verify** — har `DIALOGUE` locator ko source ke **asli captions** mein
+  dhoondh kar dekhta hai, har `EXACT_TIME` ko episode ki duration se check karta
+  hai, aur dead/private sources pakadta hai. Yehi "best case" aur "asli result"
+  ka farq khatam karta hai.
+- **Scope-title mismatch detector** — ek hi show ke do alag titles (jaise
+  "The Amazing World of Gumball" vs "The Wonderfully Weird World of Gumball")
+  engine ko do alag show dikhte hain; ab ye render se pehle pakda jata hai.
+- **`output/NEEDS_RESEARCH.txt`** — Genspark/Gemini ke liye ready-made work order,
+  sirf missing cheezon ka (poora pack dobara nahi banwana padta). GRAPHIC/analysis
+  packs ke liye alag guidance: unhe apne sources nahi, `allowed_pack_ids` +
+  `frame_hints` chahiye.
+- **~4x tez alignment** — `lib/fuzzy.js` mein bounded memoization (normalize /
+  tokens / trigrams). Pack check 29.6s → 7.9s; poore run ka Stage-2 bhi utna hi tez.
+- 7 naye regression tests (T-PACK1..7). Suite ab **30 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping

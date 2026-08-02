@@ -69,6 +69,49 @@ wahan tumhe `allowed_pack_ids` explicitly dena hoga, warna wo beat plain text
 graphic ban jayega (jo report mein alag ginā jayega).
 
 ---------------------------------------------------------------------
+B2. DO CHEEZEIN JO ASLI PACK MEIN SABSE ZYADA TOOTI HUI MILI
+---------------------------------------------------------------------
+
+(Ye check-pack ke live verification se nikla hai — guess nahi hai.)
+
+1) **DIALOGUE hubahu captions se copy karo, paraphrase nahi.**
+   Engine `dialogue_exact` ko source ke ASLI captions mein dhoondhta hai. Agar
+   tumne line ko apne shabdon mein likh diya, ya do alag jagah ki lines jod di,
+   to match fail hoga aur us beat par clip nahi lagegi.
+   - line transcript se copy-paste karo (8-20 shabd, ek hi speaker ka ek hi vaakya)
+   - aisi line chuno jo us episode mein sirf EK BAAR aati ho
+   - jahan ho sake, **DIALOGUE ke saath EXACT_TIME bhi do**. Kai YouTube videos
+     par captions hote hi nahi — us surat mein EXACT_TIME hi bachata hai.
+     Dono dene se moment do tarah se safe ho jata hai.
+
+2) **`scope.title` har pack mein BILKUL EK jaisa likho.**
+   "The Amazing World of Gumball" aur "The Wonderfully Weird World of Gumball"
+   engine ke liye DO alag show hain. Iska seedha nateeja: ek pack ke sources
+   doosre pack ke moments par lag hi nahi paate, aur analysis beats khali text
+   ban jate hain. Ek show = ek hi canonical title, har jagah.
+
+3) **GRAPHIC / analysis pack ko apne video sources NAHI chahiye — usse
+   `allowed_pack_ids` + `frame_hints` chahiye.**
+   Analysis beats aksar poori video ka 25-35% hote hain. Unhe khali gradient par
+   mat chhodo. Har analysis moment ke liye:
+
+   "fallback_plan": {
+     "allowed_pack_ids": ["P01", "P02", "P03"],       <- show ke packs
+     "frame_hints": [ { "source_id": "P01_S01", "time_sec": 412, "reason": "..." } ],
+     "overlay_text": "3-6 shabd jo screen par likhne hain"
+   }
+
+   Isse analysis line ke peeche us show ka SAHI frame chalta hai, aur text uske
+   upar aata hai.
+
+4) **EXACT_TIME episode ki asli length ke andar hona chahiye.** 22-minute episode
+   par `start_sec: 1400` guaranteed fail hai. Timestamp likhne se pehle video ki
+   duration dekho.
+
+TIP: pack banane ke baad `CHECKPACK.bat` chalao. Wo in charon cheezon ko asli
+video/captions se verify karke bata dega ki kya toota hua hai — render se pehle.
+
+---------------------------------------------------------------------
 C. HOOK / HARD EVIDENCE BEATS
 ---------------------------------------------------------------------
 

@@ -44,7 +44,7 @@ function bestWindows(cues, target) {
   return { best, runnerUp };
 }
 
-module.exports = function align(spec, cfg, st) {
+function align(spec, cfg, st) {
   const id = spec.id;
   const srtFile = spec.srt;
   if (!srtFile || !fs.existsSync(srtFile)) throw new Error(`voiceover.srt nahi mila: ${srtFile}`);
@@ -99,4 +99,9 @@ module.exports = function align(spec, cfg, st) {
   U.log(`   narration length ${total.toFixed(1)}s | moment-coverage ~${coveragePct}%`);
   st.meta.align = { total: +total.toFixed(1), moments: aligned.length, clean: okCount, review: reviewCount, coveragePct };
   return { total, moments: aligned };
-};
+}
+
+// tools/check-pack.js isi function se window nikalta hai — taaki report card
+// ke seconds aur asli render ke seconds ek hi alignment se aayen.
+module.exports = align;
+module.exports.bestWindows = bestWindows;

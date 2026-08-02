@@ -351,6 +351,103 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   check('T-JS meta+subs+download calls all carry official --js-runtimes', meta && subs && dl, `meta=${meta} subs=${subs} dl=${dl}`);
 })();
 
+// ---------- T-PACK: check-pack report card (render se pehle ka verdict) ----------
+// Ye tool render se pehle bata deta hai ki pack kaisa hai. Agar iska verdict
+// jhootha ho to poora point khatm — isliye teen cheezein prove karte hain:
+//  (a) toota pack pakadta hai aur EXACT reason batata hai (dead source, galat
+//      timestamp, dialogue jo captions mein hai hi nahi, scope-title mismatch)
+//  (b) accha pack ko accha kehta hai (exit 0) — jhoothi alarm nahi
+//  (c) NEEDS_RESEARCH.txt mein wahi moments hain jinhe kaam chahiye
+(() => {
+  const d = path.join(FX, 'packchk');
+  makeNarr(d, [
+    { start: 0, end: 6, text: 'The alarm rings across the base.' },
+    { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    { start: 12, end: 18, text: 'They meet on the rooftop at night.' },
+    { start: 18, end: 24, text: 'The final shot fades to black.' },
+    { start: 24, end: 30, text: 'Nobody expected the quiet ending afterwards.' },
+  ]);
+  const srt = path.join(d, 'voiceover.srt');
+  const run = (pf, out, extra = []) => {
+    const r = spawnSync('node', ['tools/check-pack.js', pf, srt, `--out=${out}`, ...extra], { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let rep = null; try { rep = JSON.parse(fs.readFileSync(path.join(out, 'pack-report.json'), 'utf8')); } catch {}
+    let need = ''; try { need = fs.readFileSync(path.join(out, 'NEEDS_RESEARCH.txt'), 'utf8'); } catch {}
+    return { status: r.status, stdout: r.stdout || '', rep, need };
+  };
+
+  // --- (a) jaan-boojh kar toota hua pack ---
+  const badPack = {
+    schema_version: 'scene-research-pack-v1', project_title: 'PackCheck',
+    packs: [
+      { pack_id: 'P1', scope: { kind: 'SERIES', title: 'The Amazing World of X' },
+        sources: [
+          { source_id: 'S_OK', local_file: good.video, local_subs: good.srt },
+          { source_id: 'S_DEAD', local_file: 'tests/fixtures/reg/ep/NOPE_missing.mp4' },
+        ],
+        moments: [
+          // sahi dialogue — asli episode captions mein maujood hai
+          { moment_id: 'M_GOOD', script_cue_exact: 'The alarm rings across the base.',
+            locators: [{ source_id: 'S_OK', locator_type: 'DIALOGUE', dialogue_exact: 'The alarm rings across the base.', confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+          // dialogue jo episode mein hai hi nahi -> tool ko pakadna chahiye
+          { moment_id: 'M_FAKEDLG', script_cue_exact: 'She opens the sealed hatch slowly.',
+            locators: [{ source_id: 'S_OK', locator_type: 'DIALOGUE', dialogue_exact: 'zzz nobody ever said this sentence in the episode zzz', confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+          // timestamp episode ki length se bahar (episode 80s ka hai)
+          { moment_id: 'M_OOB', script_cue_exact: 'They meet on the rooftop at night.',
+            locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 9000, end_sec: 9006, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+          // dead source
+          { moment_id: 'M_DEAD', script_cue_exact: 'The final shot fades to black.',
+            locators: [{ source_id: 'S_DEAD', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        ] },
+      // wahi show, alag likha title -> scope split (yehi asli bug tha)
+      { pack_id: 'P2', scope: { kind: 'SERIES', title: 'The Wonderfully Amazing World of X' }, sources: [],
+        moments: [{ moment_id: 'M_ORPHAN', script_cue_exact: 'Nobody expected the quiet ending afterwards.', locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+    ],
+  };
+  const bf = path.join(d, 'bad.json'); fs.writeFileSync(bf, JSON.stringify(badPack, null, 2));
+  const A = run(bf, path.join(d, 'out_bad'));
+  const lv = (A.rep && A.rep.live_verify) || {};
+  const hit = (arr, id) => Array.isArray(arr) && arr.some(x => x.moment_id === id || x.source_id === id);
+  check('T-PACK1 check-pack catches dialogue that is not in the real captions',
+    hit(lv.dialogue_not_found, 'M_FAKEDLG') && !hit(lv.dialogue_not_found, 'M_GOOD'),
+    `not_found=${JSON.stringify((lv.dialogue_not_found || []).map(x => x.moment_id))}`);
+  check('T-PACK2 check-pack catches EXACT_TIME beyond episode duration',
+    hit(lv.bad_exact_time, 'M_OOB'), `bad_time=${JSON.stringify((lv.bad_exact_time || []).map(x => x.moment_id))}`);
+  check('T-PACK3 check-pack catches dead source (and does not blame its timestamp)',
+    hit(lv.dead_sources, 'S_DEAD') && !hit(lv.bad_exact_time, 'M_DEAD'),
+    `dead=${JSON.stringify((lv.dead_sources || []).map(x => x.source_id))}`);
+  check('T-PACK4 check-pack catches near-duplicate scope titles (same show, 2 spellings)',
+    A.rep && Array.isArray(A.rep.scope_title_mismatch) && A.rep.scope_title_mismatch.length === 1,
+    `mismatch=${A.rep ? A.rep.scope_title_mismatch.length : 'n/a'}`);
+  check('T-PACK5 weak pack -> exit 2 + work order names the weak moments',
+    A.status === 2 && /M_FAKEDLG/.test(A.need) && /M_OOB/.test(A.need),
+    `exit=${A.status} workOrderBytes=${A.need.length}`);
+
+  // --- (b) saaf pack: koi jhoothi alarm nahi ---
+  const goodPack = {
+    schema_version: 'scene-research-pack-v1', project_title: 'PackCheckOK',
+    packs: [{ pack_id: 'P1', scope: { kind: 'SERIES', title: 'The Amazing World of X' },
+      sources: [{ source_id: 'S_OK', local_file: good.video, local_subs: good.srt }],
+      moments: [
+        { moment_id: 'G1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'G2', script_cue_exact: 'She opens the sealed hatch slowly.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 22, end_sec: 28, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'G3', script_cue_exact: 'They meet on the rooftop at night.', locators: [{ source_id: 'S_OK', locator_type: 'DIALOGUE', dialogue_exact: 'They meet on the rooftop at night.', confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'G4', script_cue_exact: 'The final shot fades to black.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 62, end_sec: 68, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'G5', script_cue_exact: 'Nobody expected the quiet ending afterwards.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 42, end_sec: 48, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+      ] }],
+  };
+  const gf = path.join(d, 'good.json'); fs.writeFileSync(gf, JSON.stringify(goodPack, null, 2));
+  const B = run(gf, path.join(d, 'out_good'));
+  check('T-PACK6 healthy pack -> exit 0, no false alarms',
+    B.status === 0 && B.rep && B.rep.pass === true && (B.rep.failed_checks || []).length === 0,
+    `exit=${B.status} exact=${B.rep ? B.rep.exact_or_hint_percent : '?'}% failed=${JSON.stringify(B.rep ? B.rep.failed_checks.map(f => f.check) : [])}`);
+
+  // --- (c) offline mode (--no-probe) bhi chale, aur seconds-weighting sahi ho ---
+  const C = run(gf, path.join(d, 'out_np'), ['--no-probe']);
+  check('T-PACK7 --no-probe offline mode works and weights by narration seconds',
+    C.status === 0 && C.rep && Math.abs(C.rep.narration_seconds - 30) < 1.5 && C.rep.live_verify.ran === false,
+    `exit=${C.status} narr=${C.rep ? C.rep.narration_seconds : '?'}s`);
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });
