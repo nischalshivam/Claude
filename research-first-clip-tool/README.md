@@ -134,6 +134,36 @@ Exit codes: `0` = pack theek, `2` = weak (upgrade karo), `1` = pack padha nahi g
 
 ---
 
+## 1c. Jab research AI ne research ki hi nahi (round 2)
+
+Aisa hota hai: AI script ko **theek** beats mein baant deta hai (cues exact, poori
+coverage) par live browsing nahi karta — sources `METADATA_ONLY` reh jate hain,
+locators khaali ya `APPROX_WINDOW`. Aisa pack render nahi ho sakta.
+
+Us pack ko phenkna **mat**. Segmentation sahi hai, sirf evidence missing hai.
+
+```
+1. pack ke `sources` mein ASLI, chalne wale URLs daalo (ya local_file)
+2. node tools\make-round2.js input\scene-research.json
+3. output\ROUND2_PROMPT.txt naye Genspark account mein paste karo
+4. jo JSON array aaye use round2.json mein save karo
+5. node tools\apply-round2.js input\scene-research.json round2.json
+6. CHECKPACK.bat
+```
+
+Round-2 prompt bahut chhota hota hai — usme AI ka kaam sirf itna hai ki diye gaye
+sources ke andar moments dhoondhe. Na script padhna, na beats banana, na video
+dhoondna. Isliye ek hi message mein asli research hone ka chance kaafi zyada hota
+hai.
+
+`apply-round2.js` har entry check karke lagata hai. Jo galat hai wo pack mein
+**jata hi nahi**, aur console par wajah ke saath dikhta hai: doosre show ka
+source, episode ki length se bahar ka timestamp, pack mein maujood na hone wala
+moment_id, ya do-shabd ka dialogue. Bade packs (83+ moments) ke liye
+`--part=1/2` se prompt do accounts mein baant sakte ho.
+
+---
+
 ## 2. Andar kya hota hai (9 stages)
 
 | Stage | Kya karta hai |
@@ -286,7 +316,11 @@ khatam).
   aur scope-title mismatch sirf batata hai — apne-aap merge nahi karta
   (`--unify-titles` explicitly maango), kyunki "Naruto" aur "Naruto Shippuden"
   sach mein alag show hain.
-- 12 naye regression tests (T-PACK1..7, T-MERGE1..5). Suite ab **35 PASS / 0 FAIL**.
+- **`tools/make-round2.js` + `tools/apply-round2.js`** — jab research AI segmentation
+  to sahi kare par live research na kare, tab us pack ko bachane ke liye. Focused
+  prompt (sirf locators maangta hai) + validating merge jo galat entry ko andar
+  ghusne nahi deta.
+- 18 naye regression tests (T-PACK1..7, T-MERGE1..5, T-R21..26). Suite ab **41 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping

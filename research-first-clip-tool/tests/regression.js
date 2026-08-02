@@ -501,6 +501,82 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     C.status === 1 && /FAIL/.test(C.stdout), `exit=${C.status}`);
 })();
 
+// ---------- T-R2: round-2 prompt + apply (evidence-less pack ko bachana) ----------
+// Research AI aksar script to sahi baant deta hai par asli research nahi karta.
+// Aisa pack render nahi ho sakta, par uska segmentation sahi hota hai. Round-2
+// wahi segmentation reuse karke sirf locators maangta hai. Apply karte waqt
+// koi bhi galat locator chupke se andar nahi jana chahiye — warna hum wahi
+// jhoothi evidence wapas le aayenge jisse bachna tha.
+(() => {
+  const d = path.join(FX, 'round2');
+  fs.mkdirSync(d, { recursive: true });
+  const pk = {
+    schema_version: 'scene-research-pack-v1', project_title: 'R2',
+    packs: [
+      { pack_id: 'P01', scope: { kind: 'SERIES', title: 'Show A' },
+        sources: [{ source_id: 'P01_S01', local_file: good.video, local_subs: good.srt, duration_sec: 80 }],
+        moments: [
+          { moment_id: 'P01_M01', script_cue_exact: 'The alarm rings across the base.', locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+          { moment_id: 'P01_M02', script_cue_exact: 'She opens the sealed hatch slowly.',
+            locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 22, end_sec: 28, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        ] },
+      { pack_id: 'P02', scope: { kind: 'SERIES', title: 'Show B' },
+        sources: [{ source_id: 'P02_S01', local_file: good.video, local_subs: good.srt, duration_sec: 80 }],
+        moments: [{ moment_id: 'P02_M01', script_cue_exact: 'They meet on the rooftop at night.', locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'P09_G', scope: { kind: 'GRAPHIC', title: 'Analysis cards' }, sources: [],
+        moments: [{ moment_id: 'P09_M01', script_cue_exact: 'The final shot fades to black.', locators: [],
+          fallback_plan: { allowed_pack_ids: ['P01'] }, fallback: { type: 'LOCAL_GRAPHIC', text: 'x' } }] },
+    ],
+  };
+  const pf = path.join(d, 'pack.json'); fs.writeFileSync(pf, JSON.stringify(pk, null, 2));
+  const A = spawnSync('node', ['tools/make-round2.js', pf, `--out=${d}`], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  const prompt = fs.existsSync(path.join(d, 'ROUND2_PROMPT.txt')) ? fs.readFileSync(path.join(d, 'ROUND2_PROMPT.txt'), 'utf8') : '';
+  check('T-R21 round-2 prompt lists only the moments still missing evidence',
+    A.status === 0 && /P01_M01/.test(prompt) && /P02_M01/.test(prompt) && /P09_M01/.test(prompt) && !/P01_M02/.test(prompt),
+    `exit=${A.status} bytes=${prompt.length} hasSolved=${/P01_M02/.test(prompt)}`);
+  check('T-R22 analysis moments are asked for frame_hints, not invented scenes',
+    /P09_M01\s+\[ANALYSIS/.test(prompt) && /frame_hints only/.test(prompt), 'ANALYSIS marker present');
+
+  // round-2 response: 2 valid + 4 that MUST be rejected
+  const resp = [
+    { moment_id: 'P01_M01', locators: [
+      { source_id: 'P01_S01', locator_type: 'DIALOGUE', dialogue_exact: 'The alarm rings across the base.', confidence: 'HIGH' },
+      { source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }],
+      frame_hints: [{ source_id: 'P01_S01', time_sec: 5, reason: 'wide shot' }] },
+    { moment_id: 'P09_M01', frame_hints: [{ source_id: 'P01_S01', time_sec: 40, reason: 'clear frame' }] },
+    { moment_id: 'P02_M01', locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 5, end_sec: 9 }] },  // cross-show
+    { moment_id: 'P01_M01', locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 9000, end_sec: 9006 }] }, // past duration
+    { moment_id: 'GHOST_M99', locators: [{ source_id: 'P01_S01', locator_type: 'EXACT_TIME', start_sec: 1, end_sec: 5 }] },  // unknown
+    { moment_id: 'P01_M02', locators: [{ source_id: 'P01_S01', locator_type: 'DIALOGUE', dialogue_exact: 'ok sure' }] },     // too short
+    { broken_sources: [{ source_id: 'P02_S01', problem: 'video unavailable' }] },
+  ];
+  const rf = path.join(d, 'r2.json'); fs.writeFileSync(rf, '```json\n' + JSON.stringify(resp) + '\n```');   // fence bhi test karo
+  const outPack = path.join(d, 'applied.json');
+  const B = spawnSync('node', ['tools/apply-round2.js', pf, rf, '-o', outPack], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  let AP = null; try { AP = JSON.parse(fs.readFileSync(outPack, 'utf8')); } catch {}
+  const find = id => { for (const p of (AP ? AP.packs : [])) for (const m of p.moments) if (m.moment_id === id) return m; return null; };
+  const m1 = find('P01_M01'), g1 = find('P09_M01'), x1 = find('P02_M01'), m2 = find('P01_M02');
+  check('T-R23 valid locators applied, DIALOGUE ordered first (survives upload offset)',
+    B.status === 0 && m1 && m1.locators.length === 2 && m1.locators[0].locator_type === 'DIALOGUE'
+      && (m1.fallback_plan.frame_hints || []).length === 1 && g1 && g1.fallback_plan.frame_hints.length === 1,
+    `exit=${B.status} m1locs=${m1 ? m1.locators.length : 'n/a'}`);
+  check('T-R24 cross-scope source, past-duration time, unknown moment and 2-word dialogue all rejected',
+    x1 && x1.locators.length === 0
+      && m1 && !m1.locators.some(l => l.start_sec === 9000)
+      && m2 && !m2.locators.some(l => l.locator_type === 'DIALOGUE')
+      && /REJECT/.test(B.stdout) && /GHOST_M99/.test(B.stdout),
+    `crossShow=${x1 ? x1.locators.length : '?'} rejectsShown=${/REJECT/.test(B.stdout)}`);
+  check('T-R25 broken sources surfaced, applied pack still validates',
+    /video unavailable/.test(B.stdout) && AP && require(path.join(ROOT, 'src', 'validate.js')).validateFile(outPack).ok,
+    `brokenShown=${/video unavailable/.test(B.stdout)}`);
+
+  // in-place mode must leave a backup (galti se pack kho na jaye)
+  const C = spawnSync('node', ['tools/apply-round2.js', pf, rf], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  check('T-R26 in-place apply writes a .bak before touching the pack',
+    C.status === 0 && fs.existsSync(pf + '.bak') && JSON.parse(fs.readFileSync(pf + '.bak', 'utf8')).packs.length === 3,
+    `exit=${C.status} bak=${fs.existsSync(pf + '.bak')}`);
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });
