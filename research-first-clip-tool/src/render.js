@@ -84,6 +84,14 @@ module.exports = function render(spec, cfg, st, tl) {
       r = U.ffmpeg(['-i', U.p(id, s.video), '-vf', vf, '-t', dur.toFixed(3),
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 300000 });
+    } else if (s.kind === 'context_video' && s.media_file && fs.existsSync(U.p(id, s.media_file))) {
+      // CONTEXT VIDEO: already-downloaded approved source se chalta hua tukda
+      // (exact scene ka daawa nahi — report mein CONTEXT_VIDEO). Still se behtar,
+      // aur koi naya download nahi.
+      r = U.ffmpeg(['-ss', String(s.media_start || 0), '-i', U.p(id, s.media_file), '-t', dur.toFixed(3), '-an',
+        '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
+        '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
+        '-pix_fmt', 'yuv420p', '-r', String(FPS), seg], { timeout: 300000 });
     } else if (s.kind === 'still' && s.image && fs.existsSync(U.p(id, s.image))) {
       // STILL: Ken Burns (slow zoom/pan) + blurred background fill — dead card nahi
       // Ken Burns = fixed-size crop jo upscaled image par PAN karta hai.
@@ -220,7 +228,8 @@ module.exports = function render(spec, cfg, st, tl) {
       moment_id: s.moment_id || null, pack_id: s.pack_id || null,
       source_id: s.source_id || s.image_source || null, url: s.url || null,
       image: s.image || null, images: s.images || null, image_time: s.image_time != null ? s.image_time : null,
-      video: s.video || null, why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused });
+      video: s.video || null, media_file: s.media_file || null, media_start: s.media_start != null ? s.media_start : null,
+      why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused });
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
     n++;
   }

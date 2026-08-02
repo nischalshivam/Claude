@@ -137,6 +137,37 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
 
   let statAssets = { video: 0, still: 0, montage: 0, graphic: 0, card: 0 };
 
+  // ---- CONTEXT VIDEO picker ----
+  // Jis beat par exact clip nahi hai, wahan still ke bajaye USI approved source
+  // se ek chalta hua tukda lete hain (source already downloaded hai = free).
+  // Time chunne ke liye keyframe index use karte hain (wo already flat/black
+  // frames hata chuka hai), aur har baar naya region (repeat nahi).
+  const usedCtx = [];   // [{source_id, at}]
+  const mediaCache = {};
+  function pickContextVideo(e, allowed, wantDur, nearSec) {
+    const minGap = (S.contextMinGapSeconds || 12);
+    for (const sid of allowed) {
+      if (!(sid in mediaCache)) mediaCache[sid] = KF.sourceMediaPath(spec, id, sid);
+      const media = mediaCache[sid];
+      if (!media) continue;                                  // poori source nahi hai -> still hi sahi
+      const idx = bank[sid];
+      if (!idx || !idx.frames.length) continue;
+      const dur = idx.duration || 0;
+      // candidate times: keyframe times jo source ke andar poora shot de sakein
+      let cands = idx.frames.map(f => f.t).filter(t => !dur || t + wantDur + 0.5 <= dur);
+      if (!cands.length) continue;
+      // pehle wo jo kisi aur shot mein use nahi hue (variety), phir nearSec ke paas
+      const fresh = cands.filter(t => !usedCtx.some(u => u.source_id === sid && Math.abs(u.at - t) < minGap));
+      const pool = fresh.length ? fresh : cands;
+      pool.sort((a, b) => (nearSec != null ? Math.abs(a - nearSec) - Math.abs(b - nearSec) : a - b));
+      const at = pool[0];
+      usedCtx.push({ source_id: sid, at });
+      return { media, at, source_id: sid,
+        why: `context clip from ${sid} @ ${Math.round(at)}s (same approved source, not the exact scene)` };
+    }
+    return null;
+  }
+
   for (const a of anchors) {
     const e = a.e;
     const common = commonOf(e);
@@ -177,7 +208,21 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
         continue;
       }
 
-      // 2) SCOPE-LOCKED KEYFRAME(S): montage (2-3 frames) ya single still
+      // 2) CONTEXT VIDEO — usi approved source se CHALTA HUA clip (still se behtar).
+      //    Poori source pehle hi download hai, isliye ye free hai aur video essay
+      //    slideshow jaisa nahi lagta. Ye exact scene ka daawa nahi karta (asset
+      //    CONTEXT_VIDEO), aur report mein alag dikhta hai.
+      if ((cfg.fallback || {}).useContextVideo !== false) {
+        const ctx = pickContextVideo(e, allowed, s1 - s0, nearSec);
+        if (ctx) {
+          push({ kind: 'context_video', start: s0, end: s1, ...common, media_file: ctx.media, media_start: ctx.at,
+                 image_source: ctx.source_id, why: ctx.why, asset: 'CONTEXT_VIDEO' });
+          statAssets.context = (statAssets.context || 0) + 1;
+          continue;
+        }
+      }
+
+      // 3) SCOPE-LOCKED KEYFRAME(S): montage (2-3 frames) ya single still
       const wantMontage = (e.template === 'COMPARISON' || (s1 - s0) >= (S.montageMinSeconds || 6)) && (cfg.fallback || {}).montageImages > 1;
       const nWant = wantMontage ? Math.min(cfg.fallback.montageImages || 2, 3) : 1;
       const picks = KF.pickFrames(bank, allowed, usedFrames, nWant, nearSec, e.frame_hints || []);
@@ -307,12 +352,12 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // ---- HONEST metrics: media-backed vs GENERIC full-screen text alag ----
   const secAsset = a => slots.filter(s => (s.asset || '') === a).reduce((x, s) => x + s.dur, 0);
   const pct = x => total ? Math.round(x / total * 1000) / 10 : 0;
-  const mediaSec = secAsset('EXACT_VIDEO') + secAsset('VERIFIED_SOURCE_STILL') + secAsset('MONTAGE') + secAsset('TEMPLATE_GRAPHIC_MEDIA');
+  const mediaSec = secAsset('EXACT_VIDEO') + secAsset('CONTEXT_VIDEO') + secAsset('VERIFIED_SOURCE_STILL') + secAsset('MONTAGE') + secAsset('TEMPLATE_GRAPHIC_MEDIA');
   const genericSec = secAsset('GENERIC_TEXT_GRAPHIC');
   const cardSec = secAsset('LOW_CONFIDENCE_FALLBACK');
   sum = 0; for (const s of slots) sum += s.dur;
   U.ok(`timeline: ${slots.length} shots (sum ${sum.toFixed(2)}s vs total ${total.toFixed(2)}s)`);
-  U.log(`   video ${pct(secAsset('EXACT_VIDEO'))}% | stills ${pct(secAsset('VERIFIED_SOURCE_STILL'))}% | montage ${pct(secAsset('MONTAGE'))}% | graphic-over-media ${pct(secAsset('TEMPLATE_GRAPHIC_MEDIA'))}%`);
+  U.log(`   exact video ${pct(secAsset('EXACT_VIDEO'))}% | context video ${pct(secAsset('CONTEXT_VIDEO'))}% | stills ${pct(secAsset('VERIFIED_SOURCE_STILL'))}% | montage ${pct(secAsset('MONTAGE'))}% | graphic-over-media ${pct(secAsset('TEMPLATE_GRAPHIC_MEDIA'))}%`);
   U.log(`   >> media-backed total ${pct(mediaSec)}%  |  GENERIC full-screen text ${pct(genericSec)}%  |  diagnostic cards ${pct(cardSec)}%`);
   if (genericSec > total * 0.15) U.warn(`generic full-screen text ${pct(genericSec)}% (>15%) — in beats ke liye research pack mein fallback_plan/allowed_source_ids do`);
   U.log(`   micro-gaps absorbed: ${absorbed}`);

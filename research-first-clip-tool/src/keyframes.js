@@ -161,4 +161,20 @@ function pickFrames(bank, allowedSources, used, n = 1, nearSec = null, hints = [
   return out;
 }
 
-module.exports = { buildBank, buildForSource, pickFrames, stillFromClip, bankDir };
+// kis source ki POORI media file maujood hai? (bank ya local_file) — context
+// clips isi se kate jaate hain (koi naya download nahi).
+function sourceMediaPath(spec, id, sourceId) {
+  const DL = require('./download.js');
+  const SRC = require('./sources.js');
+  const bank = DL.bankPath(id, sourceId);
+  if (fs.existsSync(bank) && U.probe(bank).ok) return path.relative(U.jobDir(id), bank);
+  const sources = SRC.indexSources(spec.pack);
+  const s = sources[sourceId];
+  if (s && s.local_file) {
+    const abs = path.isAbsolute(s.local_file) ? s.local_file : path.join(U.ROOT, s.local_file);
+    if (fs.existsSync(abs) && U.probe(abs).ok) return s.local_file;
+  }
+  return null;
+}
+
+module.exports = { buildBank, buildForSource, pickFrames, stillFromClip, bankDir, sourceMediaPath };

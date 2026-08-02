@@ -85,14 +85,17 @@
     "gapAbsorbSeconds": 1.5,
     "stillSeconds": 5,
     "hardMaxSeconds": 30,
-    "_hardNote": "HARD CAP: koi bhi visual (clip/still/graphic) itne second se zyada screen par nahi rahega."
+    "_hardNote": "HARD CAP: koi bhi visual (clip/still/graphic) itne second se zyada screen par nahi rahega.",
+    "contextMinGapSeconds": 12
   },
   "fallback": {
     "_note": "Zero-card ladder. keyframes = pehle se downloaded approved source se nikale gaye frames (free, scope-correct).",
     "useKeyframes": true,
     "keyframeEverySeconds": 4,
     "maxKeyframesPerSource": 60,
-    "montageImages": 3
+    "montageImages": 3,
+    "useContextVideo": true,
+    "_ctxNote": "Exact clip na ho to usi approved source se CHALTA HUA context clip (still se behtar). Source already downloaded hota hai."
   },
   "output": {
     "_note": "production final.mp4 mein diagnostic cards NAHI. review.mp4 (debug) mein dikhte hain.",
