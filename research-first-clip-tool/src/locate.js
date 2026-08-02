@@ -27,13 +27,59 @@ module.exports = function locate(spec, cfg, st, aligned) {
   const resolved = [];
   let nAccept = 0, nReview = 0, nGraphic = 0, nNeeds = 0;
 
+  // scope key = show/film identity (same-show inference ke liye). Isse P09 jaise
+  // "0 sources" wale pack bhi USI show ke doosre packs ke frames use kar sakte hain —
+  // par kisi DOOSRE show ke nahi (cross-show bleed band).
+  const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}` : '';
+  const packsByScope = {};
+  for (const pk of spec.pack.packs) {
+    const k = scopeKey(pk.scope);
+    if (!k || (pk.scope && pk.scope.kind === 'GRAPHIC')) continue;
+    (packsByScope[k] = packsByScope[k] || []).push(pk.pack_id);
+  }
+  const sourcesOfPacks = ids => {
+    const out = [];
+    for (const pk of spec.pack.packs) if (ids.includes(pk.pack_id)) for (const s of (pk.sources || [])) out.push(s.source_id);
+    return out;
+  };
+
   for (const m of aligned.moments) {
+    const fp = m.fallback_plan && typeof m.fallback_plan === 'object' ? m.fallback_plan : null;
+    const myScopeKey = scopeKey(m._scope);
+    // Scope-lock: (1) research ne jo explicitly allow kiya, warna (2) apna pack,
+    // plus (3) USI show ke doosre packs (same scope title) — aur kuch nahi.
+    let allowedPacks;
+    if (fp && fp.allowed_pack_ids && fp.allowed_pack_ids.length) {
+      allowedPacks = fp.allowed_pack_ids.slice();
+    } else if (m._scope && m._scope.kind === 'GRAPHIC') {
+      // GRAPHIC/analysis beat ka backdrop: agar poore project mein SIRF EK show hai
+      // to us show ke frames safe hain (koi ambiguity nahi). Cross-show project mein
+      // bina explicit declaration ke koi backdrop nahi — warna galat show aa sakta hai.
+      const scopes = Object.keys(packsByScope);
+      allowedPacks = scopes.length === 1 ? packsByScope[scopes[0]].slice() : [m._packId];
+    } else {
+      allowedPacks = [...new Set([m._packId, ...((packsByScope[myScopeKey]) || [])])];
+    }
+    const allowedSources = (fp && fp.allowed_source_ids && fp.allowed_source_ids.length)
+      ? fp.allowed_source_ids.slice()
+      : sourcesOfPacks(allowedPacks);
+
     const base = {
-      moment_id: m.moment_id, pack_id: m._packId, scope: m._scope,
+      moment_id: m.moment_id, pack_id: m._packId, scope: m._scope, scope_key: myScopeKey,
       script_cue_exact: m.script_cue_exact, purpose: m.purpose || '',
-      must_show: m.must_show || [], must_not_show: m.must_not_show || [],
+      must_show: (fp && fp.must_show) || m.must_show || [], must_not_show: (fp && fp.must_not_show) || m.must_not_show || [],
       beat_start: m.beat_start, beat_end: m.beat_end, align_flag: m.align_flag, align_score: m.align_score,
       preferred_clip_sec: m.preferred_clip_sec || null,
+      criticality: m.criticality || 'NORMAL',
+      // ye fields HAR status par preserve hote hain (unresolved par bhi) — taaki
+      // fallback engine sahi scope ke frames utha sake (P09 ka asli fix).
+      allowed_pack_ids: allowedPacks,
+      allowed_source_ids: [...new Set(allowedSources)],
+      frame_hints: (fp && Array.isArray(fp.frame_hints)) ? fp.frame_hints : [],
+      template: (fp && fp.template) || null,
+      overlay_text: (fp && fp.overlay_text) || '',
+      // locator ke source IDs bhi rakho chahe locator fail ho jaye
+      locator_source_ids: [...new Set((m.locators || []).map(L => L.source_id).filter(Boolean))],
     };
 
     // sort: source.priority (researcher) -> confidence -> type tie-break

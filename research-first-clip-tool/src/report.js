@@ -27,18 +27,32 @@ function thumb(id, clipRel, momentId) {
   try { return 'data:image/jpeg;base64,' + fs.readFileSync(out).toString('base64'); } catch { return null; }
 }
 
-// timeline se duration-weighted visual mix (M2 ka asli metric — moment-count nahi)
-function visualMix(tl) {
-  if (!tl || !tl.slots) return null;
+// M2.1: metrics AB RENDER MANIFEST se aate hain (jo sach mein render hua),
+// pre-render timeline se nahi. Aur har class alag ginī jaati hai — full-screen
+// text graphic ko "0% cards" mein chhupaya NAHI jaata.
+function visualMix(id, tl) {
+  let shots = null, total = 0;
+  const mf = U.p(id, 'render-manifest.json');
+  if (fs.existsSync(mf)) {
+    try { const m = JSON.parse(fs.readFileSync(mf, 'utf8')); shots = m.shots; total = m.total; } catch {}
+  }
+  if (!shots) { if (!tl || !tl.slots) return null; shots = tl.slots; total = tl.total; }   // fallback (render se pehle)
   const by = {};
-  for (const s of tl.slots) { const k = s.asset || s.kind; by[k] = (by[k] || 0) + s.dur; }
-  const total = tl.total || Object.values(by).reduce((a, b) => a + b, 0) || 1;
+  for (const s of shots) { const k = s.asset || s.kind; by[k] = (by[k] || 0) + (s.dur || 0); }
+  total = total || Object.values(by).reduce((a, b) => a + b, 0) || 1;
+  const g = k => by[k] || 0;
   const pct = v => Math.round(v / total * 1000) / 10;
-  const cards = (by.LOW_CONFIDENCE_FALLBACK || 0);
+  const media = g('EXACT_VIDEO') + g('CONTEXT_VIDEO') + g('VERIFIED_SOURCE_STILL') + g('VERIFIED_WEB_IMAGE') + g('MONTAGE') + g('TEMPLATE_GRAPHIC_MEDIA');
   return {
-    total, by, pct,
-    video: pct(by.EXACT_VIDEO || 0), still: pct(by.VERIFIED_SOURCE_STILL || 0),
-    graphic: pct(by.EDITORIAL_GRAPHIC || 0), cards: pct(cards),
+    total, by, fromManifest: fs.existsSync(mf),
+    video: pct(g('EXACT_VIDEO') + g('CONTEXT_VIDEO')),
+    still: pct(g('VERIFIED_SOURCE_STILL')),
+    montage: pct(g('MONTAGE')),
+    graphicMedia: pct(g('TEMPLATE_GRAPHIC_MEDIA')),
+    genericText: pct(g('GENERIC_TEXT_GRAPHIC') + g('EDITORIAL_GRAPHIC') + g('text')),
+    cards: pct(g('LOW_CONFIDENCE_FALLBACK') + g('needs_source') + g('needs_review')),
+    renderFail: pct(g('RENDER_FAILURE_FALLBACK')),
+    mediaTotal: pct(media),
   };
 }
 
@@ -63,7 +77,7 @@ module.exports = function report(spec, cfg, st, resolved, tl) {
     else n.needs++;   // NEEDS_SOURCE (aur koi bhi RESOLVED bina clip)
   }
 
-  const mix = visualMix(tl);
+  const mix = visualMix(id, tl);
 
   // ---- HTML rows ----
   const rows = resolved.map(e => {
@@ -108,12 +122,16 @@ a{color:#63b3ed}
 <h1>Quality Report — ${esc(spec.pack.project_title || id)}</h1>
 <div class="sub">M2 zero-card engine (deterministic, no API). Har second par asli visual: clip, verified-source still, ya designed graphic. Diagnostic cards sirf review mode mein.</div>
 ${mix ? `<div class="cards">
-  <div class="card"><b style="color:#1f9d55">${mix.video}%</b><span>exact video</span></div>
+  <div class="card"><b style="color:${mix.mediaTotal >= 85 ? '#1f9d55' : '#b7791f'}">${mix.mediaTotal}%</b><span>MEDIA-BACKED total (target &ge;85%)</span></div>
+  <div class="card"><b style="color:#1f9d55">${mix.video}%</b><span>video</span></div>
   <div class="card"><b style="color:#63b3ed">${mix.still}%</b><span>verified stills</span></div>
-  <div class="card"><b style="color:#9f7aea">${mix.graphic}%</b><span>editorial graphics</span></div>
+  <div class="card"><b style="color:#4fd1c5">${mix.montage}%</b><span>montage</span></div>
+  <div class="card"><b style="color:#9f7aea">${mix.graphicMedia}%</b><span>graphic over media</span></div>
+  <div class="card"><b style="color:${mix.genericText > 15 ? '#e3342f' : '#b7791f'}">${mix.genericText}%</b><span>GENERIC full-screen text (target &le;15%)</span></div>
   <div class="card"><b style="color:${mix.cards > 0 ? '#e3342f' : '#1f9d55'}">${mix.cards}%</b><span>diagnostic cards</span></div>
-  <div class="card"><b>${tl && tl.slots ? tl.slots.length : '-'}</b><span>shots</span></div>
-</div>` : ''}
+  <div class="card"><b style="color:${mix.renderFail > 0 ? '#e3342f' : '#1f9d55'}">${mix.renderFail}%</b><span>render failures</span></div>
+</div>
+<div class="sub">Metrics ${mix.fromManifest ? '<b>render manifest</b> se (jo sach mein render hua)' : 'pre-render timeline se (render abhi baaki)'} — full-screen text graphic ko cards mein chhupaya nahi gaya.</div>` : ''}
 <div class="cards">
   <div class="card"><b>${n.total}</b><span>moments</span></div>
   <div class="card"><b style="color:#1f9d55">${n.resolved}</b><span>RESOLVED (in final)</span></div>

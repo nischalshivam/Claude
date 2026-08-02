@@ -1,10 +1,17 @@
 # Research-First Clip Tool (M2 — zero-card visual engine)
 
-> **M2 mein sabse bada badlav:** ab video mein "NEEDS SOURCE" / "NEEDS REVIEW"
-> jaise internal cards **nahi** aate. Jahan exact clip nahi milti, wahan **usi
+> **M2.1 mein sabse bada badlav:** jahan exact clip nahi milti, wahan **usi
 > approved source (usi episode) ke frames** se still/montage lagta hai — sahi
-> show, sahi character, Ken Burns motion ke saath. Diagnostic cards sirf
-> `review` mode mein dikhte hain (debugging ke liye).
+> show, sahi character, Ken Burns motion ke saath. Analysis/quote beats bhi ab
+> plain card nahi, **asli frame ke upar** text overlay hote hain.
+>
+> **Metrics ab honest hain.** Report `render-manifest.json` se banti hai (jo sach
+> mein render hua) aur har class alag ginī jaati hai:
+> `media-backed total` · `video` · `stills` · `montage` · `graphic-over-media` ·
+> **`GENERIC full-screen text`** · `diagnostic cards` · `render failures`.
+> Pehle M2 mein full-screen gradient+text ko `EDITORIAL_GRAPHIC` bolkar
+> "0% cards" mein chhupa diya gaya tha — **wo galat tha aur ab theek hai.**
+> Target: media-backed ≥85%, generic text ≤15%, cards 0%.
 
 
 Anime / cartoon / documentary video-essays ke liye **research-first, local-first**
@@ -98,12 +105,37 @@ research AI chal jayega.
 
 ---
 
+## 3b. Preview pehle, full render baad mein (zaroori)
+
+3 ghante ka full run karne se pehle **hamesha** 2-minute preview:
+
+```
+PREVIEW.bat            ->  pehle 120 second
+PREVIEW.bat 300        ->  300s se 120 second
+PREVIEW.bat 300 90     ->  300s se 90 second
+```
+
+Preview **acquisition se pehle** filter karta hai — yaani sirf un moments ke
+sources download hote hain. Output alag `jobs/preview/` mein jaata hai, full job
+ko touch nahi karta.
+
+Preview mein ye check karo: media-backed ≥85%, generic text ≤15%, cards 0%,
+koi galat show/character nahi, koi 1s se lamba frozen shot nahi.
+
 ## 4. Honest limitations (ye zaroor padho)
 
-- **Semantic distraction removal nahi hai.** M1.3 khud se facecam / reaction host /
+- **Semantic distraction removal nahi hai.** Tool khud se facecam / reaction host /
   logo / overlay ko *dekhkar* nahi hata sakta. Source ki safai (a) Genspark prompt
-  ke rules se aati hai, (b) aapke `quality-report.html` review se. README kahin
-  ye claim nahi karta ki ye automatic hai.
+  ke rules se aati hai, (b) aapke `quality-report.html` + preview review se.
+  `must_not_show` report mein dikhta hai par automatically enforce nahi hota.
+- **Frame selection deterministic hai, semantic nahi.** Engine `frame_hints`
+  (source + second), moment ke source-time ki nazdeeki, aur simple quality use
+  karta hai. `keyframe_queries` ko base engine **ignore** karta hai — usse coverage
+  mat maano. Sahi frame chahiye to research pack mein `frame_hints` do.
+- **Captions ke bina anime abhi solve nahi hai.** Aise sources ke liye
+  `EXACT_TIME` + `frame_hints` kaam karte hain; local ASR abhi nahi hai.
+- **`APPROX_WINDOW` / `SEARCH_ONLY` se exact clip nahi banti** — wo beats
+  fallback_plan/keyframe se bharte hain ya honestly unresolved rehte hain.
 - **Jitna research pack mein evidence hoga, utne hi exact clips banenge.** Jis beat
   ka verified source nahi, wahan honest card aayega — random clip **kabhi nahi**.
 - **NEEDS_REVIEW final video mein nahi jaata** (report mein candidate dikhta hai,

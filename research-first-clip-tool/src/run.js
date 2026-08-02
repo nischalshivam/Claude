@@ -157,7 +157,30 @@ async function main() {
   for (const key of toRun) {
     if (!pending(key)) { U.log(`\n  -- ${STAGE_N[key]}. ${key} (pehle ho chuka, skip)`); continue; }
     try {
-      if (key === 'align') await runStage(key, () => { aligned = align(spec, cfg, st); });
+      if (key === 'align') await runStage(key, () => {
+        aligned = align(spec, cfg, st);
+        // ---- PREVIEW FILTER: acquisition/download/keyframes/render SE PEHLE ----
+        // (poora 14-min job process karke baad mein trim NAHI karte)
+        const pStart = arg('preview-start'), pDur = arg('preview-duration'), pMoments = arg('preview-moments');
+        if (pStart != null || pDur != null || pMoments) {
+          const before = aligned.moments.length;
+          if (pMoments) {
+            const want = new Set(pMoments.split(',').map(x => x.trim()).filter(Boolean));
+            aligned.moments = aligned.moments.filter(m => want.has(m.moment_id));
+          } else {
+            const a = Number(pStart || 0), b = a + Number(pDur || 120);
+            aligned.moments = aligned.moments.filter(m => m.beat_end > a && m.beat_start < b);
+          }
+          // preview timeline ko 0 se shuru karo (audio bhi wahin se cut hoga)
+          const t0 = aligned.moments.length ? Math.min(...aligned.moments.map(m => m.beat_start)) : 0;
+          const t1 = aligned.moments.length ? Math.max(...aligned.moments.map(m => m.beat_end)) : 0;
+          for (const m of aligned.moments) { m.beat_start = +(m.beat_start - t0).toFixed(3); m.beat_end = +(m.beat_end - t0).toFixed(3); }
+          aligned.total = +(t1 - t0).toFixed(3);
+          spec.previewOffset = t0;
+          U.warn(`PREVIEW MODE: ${aligned.moments.length}/${before} moments (${aligned.total.toFixed(1)}s). Sirf inke sources download honge.`);
+          fs.writeFileSync(U.p(spec.id, 'aligned.json'), JSON.stringify(aligned, null, 2));
+        }
+      });
       else if (key === 'locate') await runStage(key, () => { aligned = aligned || jf('aligned.json'); resolved = locate(spec, cfg, st, aligned); });
       else if (key === 'download') await runStage(key, () => { resolved = resolved || jf('resolved.json'); resolved = download(spec, cfg, st, resolved); saveResolved(spec.id, resolved); });
       else if (key === 'cut') await runStage(key, () => { resolved = resolved || jf('resolved.json'); resolved = cut(spec, cfg, st, resolved); saveResolved(spec.id, resolved); });

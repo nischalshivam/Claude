@@ -31,13 +31,14 @@ function buildForSource(id, cfg, sourceId, mediaAbs) {
   if (!pr.ok) return { source_id: sourceId, frames: [] };
 
   const fb = cfg.fallback || {};
-  const every = Math.max(1, fb.keyframeEverySeconds || 4);
   const maxN = fb.maxKeyframesPerSource || 60;
   const W = (cfg.canvas && cfg.canvas.width) || 1920;
+  // FULL-DURATION sampling: interval source ki apni length se aata hai, isliye
+  // aakhiri scenes bhi cover hote hain. (M2 bug: fixed 4s x 60 = sirf pehle 240s.)
+  const every = Math.max(fb.keyframeEverySeconds || 4, pr.duration / maxN);
 
-  // ek hi pass: har `every` second par frame, canvas width tak scale
   const pat = path.join(dir, 'kf_%04d.jpg');
-  const r = U.ffmpeg(['-i', mediaAbs, '-vf', `fps=1/${every},scale=${W}:-2:flags=lanczos`,
+  const r = U.ffmpeg(['-i', mediaAbs, '-vf', `fps=1/${every.toFixed(3)},scale=${W}:-2:flags=lanczos`,
     '-frames:v', String(maxN), '-q:v', '3', pat], { timeout: 300000 });
   if (!r.ok) return { source_id: sourceId, duration: pr.duration, frames: [] };
 
@@ -102,31 +103,60 @@ function stillFromClip(id, cfg, clipRel, atFraction = 0.5) {
   return path.relative(U.jobDir(id), out);
 }
 
-// ek beat ke liye best frames chuno (scope-safe + non-repeat)
-//  allowedSources: sirf inhi source IDs se (research ne jo approve kiya)
-//  used: pehle use ho chuke frame paths (repeat se bachne ko)
-function pickFrames(bank, allowedSources, used, n = 1, nearSec = null) {
+// ek beat ke liye best frames chuno — STRICT SCOPE LOCK.
+//  allowedSources: SIRF ye source IDs (research/scope se aaye). Khaali list =
+//    koi frame nahi (poore project ke bank se uthana STRICTLY forbidden hai —
+//    warna Show A ka frame Show B ke beat mein chala jata tha).
+//  hints: [{source_id, time_sec}] — deterministic selector, sabse pehli priority.
+//  nearSec: us moment ka source-time (aas-paas ke frames prefer).
+//  used: pehle use ho chuke frames (variety); pool khatam ho to controlled REUSE
+//    hoti hai — generic card se behtar hai.
+function pickFrames(bank, allowedSources, used, n = 1, nearSec = null, hints = []) {
+  const allow = Array.isArray(allowedSources) ? allowedSources.filter(Boolean) : [];
+  if (!allow.length) return [];                       // scope-lock: no allow-list => no frames
+  const allowSet = new Set(allow);
+  const out = [];
+
+  // 1) explicit frame_hints (sirf allowed sources ke)
+  for (const h of (hints || [])) {
+    if (out.length >= n) break;
+    if (!h || !allowSet.has(h.source_id)) continue;
+    const idx = bank[h.source_id];
+    if (!idx || !idx.frames.length) continue;
+    let best = null;
+    for (const f of idx.frames) { const d = Math.abs(f.t - h.time_sec); if (!best || d < best.d) best = { f, d }; }
+    if (best) out.push({ ...best.f, source_id: h.source_id, why: `frame_hint ${h.time_sec}s${h.reason ? ' — ' + h.reason : ''}` });
+  }
+
   const pool = [];
-  for (const sid of allowedSources) {
+  for (const sid of allow) {
     const idx = bank[sid];
     if (!idx) continue;
-    for (const f of idx.frames) if (!used.has(f.file)) pool.push({ ...f, source_id: sid });
+    for (const f of idx.frames) pool.push({ ...f, source_id: sid });
   }
-  if (!pool.length) return [];
-  // agar beat ka source-time pata hai to uske aas-paas ke frames prefer karo
-  pool.sort((a, b) => {
+  if (!pool.length) return out;
+
+  const rank = arr => arr.sort((a, b) => {
     if (nearSec != null) {
       const da = Math.abs(a.t - nearSec), db = Math.abs(b.t - nearSec);
-      if (Math.abs(da - db) > 1) return da - db;
+      if (Math.abs(da - db) > 1) return da - db;       // moment ke aas-paas pehle
     }
     return b.score - a.score;
   });
-  const out = [];
-  for (const f of pool) {
+
+  // 2) pehle un-used frames
+  const fresh = rank(pool.filter(f => !used.has(f.file) && !out.some(o => o.file === f.file)));
+  for (const f of fresh) {
     if (out.length >= n) break;
-    // ek hi jagah ke bahut paas wale frames na lo (variety)
-    if (out.some(o => o.source_id === f.source_id && Math.abs(o.t - f.t) < 6)) continue;
-    out.push(f);
+    if (out.some(o => o.source_id === f.source_id && Math.abs(o.t - f.t) < 6)) continue;   // variety
+    out.push({ ...f, why: nearSec != null ? `nearest frame to ${Math.round(nearSec)}s in ${f.source_id}` : `best frame in ${f.source_id}` });
+  }
+  // 3) pool khatam -> CONTROLLED REUSE (galat show ya card se behtar)
+  if (out.length < n) {
+    for (const f of rank(pool.filter(f => !out.some(o => o.file === f.file)))) {
+      if (out.length >= n) break;
+      out.push({ ...f, reused: true, why: `reused frame from ${f.source_id} (scope-correct pool exhausted)` });
+    }
   }
   return out;
 }

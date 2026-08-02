@@ -107,12 +107,39 @@
           "type": "array",
           "items": { "$ref": "#/definitions/locator" }
         },
+        "criticality": { "enum": ["HOOK", "HARD_EVIDENCE", "NORMAL", "BRIDGE"] },
         "fallback": {
           "type": "object",
           "properties": {
             "type": { "enum": ["ANOTHER_VERIFIED_MOMENT", "STILL_FROM_PACK", "LOCAL_GRAPHIC", "MULTI_SOURCE_MONTAGE", "TEXT_CARD", "NEEDS_SOURCE"] },
             "reuse_pack_ids": { "type": "array", "items": { "type": "string" } },
             "text": { "type": "string" }
+          }
+        },
+        "fallback_plan": {
+          "type": "object",
+          "description": "Zero-card plan: jab exact clip na mile to engine in hi allowed packs/sources ke frames use karega. Scope-lock yahin se aata hai.",
+          "properties": {
+            "allowed_pack_ids": { "type": "array", "items": { "type": "string" } },
+            "allowed_source_ids": { "type": "array", "items": { "type": "string" } },
+            "frame_hints": {
+              "type": "array",
+              "description": "Deterministic selector: exact source + second jahan sahi visual hai.",
+              "items": {
+                "type": "object",
+                "required": ["source_id", "time_sec"],
+                "properties": {
+                  "source_id": { "type": "string" },
+                  "time_sec": { "type": "number", "minimum": 0 },
+                  "reason": { "type": "string" }
+                }
+              }
+            },
+            "keyframe_queries": { "type": "array", "items": { "type": "string" }, "description": "Optional; base engine semantic ranking NAHI karta (sirf optional CLIP module ke liye)." },
+            "must_show": { "type": "array", "items": { "type": "string" } },
+            "must_not_show": { "type": "array", "items": { "type": "string" } },
+            "template": { "enum": ["COMPARISON", "QUOTE", "TIMELINE", "CHECKLIST", "NONE"] },
+            "overlay_text": { "type": "string" }
           }
         }
       }

@@ -99,11 +99,15 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
       align_flag: e.align_flag, must_show: e.must_show || [], cue: e.script_cue_exact, qa: e.qa || null,
     };
   }
-  // moment ke liye allowed sources (scope-safe): uske apne candidates ke source IDs
+  // moment ke liye allowed sources — SCOPE LOCK.
+  // locate.js har moment par allowed_source_ids likhta hai (research ka
+  // fallback_plan, warna apna pack + USI show ke doosre packs). Unresolved
+  // moments par bhi ye preserve rehte hain. Poore project ke bank se kabhi nahi.
   const allowedOf = e => {
-    const ids = new Set();
+    const ids = new Set(e.allowed_source_ids || []);
     for (const c of (e.candidates && e.candidates.length ? e.candidates : [e])) if (c.source_id) ids.add(c.source_id);
-    return [...ids];
+    for (const s of (e.locator_source_ids || [])) ids.add(s);
+    return [...ids].filter(Boolean);
   };
 
   let statAssets = { video: 0, still: 0, montage: 0, graphic: 0, card: 0 };
@@ -135,19 +139,34 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     for (let si = 0; si < segs.length; si++) {
       const { type, a: s0, b: s1 } = segs[si];
 
-      // 1) EXACT CLIP (poori length, freeze ki zaroorat nahi)
+      // 1) EXACT CLIP (poori length, freeze ki zaroorat nahi).
+      //    Saath mein ek SCOPE-CORRECT backup still bhi rakhte hain — agar render
+      //    ke waqt clip corrupt nikle to still lagegi (poora render fail nahi hoga
+      //    aur na hi koi chhupa hua solid card aayega).
       if (type === 'video') {
-        push({ kind: 'video', start: s0, end: s1, ...common, video: e.clip, clip_dur: clipDur, asset: 'EXACT_VIDEO' });
+        const backup = KF.pickFrames(bank, allowed, new Set(), 1, nearSec, e.frame_hints || []);
+        push({ kind: 'video', start: s0, end: s1, ...common, video: e.clip, clip_dur: clipDur, asset: 'EXACT_VIDEO',
+               fallback_image: backup.length ? backup[0].file : null,
+               fallback_image_source: backup.length ? backup[0].source_id : null });
         statAssets.video++; lastVisualKey = 'clip:' + e.clip;
         continue;
       }
 
-      // 2) SAME-SOURCE KEYFRAME STILL (scope-correct image — card ki jagah)
-      const picks = KF.pickFrames(bank, allowed, usedFrames, 1, nearSec);
-      if (picks.length) {
+      // 2) SCOPE-LOCKED KEYFRAME(S): montage (2-3 frames) ya single still
+      const wantMontage = (e.template === 'COMPARISON' || (s1 - s0) >= (S.montageMinSeconds || 6)) && (cfg.fallback || {}).montageImages > 1;
+      const nWant = wantMontage ? Math.min(cfg.fallback.montageImages || 2, 3) : 1;
+      const picks = KF.pickFrames(bank, allowed, usedFrames, nWant, nearSec, e.frame_hints || []);
+      if (picks.length >= 2 && wantMontage) {
         picks.forEach(p => usedFrames.add(p.file));
+        push({ kind: 'montage', start: s0, end: s1, ...common, images: picks.map(p => p.file),
+               image_sources: picks.map(p => p.source_id), image_times: picks.map(p => p.t),
+               why: picks.map(p => p.why).join(' | '), asset: 'MONTAGE' });
+        statAssets.montage = (statAssets.montage || 0) + 1; continue;
+      }
+      if (picks.length) {
+        usedFrames.add(picks[0].file);
         push({ kind: 'still', start: s0, end: s1, ...common, image: picks[0].file, image_source: picks[0].source_id,
-               image_time: picks[0].t, asset: 'VERIFIED_SOURCE_STILL' });
+               image_time: picks[0].t, why: picks[0].why, reused: !!picks[0].reused, asset: 'VERIFIED_SOURCE_STILL' });
         statAssets.still++; lastVisualKey = 'kf:' + picks[0].file;
         continue;
       }
@@ -162,11 +181,23 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
         }
       }
 
-      // 4) designed editorial graphic (production-safe) — text research/script se
-      const gtext = (e.fallback_text || e.script_cue_exact || '').trim();
+      // 4) EDITORIAL GRAPHIC. Jahan tak ho sake MEDIA-BACKED (scope-correct frame
+      //    ke upar dim + text) — plain gradient card sirf tab jab koi allowed
+      //    frame hi na ho. Dono alag-alag report hote hain (honest metric).
+      const gtext = (e.overlay_text || e.fallback_text || e.script_cue_exact || '').trim();
       if (production) {
-        push({ kind: 'graphic', start: s0, end: s1, ...common, text: gtext, label: '', asset: 'EDITORIAL_GRAPHIC' });
-        statAssets.graphic++;
+        const bg = KF.pickFrames(bank, allowed, usedFrames, 1, nearSec, e.frame_hints || []);
+        if (bg.length) {
+          usedFrames.add(bg[0].file);
+          push({ kind: 'graphic', start: s0, end: s1, ...common, text: gtext, image: bg[0].file,
+                 image_source: bg[0].source_id, image_time: bg[0].t, why: bg[0].why,
+                 template: e.template || 'QUOTE', asset: 'TEMPLATE_GRAPHIC_MEDIA' });
+          statAssets.graphic++;
+        } else {
+          push({ kind: 'graphic', start: s0, end: s1, ...common, text: gtext, template: e.template || null,
+                 asset: 'GENERIC_TEXT_GRAPHIC' });
+          statAssets.generic = (statAssets.generic || 0) + 1;
+        }
       } else {
         // review/debug mode: diagnostic card (status dikhta hai)
         const kind = e.status === 'NEEDS_SOURCE' ? 'needs_source' : (e.status === 'NEEDS_REVIEW' ? 'needs_review' : 'text');
@@ -184,18 +215,27 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     cursor = Math.max(cursor, s.end);
   }
   if (total - cursor > 0.001) filled.push({ a: cursor, b: total });
+  // BRIDGE gaps: inhe bhi visual milta hai — par SCOPE-LOCKED. Bridge apne
+  // padosi slot ka scope inherit karta hai (poore project ka bank NAHI —
+  // wahi purana cross-show bleed tha).
   for (const g of filled) {
-    const picks = KF.pickFrames(bank, Object.keys(bank), usedFrames, 1, null);
+    const prev = slots.filter(s => s.end <= g.a + 0.001).pop();
+    const next = slots.find(s => s.start >= g.b - 0.001);
+    const nb = prev || next;
+    const nbAllowed = nb ? allowedOf(resolved.find(e => e.moment_id === nb.moment_id) || {}) : [];
+    const picks = nbAllowed.length ? KF.pickFrames(bank, nbAllowed, usedFrames, 1, null) : [];
     const text = cues.filter(c => c.end > g.a && c.start < g.b).map(c => c.text).join(' ').trim();
+    const common = nb ? { moment_id: nb.moment_id, pack_id: nb.pack_id, scope_key: nb.scope_key } : {};
     if (picks.length) {
       usedFrames.add(picks[0].file);
       slots.push({ i: slots.length, kind: 'still', start: +g.a.toFixed(3), end: +g.b.toFixed(3), dur: +(g.b - g.a).toFixed(3),
-        image: picks[0].file, image_source: picks[0].source_id, cue: text, asset: 'VERIFIED_SOURCE_STILL', label: 'bridge' });
+        ...common, image: picks[0].file, image_source: picks[0].source_id, image_time: picks[0].t,
+        why: 'bridge (neighbour scope) — ' + picks[0].why, cue: text, asset: 'VERIFIED_SOURCE_STILL', label: 'bridge' });
       statAssets.still++;
     } else {
       slots.push({ i: slots.length, kind: 'graphic', start: +g.a.toFixed(3), end: +g.b.toFixed(3), dur: +(g.b - g.a).toFixed(3),
-        text, cue: text, asset: 'EDITORIAL_GRAPHIC', label: 'bridge' });
-      statAssets.graphic++;
+        ...common, text, cue: text, asset: 'GENERIC_TEXT_GRAPHIC', label: 'bridge' });
+      statAssets.generic = (statAssets.generic || 0) + 1;
     }
   }
   slots.sort((a, b) => a.start - b.start);
@@ -208,13 +248,21 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
 
   fs.writeFileSync(U.p(id, 'timeline.json'), JSON.stringify({ total, slots }, null, 2));
 
-  const secOf = k => slots.filter(s => s.kind === k).reduce((a, s) => a + s.dur, 0);
-  const pct = x => total ? Math.round(x / total * 100) : 0;
+  // ---- HONEST metrics: media-backed vs GENERIC full-screen text alag ----
+  const secAsset = a => slots.filter(s => (s.asset || '') === a).reduce((x, s) => x + s.dur, 0);
+  const pct = x => total ? Math.round(x / total * 1000) / 10 : 0;
+  const mediaSec = secAsset('EXACT_VIDEO') + secAsset('VERIFIED_SOURCE_STILL') + secAsset('MONTAGE') + secAsset('TEMPLATE_GRAPHIC_MEDIA');
+  const genericSec = secAsset('GENERIC_TEXT_GRAPHIC');
+  const cardSec = secAsset('LOW_CONFIDENCE_FALLBACK');
   sum = 0; for (const s of slots) sum += s.dur;
   U.ok(`timeline: ${slots.length} shots (sum ${sum.toFixed(2)}s vs total ${total.toFixed(2)}s)`);
-  U.log(`   video ${pct(secOf('video'))}% | stills ${pct(secOf('still'))}% | graphics ${pct(secOf('graphic'))}% | diagnostic cards ${pct(secOf('needs_source') + secOf('needs_review') + secOf('text'))}%`);
-  U.log(`   micro-gaps absorbed: ${absorbed} (M1.3 mein ye flash cards bante the)`);
-  st.meta.timeline = { shots: slots.length, total, videoPct: pct(secOf('video')), stillPct: pct(secOf('still')),
-    graphicPct: pct(secOf('graphic')), cardPct: pct(secOf('needs_source') + secOf('needs_review') + secOf('text')), absorbed, assets: statAssets };
+  U.log(`   video ${pct(secAsset('EXACT_VIDEO'))}% | stills ${pct(secAsset('VERIFIED_SOURCE_STILL'))}% | montage ${pct(secAsset('MONTAGE'))}% | graphic-over-media ${pct(secAsset('TEMPLATE_GRAPHIC_MEDIA'))}%`);
+  U.log(`   >> media-backed total ${pct(mediaSec)}%  |  GENERIC full-screen text ${pct(genericSec)}%  |  diagnostic cards ${pct(cardSec)}%`);
+  if (genericSec > total * 0.15) U.warn(`generic full-screen text ${pct(genericSec)}% (>15%) — in beats ke liye research pack mein fallback_plan/allowed_source_ids do`);
+  U.log(`   micro-gaps absorbed: ${absorbed}`);
+  st.meta.timeline = { shots: slots.length, total, absorbed, assets: statAssets,
+    mediaPct: pct(mediaSec), genericTextPct: pct(genericSec), cardPct: pct(cardSec),
+    videoPct: pct(secAsset('EXACT_VIDEO')), stillPct: pct(secAsset('VERIFIED_SOURCE_STILL')),
+    montagePct: pct(secAsset('MONTAGE')), graphicMediaPct: pct(secAsset('TEMPLATE_GRAPHIC_MEDIA')) };
   return { total, slots };
 };

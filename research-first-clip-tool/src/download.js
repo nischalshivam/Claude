@@ -116,6 +116,9 @@ function downloadCandidate(id, cfg, cand, opts = {}) {
     } catch {}
   }
 
+  // cacheOnly: sirf pata karna tha ki cache hai ya nahi (network bilkul nahi)
+  if (opts.cacheOnly) return { ok: false, error: 'not cached', cacheMiss: true };
+
   // stale/mismatch cache file hata do warna yt-dlp "already downloaded" bol ke purane bytes rakh sakta hai
   try { if (fs.existsSync(rawFile)) fs.rmSync(rawFile, { force: true }); if (fs.existsSync(manFile)) fs.rmSync(manFile, { force: true }); } catch {}
   const fmt = `bv*[height>=${minH}][ext=mp4]/bv*[ext=mp4]/bv*/b[height>=${minH}]/b`;
@@ -171,7 +174,24 @@ module.exports = function download(spec, cfg, st, resolved) {
   const sources = SRC.indexSources(spec.pack);
   const metaOf = sid => { const s = sources[sid]; return s ? SRC.getMeta(id, s, cfg) : null; };
   const { plan, uses } = planAcquisition(cfg, resolved, metaOf);
-  const wanted = Object.keys(plan).filter(sid => plan[sid]);
+  // ---- LAZY: pehle dekho kaunse moments ke paas PEHLE SE valid cached range hai
+  //      (M1.3 ka cache bhi isi mein aa jata hai). Jitne already cached hain,
+  //      unke liye full source download karne ki zaroorat NAHI. ----
+  const missingBySource = {};
+  for (const e of todo) {
+    for (const c of candList(e)) {
+      if (!c.url) continue;
+      const probeOnly = downloadCandidate(id, cfg, c, { useBank: true, acquireBank: false, cacheOnly: true });
+      if (!probeOnly.ok) missingBySource[c.source_id] = (missingBySource[c.source_id] || 0) + 1;
+      break;   // sirf primary candidate dekho
+    }
+  }
+  const minMissing = (cfg.acquire && cfg.acquire.lazyMinMissing) || 2;
+  const wanted = Object.keys(plan).filter(sid => plan[sid] && (missingBySource[sid] || 0) >= minMissing);
+  const skipped = Object.keys(plan).filter(sid => plan[sid] && !wanted.includes(sid));
+  // ---- ACQUISITION PLAN LOG (network se pehle) ----
+  U.log(`   acquisition plan: ${Object.keys(uses).length} unique URL source(s) | cache se mil rahe: ${Object.keys(uses).length - Object.keys(missingBySource).length} | naye full downloads: ${wanted.length}`);
+  if (skipped.length) U.log(`   skip full-download (cache kaafi hai): ${skipped.join(', ')}`);
   const bankState = {};
   if (wanted.length) {
     U.log(`   source bank: ${wanted.length} unique source(s) ek-ek baar poore aayenge (<=${(cfg.acquire && cfg.acquire.maxHeight) || 720}p), phir sab clips local se katenge.`);

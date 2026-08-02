@@ -24,6 +24,8 @@ const ENUM = {
   inspection: ['VERIFIED_WATCHED', 'TRANSCRIPT_CHECKED', 'METADATA_ONLY'],
   locator: ['EXACT_TIME', 'DIALOGUE', 'APPROX_WINDOW', 'SEARCH_ONLY', 'UNRESOLVED'],
   confidence: ['HIGH', 'MEDIUM', 'LOW', 'NONE'],
+  criticality: ['HOOK', 'HARD_EVIDENCE', 'NORMAL', 'BRIDGE'],
+  template: ['COMPARISON', 'QUOTE', 'TIMELINE', 'CHECKLIST', 'NONE'],
   fallback: ['ANOTHER_VERIFIED_MOMENT', 'STILL_FROM_PACK', 'LOCAL_GRAPHIC', 'MULTI_SOURCE_MONTAGE', 'TEXT_CARD', 'NEEDS_SOURCE'],
 };
 
@@ -102,6 +104,32 @@ function validatePackObject(pack) {
       if (m.visual_role && !ENUM.visual.includes(m.visual_role)) warnings.push(`[${mid}] visual_role unknown: ${m.visual_role}`);
       if (m.fallback && m.fallback.type && !ENUM.fallback.includes(m.fallback.type))
         warnings.push(`[${mid}] fallback.type unknown: ${m.fallback.type}`);
+      if (m.criticality && !ENUM.criticality.includes(m.criticality))
+        warnings.push(`[${mid}] criticality unknown: ${m.criticality}`);
+
+      // ---- fallback_plan validation (M2.1 contract) ----
+      const fp = m.fallback_plan;
+      if (fp && typeof fp === 'object') {
+        const packSet = new Set(pack.packs.map(x => x.pack_id));
+        for (const pid2 of (fp.allowed_pack_ids || [])) {
+          if (!packSet.has(pid2)) errors.push(`[${mid}] fallback_plan.allowed_pack_ids: "${pid2}" koi pack nahi`);
+        }
+        // allowed source ko uske OWN pack ke andar hona chahiye (global existence kaafi nahi)
+        const allowedPacks = (fp.allowed_pack_ids && fp.allowed_pack_ids.length) ? fp.allowed_pack_ids : [pk.pack_id];
+        const okSources = new Set();
+        for (const p2 of pack.packs) if (allowedPacks.includes(p2.pack_id)) for (const s2 of (p2.sources || [])) okSources.add(s2.source_id);
+        for (const sid2 of (fp.allowed_source_ids || [])) {
+          if (!allSourceIds.has(sid2)) errors.push(`[${mid}] fallback_plan.allowed_source_ids: "${sid2}" kisi pack mein nahi`);
+          else if (!okSources.has(sid2)) errors.push(`[${mid}] fallback_plan: source "${sid2}" allowed packs [${allowedPacks.join(',')}] ka nahi (cross-show bleed rok raha hoon)`);
+        }
+        for (const h of (fp.frame_hints || [])) {
+          if (!h || !h.source_id || typeof h.time_sec !== 'number' || h.time_sec < 0)
+            errors.push(`[${mid}] frame_hints entry ko source_id + numeric time_sec chahiye`);
+          else if (!allSourceIds.has(h.source_id))
+            errors.push(`[${mid}] frame_hints source "${h.source_id}" kisi pack mein nahi`);
+        }
+        if (fp.template && !ENUM.template.includes(fp.template)) warnings.push(`[${mid}] fallback_plan.template unknown: ${fp.template}`);
+      }
 
       const locs = Array.isArray(m.locators) ? m.locators : [];
       if (!locs.length) { warnings.push(`[${mid}] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)`); continue; }

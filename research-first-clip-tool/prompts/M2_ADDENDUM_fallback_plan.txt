@@ -37,7 +37,10 @@ image nahi). Usse behtar chunne ke liye ye field do:
 "fallback_plan": {
   "allowed_pack_ids": ["P01"],
   "allowed_source_ids": ["P01_S01", "P01_S02"],
-  "keyframe_queries": ["Nicole exhausted in the kitchen", "Nicole at the fridge chart"],
+  "frame_hints": [
+    { "source_id": "P01_S01", "time_sec": 132.5, "reason": "Nicole beside the fridge chart" },
+    { "source_id": "P01_S02", "time_sec": 47.0,  "reason": "Nicole exhausted at the table" }
+  ],
   "must_show": ["Nicole Watterson"],
   "must_not_show": ["reaction host", "wrong show", "fan art"],
   "template": "QUOTE",
@@ -45,15 +48,25 @@ image nahi). Usse behtar chunne ke liye ye field do:
 }
 
 Rules:
-- allowed_source_ids sirf USI pack ke verified sources ho sakte hain (cross-show
-  mixing kabhi nahi).
+- **frame_hints sabse important hai.** Engine mein koi semantic/AI image-search
+  NAHI hai — wo deterministic hai. Isliye jis second par sahi visual hai, wo
+  SECOND do (source_id + time_sec). Tumne source dekha hi hai, to ye mushkil nahi.
+  Ek moment ke liye 1-3 hints achhe rehte hain.
+- Hint na do to bhi chalega: engine us moment ke source-time ke aas-paas ka best
+  frame khud le lega. Par hint se accuracy kaafi behtar hoti hai.
+- allowed_source_ids sirf allowed_pack_ids ke andar ke sources ho sakte hain
+  (validator isse enforce karta hai — cross-show bleed rok raha hai).
 - overlay_text sirf script/research se verbatim aaye — kuch invent mat karo.
 - template values: COMPARISON | QUOTE | TIMELINE | CHECKLIST | NONE
-- keyframe_queries chhote, visual, concrete rakho (jaise camera shot describe kar
-  rahe ho), taaki engine sahi frame chun sake.
+  (COMPARISON par engine 2-3 frames ka montage banata hai.)
+- `keyframe_queries` optional hai aur base engine ise IGNORE karta hai (wo sirf
+  future optional CLIP module ke liye hai). Uspar coverage mat chhodo — frame_hints do.
 
-Agar fallback_plan na do to bhi tool chalega — wo moment ke apne source ke frames
-use kar lega. Par plan dene se selection kaafi behtar hota hai.
+IMPORTANT — jin packs ke paas apne sources nahi hain (jaise analysis/graphics pack):
+engine unhe USI SHOW ke doosre packs ke frames use karne deta hai, agar poore
+project mein sirf ek hi show hai. Cross-show project mein aisa nahi hoga —
+wahan tumhe `allowed_pack_ids` explicitly dena hoga, warna wo beat plain text
+graphic ban jayega (jo report mein alag ginā jayega).
 
 ---------------------------------------------------------------------
 C. HOOK / HARD EVIDENCE BEATS

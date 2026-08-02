@@ -225,9 +225,21 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   for (const f of ['final.mp4', 'video_master.mp4']) { const p = path.join(JOBS, job, f); if (fs.existsSync(p)) fs.rmSync(p); }
   fs.rmSync(path.join(JOBS, job, 'segments'), { recursive: true, force: true });
   const r = runRFC([`--input=${path.join(FX, 'resume')}`, `--job=${job}`, '--from=8']);
-  const rendered = /render fail -> fallback card|render: final\.mp4/.test(r.stdout || '');
   const fdur = dur(path.join(JOBS, job, 'final.mp4'));
-  check('T8 corrupt segment -> fallback card, render reruns, no drift (final dur == total)', rendered && Math.abs(fdur - tl.total) < 0.5, `final=${fdur.toFixed(2)} total=${tl.total}`);
+  // M2.1: corrupt clip ab chupchap solid card NAHI banta. Ya to scope-correct
+  // still se recover hota hai (manifest mein VERIFIED_SOURCE_STILL), ya production
+  // saaf-saaf FAIL karta hai. Dono acceptable — silent card kabhi nahi.
+  let recovered = false, failedLoud = false;
+  const mfp = path.join(JOBS, job, 'render-manifest.json');
+  if (r.status === 0 && fs.existsSync(mfp)) {
+    const mf = JSON.parse(fs.readFileSync(mfp, 'utf8'));
+    const bad = mf.shots.filter(s => s.asset === 'RENDER_FAILURE_FALLBACK');
+    recovered = bad.length === 0 && Math.abs(fdur - tl.total) < 0.5;
+  } else if (r.status !== 0 && /render nahi ho paya|Production export rok/.test((r.stdout || '') + (r.stderr || ''))) {
+    failedLoud = true;
+  }
+  check('T8 corrupt clip -> scope-correct still recovery OR loud production failure (never a silent card)',
+    recovered || failedLoud, recovered ? `recovered, final=${fdur.toFixed(2)}s total=${tl.total}s` : `loud fail exit=${r.status}`);
 })();
 
 // ---------- T9 + T10: final duration equality + per-beat sampling ----------
@@ -321,7 +333,18 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     { moment_id: 'J1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 5, end_sec: 10, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
     { moment_id: 'J2', script_cue_exact: 'They meet on the rooftop at night.', locators: [{ source_id: 'S', locator_type: 'DIALOGUE', dialogue_exact: 'they meet on the rooftop at night', confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
   ] }] });
-  runRFC([`--input=${d}`, '--job=reg_js', '--redo'], { RFC_YTDLP: mock, RFC_YTDLP_LOG: log });
+  // Windows-safe: .js file ko direct executable ki tarah spawn nahi kar sakte.
+  // Isliye platform-ke-hisaab se wrapper banate hain jo `node mock.js` chalata hai.
+  let wrapper;
+  if (process.platform === 'win32') {
+    wrapper = path.join(FX, 'mock-ytdlp.cmd');
+    fs.writeFileSync(wrapper, '@echo off\r\nnode "' + mock + '" %*\r\n');
+  } else {
+    wrapper = path.join(FX, 'mock-ytdlp.sh');
+    fs.writeFileSync(wrapper, '#!/bin/sh\nexec node "' + mock + '" "$@"\n');
+    fs.chmodSync(wrapper, 0o755);
+  }
+  runRFC([`--input=${d}`, '--job=reg_js', '--redo'], { RFC_YTDLP: wrapper, RFC_YTDLP_LOG: log });
   const lines = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
   const carries = kind => lines.some(a => a.includes(kind)) && lines.filter(a => a.includes(kind)).every(a => a.includes('--js-runtimes'));
   const meta = carries('--dump-single-json'), subs = carries('--write-subs'), dl = carries('--download-sections');
