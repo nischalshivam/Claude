@@ -111,7 +111,12 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   for (const a of anchors) {
     const e = a.e;
     const common = commonOf(e);
-    const hasClip = (e.status === 'RESOLVED' || e.status === 'NEEDS_REVIEW') && e.clip && fs.existsSync(U.p(id, e.clip));
+    // SIRF verified (RESOLVED) clip hi exact video ki tarah lagti hai.
+    // NEEDS_REVIEW (ambiguous dialogue / doubtful match) ki clip production mein
+    // NAHI chalti — par uski jagah card bhi nahi aata: usi approved source ka
+    // keyframe still lagta hai (scope-correct, aur galat scene claim nahi karta).
+    // Review mode mein wo clip report/review video mein dikhti hai.
+    const hasClip = e.status === 'RESOLVED' && e.clip && fs.existsSync(U.p(id, e.clip));
     const allowed = allowedOf(e);
     const nearSec = e.cut ? e.cut.start : null;
 

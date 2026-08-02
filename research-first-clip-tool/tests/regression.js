@@ -151,10 +151,15 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   const RA = res.find(e => e.moment_id === 'RA'), RB = res.find(e => e.moment_id === 'RB');
   check('T5 repeated dialogue WITH anchor -> ACCEPT correct occurrence (blue)', RA.status === 'RESOLVED' && nearest(colorAt(path.join(JOBS, 'reg_rep', RA.clip), 1)).k === 'blue', `RA=${RA.status}`);
   check('T5 repeated dialogue WITHOUT context -> NEEDS_REVIEW (ambiguous)', RB.status === 'NEEDS_REVIEW', `RB=${RB.status}`);
-  // T4: final at RB's beat must be a REVIEW card, not the clip
-  const tl = jf('reg_rep', 'timeline.json'); const rbSlot = tl.slots.find(s => s.moment_id === 'RB');
-  const finalCol = nearest(colorAt(path.join(JOBS, 'reg_rep', 'final.mp4'), (rbSlot.start + rbSlot.end) / 2));
-  check('T4 NEEDS_REVIEW excluded from final (review card, not clip)', rbSlot.kind === 'needs_review' && finalCol.k === 'review', `slot=${rbSlot.kind} col=${finalCol.k}`);
+  // T4 (M2): NEEDS_REVIEW ki clip production final mein NAHI jaati — aur uski jagah
+  // diagnostic card bhi nahi aata. Us beat par scope-correct still/graphic hona chahiye.
+  const tl = jf('reg_rep', 'timeline.json');
+  const rbSlots = tl.slots.filter(s => s.moment_id === 'RB');
+  const noClip = rbSlots.every(s => s.kind !== 'video');
+  const noCard = rbSlots.every(s => !['needs_review', 'needs_source', 'text'].includes(s.kind));
+  const kinds = [...new Set(rbSlots.map(s => s.kind))].join(',');
+  check('T4 NEEDS_REVIEW clip not used in production final, and no diagnostic card either',
+    rbSlots.length > 0 && noClip && noCard, `slot kinds=${kinds}`);
 })();
 
 // ---------- T6: exact range-cache collision ----------

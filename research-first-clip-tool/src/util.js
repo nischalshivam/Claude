@@ -76,7 +76,10 @@ const ytdlp = (args, opts) => run(tool('yt-dlp'), args, opts);
 // STRICT: ek video asset tabhi valid hai jab usme asli video stream ho, w/h > 0,
 // duration > minDuration, aur file size sensible ho. (M1.3 bug: 262-byte empty
 // download ko `ok:true` mil jata tha -> READY print hota tha -> cut fail.)
-const MIN_MEDIA_BYTES = 4096;
+// NOTE: byte-floor sirf bilkul degenerate file pakadne ke liye (asli bug: 262-byte
+// zero-stream download). Isse zyada rakhna galat hai — ek asli 2s low-motion clip
+// 3.3KB ka bhi ho sakta hai. Primary checks stream/dimension/duration hain.
+const MIN_MEDIA_BYTES = 1024;
 const MIN_MEDIA_SECONDS = 0.3;
 
 function probe(file, { strict = true } = {}) {
