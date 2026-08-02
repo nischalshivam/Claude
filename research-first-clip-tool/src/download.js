@@ -210,6 +210,32 @@ module.exports = function download(spec, cfg, st, resolved) {
     }
   }
 
+  // ---- Stage 4b: CONTEXT VARIETY ----
+  // Agar bahut se beats ke paas exact clip nahi hai, to unhe context video/stills
+  // se bharna padta hai. Ek hi source se bharenge to wahi episode baar-baar
+  // dikhega. Isliye USI SCOPE ke kuch aur approved sources bhi laate hain
+  // (ek source ~10-20s mein aa jata hai) — sirf variety ke liye.
+  const noClipCount = resolved.filter(e => e.kind !== 'video' || e.status === 'NEEDS_SOURCE' || !e.clip).length;
+  const maxCtx = (cfg.acquire && cfg.acquire.maxContextSources) || 4;
+  if (noClipCount >= ((cfg.acquire && cfg.acquire.contextVarietyMinBeats) || 3)) {
+    // kaunse sources allowed scope mein hain aur abhi tak nahi aaye?
+    const allowedAll = new Set();
+    for (const e of resolved) for (const sid of (e.allowed_source_ids || [])) allowedAll.add(sid);
+    const have = new Set(Object.keys(bankState).filter(k => bankState[k]));
+    for (const e of todo) if (e.raw_file) have.add(e.source_id);
+    const extra = [...allowedAll].filter(sid => !have.has(sid) && sources[sid] && sources[sid].url).slice(0, Math.max(0, maxCtx - have.size));
+    if (extra.length) {
+      U.log(`   context variety: ${noClipCount} beats ke paas exact clip nahi — ${extra.length} aur same-scope source la raha hoon (taaki ek hi episode baar-baar na dikhe)`);
+      for (const sid of extra) {
+        const meta2 = metaOf(sid);
+        const t0 = Date.now();
+        const got = acquireFullSource(id, cfg, { source_id: sid, url: sources[sid].url }, meta2);
+        bankState[sid] = got.ok;
+        U.log(`   [variety] ${sid} ${got.ok ? 'OK via ' + got.via : 'FAILED — ' + String(got.error).slice(0, 70)} in ${secs(t0)}s`);
+      }
+    }
+  }
+
   U.log(`   ${todo.length} video moments — ab cut ke liye media taiyaar ho raha hai.`);
   U.log(`   note: ek yt-dlp attempt zyada se zyada ${Math.round((cfg.download && cfg.download.timeoutMs || 300000) / 1000)}s tak chup reh sakta hai — ye normal hai, hang nahi.`);
 

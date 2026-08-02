@@ -70,7 +70,10 @@
     "fullDownloadMaxSeconds": 900,
     "fullDownloadMinUses": 2,
     "alwaysFullUnderSeconds": 420,
-    "timeoutMs": 900000
+    "timeoutMs": 900000,
+    "maxContextSources": 4,
+    "contextVarietyMinBeats": 3,
+    "_varietyNote": "Jab bahut se beats bina exact clip ke hon, to itne tak same-scope sources laate hain taaki context footage mein variety rahe (ek episode loop na lage)."
   },
   "download": {
     "_note": "Per-moment range download (jab source bank use na ho).",
