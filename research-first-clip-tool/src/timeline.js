@@ -92,6 +92,10 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
 
   const slots = [];
   const usedFrames = new Set();
+  // Ek moment ke andar kaunsa hint kis shot par laga — taaki ek hi frame us
+  // moment ke do lagatar shots par na dohraye (recording mein yehi 8-11s ka
+  // freeze jaisa lag raha tha).
+  const momentUsedFrames = {};
   let lastVisualKey = null;
   const push = (o) => { if (o.end - o.start <= 0.001) return; slots.push({ i: slots.length, ...o, start: +o.start.toFixed(3), end: +o.end.toFixed(3), dur: +(o.end - o.start).toFixed(3) }); };
 
@@ -225,11 +229,28 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
       //    second par ye dikhta hai". Pehle generic context video pehle chun
       //    liya jata tha, isliye researched frame kabhi screen par aata hi nahi
       //    tha. Ab hint-backed still/montage generic context se PEHLE aata hai.
+      // Analysis/graphic beat? Tab hint-backed frame par TEXT bhi aana chahiye
+      // (media-backed graphic), warna wo sirf ek chup still ban jata hai aur
+      // "Nothing." jaisi thesis line screen par likhi hi nahi jati.
+      const isAnalysis = !!(e.overlay_text || (e.template && e.template !== 'NONE')
+        || (e.scope_key || '').startsWith('GRAPHIC::'));
+      const hintText = e.overlay_text || e.fallback_text || e.script_cue_exact || '';
+      // Ek hi hint ko is moment ke DO shots par mat lagao — screen par wahi frame
+      // do baar = 8-11 second ka freeze jaisa. Har shot ke liye alag hint chuno.
+      const usedHere = momentUsedFrames[e.moment_id] || (momentUsedFrames[e.moment_id] = { seen: new Set(), n: 0 });
       const hintsHere = (e.frame_hints || []).filter(h => h && allowed.includes(h.source_id));
-      if (hintsHere.length) {
-        const wantM = (e.template === 'COMPARISON' || (s1 - s0) >= (S.montageMinSeconds || 6)) && hintsHere.length >= 2 && (cfg.fallback || {}).montageImages > 1;
-        const hp = KF.pickFrames(bank, allowed, usedFrames, wantM ? Math.min(3, hintsHere.length) : 1, nearSec, hintsHere);
+      const freshHints = hintsHere.filter(h => !usedHere.seen.has(`${h.source_id}@${Math.round(h.time_sec)}`));
+      // Hints khatam ho jayen to ROTATE karo (pehla hint dobara), lagatar shot par
+      // wahi frame na aaye — kyunki analysis beat ka text hint-backed graphic par
+      // hi aata hai; context video par chala gaya to thesis line screen se gayab.
+      const rotated = hintsHere.length ? [hintsHere[usedHere.n % hintsHere.length]] : [];
+      const useHints = freshHints.length ? freshHints : (isAnalysis ? rotated : []);
+      if (useHints.length) {
+        usedHere.n++;
+        const wantM = (e.template === 'COMPARISON' || (s1 - s0) >= (S.montageMinSeconds || 6)) && useHints.length >= 2 && (cfg.fallback || {}).montageImages > 1;
+        const hp = KF.pickFrames(bank, allowed, usedFrames, wantM ? Math.min(3, useHints.length) : 1, nearSec, useHints);
         const hinted = hp.filter(p => p.hint_time != null);
+        hinted.forEach(p => usedHere.seen.add(`${p.source_id}@${Math.round(p.hint_time)}`));
         if (hinted.length >= 2 && wantM) {
           hinted.forEach(p => usedFrames.add(p.file));
           push({ kind: 'montage', start: s0, end: s1, ...common, images: hinted.map(p => p.file),
@@ -240,10 +261,16 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
         }
         if (hinted.length) {
           usedFrames.add(hinted[0].file);
-          push({ kind: 'still', start: s0, end: s1, ...common, image: hinted[0].file, image_source: hinted[0].source_id,
-                 image_time: hinted[0].t, hint_time: hinted[0].hint_time, hint_delta: hinted[0].hint_delta,
-                 why: hinted[0].why, asset: 'VERIFIED_SOURCE_STILL' });
-          statAssets.still++; lastVisualKey = 'kf:' + hinted[0].file; continue;
+          const base = { start: s0, end: s1, ...common, image: hinted[0].file, image_source: hinted[0].source_id,
+            image_time: hinted[0].t, hint_time: hinted[0].hint_time, hint_delta: hinted[0].hint_delta, why: hinted[0].why };
+          if (isAnalysis && hintText) {
+            push({ kind: 'graphic', ...base, text: hintText, template: e.template || 'QUOTE', asset: 'TEMPLATE_GRAPHIC_MEDIA' });
+            statAssets.graphic++;
+          } else {
+            push({ kind: 'still', ...base, asset: 'VERIFIED_SOURCE_STILL' });
+            statAssets.still++;
+          }
+          lastVisualKey = 'kf:' + hinted[0].file; continue;
         }
       }
 

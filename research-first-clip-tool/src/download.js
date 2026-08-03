@@ -41,11 +41,16 @@ function acquireFullSource(id, cfg, cand, meta) {
   // karna ghanton ka kaam hai. Cap sirf planAcquisition mein tha, par lazy aur
   // context-variety paths seedha yahan aate the — isliye cap ab YAHIN hai.
   const acq = cfg.acquire || {};
-  const capSec = acq.fullDownloadMaxSeconds || 900;
+  // Do alag cap:
+  //  - normal cap (900s): sirf variety/fallback ke liye laayi jaane wali sources
+  //  - hard cap (2400s): jab source SACH mein kai moments ko chahiye. Ek 22-min
+  //    episode jo 16 beats serve karta hai use poora laana hi sasta hai —
+  //    range-per-moment usse kai guna mehnga aur kam bharosemand hai.
+  const capSec = cand.manyUses ? (acq.fullDownloadHardMaxSeconds || 2400) : (acq.fullDownloadMaxSeconds || 900);
   const dur0 = (meta && meta.duration) || 0;
   if (!cand.allowLong && dur0 > capSec) {
     return { ok: false, tooLong: true,
-      error: `source ${Math.round(dur0)}s lamba hai (cap ${capSec}s) — poori download nahi karunga. Range/hint se kaam chalega.` };
+      error: `source ${Math.round(dur0)}s lamba hai (cap ${capSec}s${cand.manyUses ? ', multi-use' : ''}) — poori download nahi karunga. Range/hint se kaam chalega.` };
   }
   const maxH = acq.maxHeight || 720;
   // VIDEO-ONLY: final video mein source audio hamesha mute hota hai (sirf
@@ -75,11 +80,17 @@ function planAcquisition(cfg, resolved, metaOf) {
     if (e.kind !== 'video') continue;
     for (const c of candList(e)) if (c.url) uses[c.source_id] = (uses[c.source_id] || 0) + 1;
   }
+  const hardMax = acq.fullDownloadHardMaxSeconds || 2400;
   const plan = {};
   for (const sid of Object.keys(uses)) {
     const meta = metaOf(sid);
     const dur = meta && meta.duration || 0;
-    plan[sid] = (dur > 0 && dur <= maxFullSec && uses[sid] >= minUses) || (dur > 0 && dur <= (acq.alwaysFullUnderSeconds || 420));
+    if (dur <= 0) { plan[sid] = false; continue; }
+    // chhoti source: hamesha poori
+    if (dur <= (acq.alwaysFullUnderSeconds || 420)) { plan[sid] = true; continue; }
+    // kai moments use kar rahe hain: hard cap tak poori laana sasta hai
+    if (uses[sid] >= minUses && dur <= hardMax) { plan[sid] = true; continue; }
+    plan[sid] = dur <= maxFullSec && uses[sid] >= minUses;
   }
   return { plan, uses };
 }
@@ -135,8 +146,15 @@ function downloadCandidate(id, cfg, cand, opts = {}) {
   // stale/mismatch cache file hata do warna yt-dlp "already downloaded" bol ke purane bytes rakh sakta hai
   try { if (fs.existsSync(rawFile)) fs.rmSync(rawFile, { force: true }); if (fs.existsSync(manFile)) fs.rmSync(manFile, { force: true }); } catch {}
   const fmt = `bv*[height>=${minH}][ext=mp4]/bv*[ext=mp4]/bv*/b[height>=${minH}]/b`;
+  // `--force-keyframes-at-cuts` HATA diya gaya hai. Wo yt-dlp ko cut points par
+  // keyframe banane ke liye poori stream RE-ENCODE karwata hai — 22-minute
+  // YouTube episode par ye 300s timeout mein khatam hi nahi hota. Asli preview
+  // mein 5/6 moments isi wajah se ETIMEDOUT hue the.
+  // Iski zaroorat bhi nahi thi: frame-accuracy cut.js deta hai, jo range ke
+  // andar `-ss/-t` ke saath dobara encode karta hai. Range ko bas thoda pad
+  // chahiye (wo pehle se hai), keyframe-perfect hona zaroori nahi.
   const args = ['-f', fmt, '--download-sections', `*${segStart.toFixed(3)}-${segEnd.toFixed(3)}`,
-    '--force-keyframes-at-cuts', '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
+    '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
     '-o', rawFile, '--no-playlist', '--no-warnings', cand.url];
   const r = U.ytdlp(args, { timeout: (cfg.download && cfg.download.timeoutMs) || 300000 });
   if (!r.ok || !fs.existsSync(rawFile)) {
@@ -213,6 +231,7 @@ module.exports = function download(spec, cfg, st, resolved) {
       bi++;
       const anyCand = todo.flatMap(e => candList(e)).find(c => c.source_id === sid && c.url);
       if (!anyCand) continue;
+      anyCand.manyUses = (uses[sid] || 0) >= ((cfg.acquire && cfg.acquire.fullDownloadMinUses) || 2);
       const meta = metaOf(sid);
       const t0 = Date.now();
       U.log(`   [source ${bi}/${wanted.length}] ${sid} (${Math.round((meta && meta.duration) || 0)}s, ${uses[sid]} moments) downloading...`);

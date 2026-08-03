@@ -829,6 +829,50 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
       `exit=${r.status} blocked=${/critical moments/i.test(out)}`);
   })();
 
+  // --- (5b) asli preview se mile do quality bugs ---
+  // (a) ek hi hint moment ke DO shots par lag jata tha -> 8-11s ka freeze jaisa
+  // (b) analysis beat ka overlay_text gayab ho gaya tha (plain still ban gaya)
+  (() => {
+    const qd = path.join(FX, 'm33quality');
+    // 14-second beat -> shot planner ise 2-3 shots mein todega
+    makeNarr(qd, [{ start: 0, end: 14, text: 'The alarm rings across the base and she opens the sealed hatch slowly tonight.' },
+                  { start: 14, end: 20, text: 'The final shot fades to black.' }]);
+    writePack(qd, { schema_version: 'scene-research-pack-v1', project_title: 'Q', packs: [
+      { pack_id: 'QS', scope: { kind: 'SERIES', title: 'Show Q' },
+        sources: [{ source_id: 'QSS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'QS1', script_cue_exact: 'The final shot fades to black.',
+          locators: [{ source_id: 'QSS', locator_type: 'EXACT_TIME', start_sec: 62, end_sec: 68, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'QG', scope: { kind: 'GRAPHIC', title: 'Analysis cards' }, sources: [],
+        moments: [{ moment_id: 'QG1', script_cue_exact: 'The alarm rings across the base and she opens the sealed hatch slowly tonight.',
+          locators: [],
+          fallback_plan: { allowed_pack_ids: ['QS'], allowed_source_ids: ['QSS'],
+            frame_hints: [{ source_id: 'QSS', time_sec: 25, reason: 'green' }, { source_id: 'QSS', time_sec: 45, reason: 'blue' }],
+            overlay_text: 'Nothing was ever enough' },
+          fallback: { type: 'LOCAL_GRAPHIC', text: 'Nothing was ever enough' } }] },
+    ] });
+    runRFC([`--input=${qd}`, '--job=reg_m33q', '--redo']);
+    let QM = null; try { QM = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m33q', 'render-manifest.json'), 'utf8')); } catch {}
+    const qs = QM ? QM.shots.filter(s => s.moment_id === 'QG1') : [];
+    const imgs = qs.map(s => s.image).filter(Boolean);
+    // Asli defect ADJACENT repeat tha (do lagatar shots par wahi frame = freeze
+    // jaisa). Hints khatam hon to rotation se dobara aana theek hai — bas
+    // lagatar nahi.
+    const adjRepeat = qs.filter((s2, i2) => i2 > 0 && s2.image && s2.image === qs[i2 - 1].image).length;
+    check('T-M338 two consecutive shots of one moment never show the same frame',
+      qs.length >= 2 && adjRepeat === 0,
+      `${qs.length} shots, ${new Set(imgs).size} distinct frames, ${adjRepeat} adjacent repeats`);
+    check('T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)',
+      qs.length > 0 && qs.every(s => s.asset === 'TEMPLATE_GRAPHIC_MEDIA'),
+      `assets=${[...new Set(qs.map(s => s.asset))].join('/')}`);
+  })();
+
+  // --- (5c) range download re-encode flag hata diya gaya hai ---
+  // `--force-keyframes-at-cuts` yt-dlp se poori stream re-encode karwata tha —
+  // asli preview mein har range download 300s par ETIMEDOUT ho raha tha.
+  check('T-M340 range download does not ask yt-dlp to re-encode at cut points',
+    !/'--force-keyframes-at-cuts'/.test(fs.readFileSync(path.join(ROOT, 'src', 'download.js'), 'utf8')),
+    'force-keyframes flag absent');
+
   // --- (6) --redo purana render-manifest.json chhode nahi ---
   (() => {
     const stale = path.join(JOBS, 'reg_m33ctx', 'render-manifest.json');

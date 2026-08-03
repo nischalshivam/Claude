@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M3.3 (reliability release)
+# Research-First Clip Tool — M3.4 (real-preview fixes)
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -320,6 +320,30 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M3.4 — pehle asli preview se mile fixes**
+Ye sab tabhi mile jab asli YouTube ke saath 120-second preview chalaya gaya.
+Synthetic fixtures inme se ek bhi nahi pakad sakte the.
+- **Range download har baar 300s par ETIMEDOUT ho raha tha** (6 mein se 5 moments
+  khoye). Wajah: `--force-keyframes-at-cuts`, jo yt-dlp se poori stream RE-ENCODE
+  karwata hai. Flag hata diya — frame-accuracy waise bhi `cut.js` deta hai jo
+  range ke andar `-ss/-t` se dobara encode karta hai.
+- **22-minute episode full-download se reject ho raha tha** (`cap 900s`), phir
+  range bhi fail — yaani us source se kuch bhi nahi milta tha. Ab cap uses-aware
+  hai: jo source kai moments ko chahiye use `fullDownloadHardMaxSeconds` (2400s)
+  tak poora laate hain; variety/fallback ke liye purana 900s cap.
+- **Ek hi hint moment ke DO lagatar shots par lag jata tha** — screen par 8-11
+  second wahi frame, freeze jaisa. Ab har shot alag hint leta hai; hints khatam
+  hon to rotate hota hai, par lagatar repeat kabhi nahi.
+- **Analysis beats ka overlay text gayab ho gaya tha.** M3.3 mein hint-backed
+  visual ko pehle chunne se GRAPHIC beats plain still ban gaye the — "Nothing."
+  jaisi thesis line screen par likhi hi nahi jati thi. Ab analysis beat ka
+  hint-backed frame media-backed GRAPHIC banta hai (frame + dim + text).
+- **CHECKPACK bina SRT ke alignment "OK" bol deta tha.** Asli run mein 31/109
+  moments REVIEW/AMBIGUOUS nikle jabki report ne "0" kaha tha — kyunki us waqt
+  `voiceover.srt` input mein tha hi nahi. Ab wo check saaf bolta hai ki chala hi
+  nahi.
+- 3 naye regressions (T-M338..340). Suite ab **60 PASS / 0 FAIL**.
 
 **M3.3 — reliability release**
 - **P0 renderer honesty.** Har branch ki condition mein `fs.existsSync` tha, isliye

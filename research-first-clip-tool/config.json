@@ -24,7 +24,7 @@
     "runnerUpMargin": 0.08
   },
   "dialogue": {
-    "_note": "DIALOGUE locator ke subtitle-match thresholds (handoff Stage 4). M1 mein sirf inhi se accept hota hai — koi Gemini nahi.",
+    "_note": "DIALOGUE locator ke subtitle-match thresholds (handoff Stage 4). M1 mein sirf inhi se accept hota hai \u2014 koi Gemini nahi.",
     "acceptScore": 0.88,
     "acceptRecall": 0.82,
     "acceptMargin": 0.06,
@@ -73,7 +73,9 @@
     "timeoutMs": 900000,
     "maxContextSources": 4,
     "contextVarietyMinBeats": 3,
-    "_varietyNote": "Jab bahut se beats bina exact clip ke hon, to itne tak same-scope sources laate hain taaki context footage mein variety rahe (ek episode loop na lage)."
+    "_varietyNote": "Jab bahut se beats bina exact clip ke hon, to itne tak same-scope sources laate hain taaki context footage mein variety rahe (ek episode loop na lage).",
+    "fullDownloadHardMaxSeconds": 2400,
+    "_capNote": "fullDownloadMaxSeconds = variety/fallback ke liye. fullDownloadHardMaxSeconds = jab source kai moments ko chahiye (multi-use) \u2014 40 min tak poori source laana range-per-moment se sasta aur zyada reliable hai."
   },
   "download": {
     "_note": "Per-moment range download (jab source bank use na ho).",

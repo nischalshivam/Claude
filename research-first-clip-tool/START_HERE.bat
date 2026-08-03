@@ -8,7 +8,7 @@ cd /d "%~dp0"
 :menu
 cls
 echo ==============================================================
-echo   RESEARCH-FIRST CLIP TOOL  -  M3.3
+echo   RESEARCH-FIRST CLIP TOOL  -  M3.4
 echo ==============================================================
 if exist "input\scene-research.json" (echo   pack       : input\scene-research.json  [mila]) else (echo   pack       : NAHI MILA  -^> Genspark ka JSON input\ mein daalo)
 if exist "input\voiceover.srt" (echo   voiceover  : input\voiceover.srt  [mila]) else (echo   voiceover  : nahi mila  ^(CHECKPACK phir bhi chalega^))

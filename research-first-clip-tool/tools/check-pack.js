@@ -342,7 +342,13 @@ const checks = [
   [`Exact/frame-hint backed narration >= ${TARGET_EXACT_PCT}%`, exactPct >= TARGET_EXACT_PCT, `abhi ${exactPct}%`],
   ['Har moment ke apne scope mein source hai (udhaar <= 15%)', ownScopeBad <= 15, `abhi ${ownScopeBad}% udhaar/khaali`],
   ['Generic text (koi visual evidence nahi) = 0%', nonePct === 0, `abhi ${nonePct}% (${gaps.length} moments)`],
-  ['Alignment saaf (script_cue_exact SRT se milta hai)', alignBad.length === 0, `${alignBad.length} moments ka cue match nahi/ambiguous`],
+  // SRT na ho to ye check chala hi nahi — use "OK" dikhana jhooth hai. Asli
+  // preview mein 31/109 moments REVIEW/AMBIGUOUS nikle jabki yahan "0" likha tha,
+  // kyunki tab voiceover.srt input mein tha hi nahi.
+  [haveSrt ? 'Alignment saaf (script_cue_exact SRT se milta hai)' : 'Alignment CHECK NAHI HUA — voiceover.srt do',
+    haveSrt ? alignBad.length === 0 : false,
+    haveSrt ? `${alignBad.length} moments ka cue match nahi/ambiguous`
+            : 'bina SRT ke ye pata nahi chalta ki cue narration se milte hain ya nahi'],
   ['Scope titles consistent (ek show = ek hi title)', scopeMismatch.length === 0, `${scopeMismatch.length} title mismatch`],
 ];
 // Ye do check research AI ki self-report par nahi, pack ke apne fields par hain.

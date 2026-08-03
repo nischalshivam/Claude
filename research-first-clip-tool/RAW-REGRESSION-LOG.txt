@@ -1,4 +1,4 @@
-=== REGRESSION Mon Aug  3 09:14:47 UTC 2026 ===
+=== REGRESSION Mon Aug  3 11:37:17 UTC 2026 ===
 == M1.1 REGRESSION SUITE ==
   [PASS] T1 path-traversal --job rejected & nothing created outside jobs/  — exit=1
   [PASS] T1b unsafe moment_id rejected by validator  — exit=1
@@ -51,14 +51,17 @@
   [PASS] T-S29 timestamps are validated against the CORRECTED duration, not the stale one  — applied900=true
   [PASS] T-M331 every shot labelled media really decodes to media (no card wearing a media label)  — 4 media shots, 0 actually a card
   [PASS] T-M332 corrupt clip: either recovers with real media or aborts — never a card labelled EXACT_VIDEO  — 0 EXACT_VIDEO claims, 0 were cards
-  [PASS] T-M333 frame hint materializes at the exact second (<=0.5s) and shows that frame  — hinted=2 maxDelta=0s colour=blue
-  [PASS] T-M334 hint-only source gets indexed even though no clip was ever cut from it  — shots with hint_time=2
+  [PASS] T-M333 frame hint materializes at the exact second (<=0.5s) and shows that frame  — hinted=1 maxDelta=0s colour=blue
+  [PASS] T-M334 hint-only source gets indexed even though no clip was ever cut from it  — shots with hint_time=1
   [PASS] T-M335 a Show-A beat with no media never borrows Show-B footage  — A1 shots=1 borrowedFromB=0 assets=GENERIC_TEXT_GRAPHIC
   [PASS] T-M336 HARD_EVIDENCE without an exact clip blocks production export  — exit=1 blocked=true
+  [PASS] T-M338 two consecutive shots of one moment never show the same frame  — 3 shots, 2 distinct frames, 0 adjacent repeats
+  [PASS] T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)  — assets=TEMPLATE_GRAPHIC_MEDIA
+  [PASS] T-M340 range download does not ask yt-dlp to re-encode at cut points  — force-keyframes flag absent
   [PASS] T-M337 --redo removes the stale render manifest (report cannot show old numbers)  — stalePresent=false
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 57 PASS, 0 FAIL
+  REGRESSION SUMMARY: 60 PASS, 0 FAIL
 ======================================================================
 REG_EXIT=0
