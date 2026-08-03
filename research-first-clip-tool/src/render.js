@@ -272,6 +272,8 @@ module.exports = function render(spec, cfg, st, tl) {
     manifest.push({ i: s.i, start: s.start, end: s.end, dur, kind: s.kind, asset: assetUsed, asset_note: assetNote,
       moment_id: s.moment_id || null, pack_id: s.pack_id || null,
       source_id: s.source_id || s.image_source || null, url: s.url || null,
+      planned_source_id: s.planned_source_id || null, actual_source_id: s.actual_source_id || s.image_source || s.source_id || null,
+      scope_relation: s.scope_relation || null, criticality: s.criticality || 'NORMAL',
       image: s.image || null, images: s.images || null, image_time: s.image_time != null ? s.image_time : null,
       // hint provenance: kya maanga gaya, kya mila, kitna farq (audit ke liye)
       hint_time: s.hint_time != null ? s.hint_time : null, hint_delta: s.hint_delta != null ? s.hint_delta : null,

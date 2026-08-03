@@ -237,7 +237,9 @@ writePack(ecDir, {
 function runJob(inputDir, jobId) {
   console.log(`\n== run pipeline: ${jobId} ==`);
   try {
-    const out = execFileSync('node', ['src/run.js', `--input=${inputDir}`, `--job=${jobId}`, '--redo'],
+    // production gate asli hai; content fixtures apna pack-report nahi banate,
+    // isliye documented override use karte hain (gate ko kamzor kiye bina).
+    const out = execFileSync('node', ['src/run.js', `--input=${inputDir}`, `--job=${jobId}`, '--redo', '--diagnostic-override'],
       { cwd: ROOT, encoding: 'utf8', timeout: 600000, stdio: ['ignore', 'pipe', 'pipe'] });
     console.log(out.split('\n').filter(l => /\[OK\]|\[WARN\]|\[FAIL\]|DONE|located|timeline|render|report|QA/.test(l)).join('\n'));
   } catch (e) {

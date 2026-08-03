@@ -32,12 +32,20 @@ module.exports = function locate(spec, cfg, st, aligned) {
   // par kisi DOOSRE show ke nahi (cross-show bleed band).
   // Scope identity mein year/version bhi — warna same-title remake (jaise 2 alag
   // saal ki same-naam film) ek doosre ke frames use kar lete.
+  // SHOW-level identity (kaunsa show/film hai) — cross-show bleed rokta hai.
   const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}::${sc.year || ''}::${String(sc.version || '').trim().toLowerCase()}` : '';
-  const packsByScope = {};
+  // EPISODE-level identity — "same show" ka matlab "same episode" NAHI hai.
+  // Asli mid preview mein P06 (alag episode) ke beats ko P01_S01 ka footage mil
+  // gaya tha kyunki dono ka show ek tha. Ab default fallback episode ke andar
+  // rehta hai; doosre episode par jaana explicit permission maangta hai.
+  const epKey = sc => sc ? `${scopeKey(sc)}::s${sc.season ?? ''}e${sc.episode_number ?? ''}::${String(sc.episode_title || '').trim().toLowerCase()}::${String(sc.language || sc.dub || '').trim().toLowerCase()}` : '';
+  const packsByScope = {}, packsByEpisode = {};
   for (const pk of spec.pack.packs) {
     const k = scopeKey(pk.scope);
     if (!k || (pk.scope && pk.scope.kind === 'GRAPHIC')) continue;
     (packsByScope[k] = packsByScope[k] || []).push(pk.pack_id);
+    const ek = epKey(pk.scope);
+    (packsByEpisode[ek] = packsByEpisode[ek] || []).push(pk.pack_id);
   }
   const sourcesOfPacks = ids => {
     const out = [];
@@ -60,7 +68,13 @@ module.exports = function locate(spec, cfg, st, aligned) {
       const scopes = Object.keys(packsByScope);
       allowedPacks = scopes.length === 1 ? packsByScope[scopes[0]].slice() : [m._packId];
     } else {
-      allowedPacks = [...new Set([m._packId, ...((packsByScope[myScopeKey]) || [])])];
+      // DEFAULT ab EPISODE tak simit hai. Pehle yahan poore show ke packs aate
+      // the, isliye episode 2 ka beat chupchap episode 1 ka footage utha leta tha
+      // (asli mid preview mein P06 ko P01 ka episode mil gaya tha). Doosre
+      // episode par jaana ab research ki explicit permission maangta hai.
+      const myEp = epKey(m._scope);
+      allowedPacks = [...new Set([m._packId, ...((packsByEpisode[myEp]) || [])])];
+      if (fp && fp.allow_context_borrow) allowedPacks = [...new Set([...allowedPacks, ...((packsByScope[myScopeKey]) || [])])];
     }
     const allowedSources = (fp && fp.allowed_source_ids && fp.allowed_source_ids.length)
       ? fp.allowed_source_ids.slice()
@@ -68,6 +82,9 @@ module.exports = function locate(spec, cfg, st, aligned) {
 
     const base = {
       moment_id: m.moment_id, pack_id: m._packId, scope: m._scope, scope_key: myScopeKey,
+      episode_key: epKey(m._scope),
+      // research explicitly bole tabhi doosre episode ka footage udhaar milega
+      allow_context_borrow: !!(fp && fp.allow_context_borrow),
       script_cue_exact: m.script_cue_exact, purpose: m.purpose || '',
       must_show: (fp && fp.must_show) || m.must_show || [], must_not_show: (fp && fp.must_not_show) || m.must_not_show || [],
       beat_start: m.beat_start, beat_end: m.beat_end, align_flag: m.align_flag, align_score: m.align_score,

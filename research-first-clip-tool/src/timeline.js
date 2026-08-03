@@ -97,11 +97,33 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // freeze jaisa lag raha tha).
   const momentUsedFrames = {};
   let lastVisualKey = null;
-  const push = (o) => { if (o.end - o.start <= 0.001) return; slots.push({ i: slots.length, ...o, start: +o.start.toFixed(3), end: +o.end.toFixed(3), dur: +(o.end - o.start).toFixed(3) }); };
+  const push = (o) => {
+    if (o.end - o.start <= 0.001) return;
+    // ACTUAL source = jo is shot mein sach mein use hua (clip ka source, context
+    // ka source, ya frame ka source) — planned se alag ho sakta hai.
+    const actual = o.image_source || o.source_id || (o.image_sources && o.image_sources[0]) || null;
+    const owner = anchorList.find(x => x.moment_id === o.moment_id);
+    slots.push({ i: slots.length, ...o, actual_source_id: actual,
+      scope_relation: owner ? relationOf(owner, actual) : (actual ? 'UNKNOWN' : 'NONE'),
+      start: +o.start.toFixed(3), end: +o.end.toFixed(3), dur: +(o.end - o.start).toFixed(3) });
+  };
 
+  // Har slot ko planned aur ACTUAL source alag-alag likhna hai. Pehle dono ek hi
+  // field mein mil jate the, isliye report se pata hi nahi chalta tha ki plan
+  // fail hone ke baad screen par kis source ka footage aaya.
+  const relationOf = (e, actualSid) => {
+    if (!actualSid) return 'NONE';
+    if ((e.scope_key || '').startsWith('GRAPHIC::')) return 'GRAPHIC';
+    const owner = anchorList.find(x => (x.allowed_source_ids || []).includes(actualSid) || x.source_id === actualSid);
+    if (!owner) return 'UNKNOWN';
+    if (scopeKeyOf(owner) !== scopeKeyOf(e)) return 'CROSS_SHOW';
+    return epKeyOf(owner) === epKeyOf(e) ? 'SAME_EPISODE' : 'SAME_SHOW_OTHER_EPISODE';
+  };
   function commonOf(e) {
     return {
       moment_id: e.moment_id, pack_id: e.pack_id, source_id: e.source_id || null,
+      planned_source_id: (e.locator_source_ids || [])[0] || e.source_id || null,
+      criticality: e.criticality || 'NORMAL', scope_key: e.scope_key || null, episode_key: e.episode_key || null,
       url: e.url || null, locator_type: e.locator_type || null, decision: e.decision || null,
       score: e.score, reason: e.reason || '', review_reason: e.review_reason || null,
       align_flag: e.align_flag, must_show: e.must_show || [], cue: e.script_cue_exact, qa: e.qa || null,
@@ -132,20 +154,43 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // locate.js har entry par scope_key likhta hai (kind::title::year::version).
   // Wahi single source of truth hai — timeline apna alag hisaab nahi lagata.
   const scopeKeyOf = (e) => e.scope_key || `pack::${e.pack_id || ''}`;
+  const epKeyOf = (e) => e.episode_key || scopeKeyOf(e);
+  // Neighbour se udhaar ka DO-LEVEL rule:
+  //   1. same EPISODE  -> hamesha theek (wahi episode ka doosra frame)
+  //   2. same SHOW, alag episode -> sirf tab jab research ne
+  //      `allow_context_borrow: true` kaha ho, ya us pack ko explicitly
+  //      allowed_pack_ids mein rakha ho. Aur CRITICAL beats par kabhi nahi.
+  //   3. alag show -> kabhi nahi.
+  const borrowLog = [];
   const contextAllowedFor = (e) => {
     const own = allowedOf(e);
     if (hasFrames(own)) return own;
-    const mine = scopeKeyOf(e);
+    const crit = (e.criticality || 'NORMAL').toUpperCase();
+    const isCritical = crit === 'HOOK' || crit === 'HARD_EVIDENCE';
+    const myShow = scopeKeyOf(e), myEp = epKeyOf(e);
     const idx = anchorList.findIndex(x => x.moment_id === e.moment_id);
-    for (let d = 1; d < anchorList.length; d++) {           // sabse nazdeeki neighbour pehle
-      for (const j of [idx - d, idx + d]) {
-        if (j < 0 || j >= anchorList.length) continue;
-        const nb = anchorList[j];
-        // explicit reuse (research ne khud kaha) ya BILKUL same scope — aur kuch nahi
-        const explicit = (e.allowed_pack_ids || []).includes(nb.pack_id);
-        if (!explicit && scopeKeyOf(nb) !== mine) continue;
-        const cand = allowedOf(nb);
-        if (hasFrames(cand)) return cand;
+    for (const wantSameEpisode of [true, false]) {
+      if (!wantSameEpisode) {
+        if (isCritical) break;                                  // critical beat kabhi udhaar nahi
+        if (!e.allow_context_borrow && !(e.allowed_pack_ids || []).length) break;
+      }
+      for (let d = 1; d < anchorList.length; d++) {
+        for (const j of [idx - d, idx + d]) {
+          if (j < 0 || j >= anchorList.length) continue;
+          const nb = anchorList[j];
+          if (scopeKeyOf(nb) !== myShow) continue;               // doosra show: kabhi nahi
+          const sameEp = epKeyOf(nb) === myEp;
+          if (wantSameEpisode !== sameEp) continue;
+          if (!sameEp) {
+            const explicit = (e.allowed_pack_ids || []).includes(nb.pack_id);
+            if (!explicit && !e.allow_context_borrow) continue;
+          }
+          const cand = allowedOf(nb);
+          if (hasFrames(cand)) {
+            if (!sameEp) borrowLog.push(`${e.moment_id} <- ${nb.pack_id} (same show, ALAG episode)`);
+            return cand;
+          }
+        }
       }
     }
     return own;
@@ -435,6 +480,12 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     }
   }
   st.meta.criticality_failures = critFails;
+  if (borrowLog.length) {
+    U.warn(`${borrowLog.length} beats ne SAME SHOW ke DOOSRE EPISODE ka footage udhaar liya (research ne permission di thi):`);
+    borrowLog.slice(0, 8).forEach(x => U.log('     ' + x));
+    U.log('     (ye report mein "SAME_SHOW_OTHER_EPISODE" ke roop mein dikhega — "exact" kabhi nahi)');
+  }
+  st.meta.context_borrows = borrowLog;
   slots.sort((a, b) => a.start - b.start);
   slots.forEach((s, i) => { s.i = i; });
 

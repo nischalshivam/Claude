@@ -28,7 +28,13 @@ function rangeKey(sourceId, segStart, segEnd, minH) {
 // Sirf chhoti/reused sources ke liye; lambi source ke liye range download hi.
 function bankPath(id, sourceId) { return U.p(id, 'cache', '_bank', `${sourceId}.mp4`); }
 
-function acquireFullSource(id, cfg, cand, meta) {
+// Per-source CIRCUIT BREAKER: ek hi source ko baar-baar timeout hone dena ek
+// job mein ghante kha jata hai. Do baar fail hui to us source ko us run mein
+// chhod dete hain (wajah ke saath).
+const _srcFails = {};
+const MAX_SRC_FAILS = 2;
+
+function acquireFullSource(id, cfg, cand, meta, spec) {
   const bank = bankPath(id, cand.source_id);
   const man = bank + '.json';
   U.ensureDir(path.dirname(bank));
@@ -36,6 +42,21 @@ function acquireFullSource(id, cfg, cand, meta) {
     const pr = U.probe(bank);
     if (pr.ok) return { ok: true, file: bank, duration: pr.duration, width: pr.width, height: pr.height, via: 'bank-cache' };
     try { fs.rmSync(bank, { force: true }); fs.rmSync(man, { force: true }); } catch {}
+  }
+  if ((_srcFails[cand.source_id] || 0) >= MAX_SRC_FAILS) {
+    return { ok: false, error: `${cand.source_id} is run mein ${MAX_SRC_FAILS} baar fail ho chuka — dobara koshish nahi (circuit breaker)` };
+  }
+  // AUTHORITATIVE METADATA YAHIN LOAD KARO.
+  // Pehle duration caller ke `meta` par nirbhar thi. Per-moment recovery calls
+  // mein wo aksar undefined hoti thi -> dur0 = 0 -> `0 > cap` false -> ek 67-min
+  // source bhi poori download ho sakti thi. Ab source_id se khud nikalte hain,
+  // aur duration pata hi na chale to full download se INKAAR karte hain.
+  if ((!meta || !meta.duration) && spec && spec.pack) {
+    try {
+      const SRC = require('./sources.js');
+      const sObj = SRC.indexSources(spec.pack)[cand.source_id];
+      if (sObj) meta = SRC.getMeta(id, sObj, cfg);
+    } catch (e) { /* neeche unknown-duration rule chalega */ }
   }
   // HARD CAP: fallback/variety ke liye ek 67-minute compilation poori download
   // karna ghanton ka kaam hai. Cap sirf planAcquisition mein tha, par lazy aur
@@ -48,6 +69,12 @@ function acquireFullSource(id, cfg, cand, meta) {
   //    range-per-moment usse kai guna mehnga aur kam bharosemand hai.
   const capSec = cand.manyUses ? (acq.fullDownloadHardMaxSeconds || 2400) : (acq.fullDownloadMaxSeconds || 900);
   const dur0 = (meta && meta.duration) || 0;
+  // local_file ki duration probe se pakki hoti hai; URL par duration na pata ho
+  // to poori download karna andhera mein teer hai — 3-ghante ki source bhi ho
+  // sakti hai. Inkaar karo.
+  if (!cand.local_file && !cand.allowLong && dur0 <= 0) {
+    return { ok: false, error: `${cand.source_id} ki duration pata nahi chali — poori download nahi karunga (kitni badi hai ye maloom nahi).` };
+  }
   if (!cand.allowLong && dur0 > capSec) {
     return { ok: false, tooLong: true,
       error: `source ${Math.round(dur0)}s lamba hai (cap ${capSec}s${cand.manyUses ? ', multi-use' : ''}) — poori download nahi karunga. Range/hint se kaam chalega.` };
@@ -60,12 +87,19 @@ function acquireFullSource(id, cfg, cand, meta) {
   const r = U.ytdlp(['-f', fmt, '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
     '-o', bank, '--no-playlist', '--no-warnings', cand.url],
     { timeout: (cfg.acquire && cfg.acquire.timeoutMs) || 900000 });
+  const cleanPartials = () => {
+    try {
+      const dir = path.dirname(bank), base = path.basename(bank);
+      for (const f of fs.readdirSync(dir)) if (f.startsWith(base) && f !== base + '.json') { try { fs.rmSync(path.join(dir, f), { force: true }); } catch {} }
+    } catch {}
+  };
   if (!r.ok || !fs.existsSync(bank)) {
-    try { if (fs.existsSync(bank)) fs.rmSync(bank, { force: true }); } catch {}
+    cleanPartials();                                  // .part/.ytdl temp files bhi
+    _srcFails[cand.source_id] = (_srcFails[cand.source_id] || 0) + 1;
     return { ok: false, error: (r.stderr || 'full-source download fail').replace(/\s+/g, ' ').slice(0, 180) };
   }
   const pr = U.probe(bank);
-  if (!pr.ok) { try { fs.rmSync(bank, { force: true }); } catch {}; return { ok: false, error: `full source invalid: ${pr.error}` }; }
+  if (!pr.ok) { cleanPartials(); _srcFails[cand.source_id] = (_srcFails[cand.source_id] || 0) + 1; return { ok: false, error: `full source invalid: ${pr.error}` }; }
   fs.writeFileSync(man, JSON.stringify({ url: cand.url, source_id: cand.source_id, maxH, duration: pr.duration, width: pr.width, height: pr.height, at: Date.now() }));
   return { ok: true, file: bank, duration: pr.duration, width: pr.width, height: pr.height, via: 'yt-dlp-full' };
 }
@@ -111,7 +145,7 @@ function downloadCandidate(id, cfg, cand, opts = {}) {
   if (opts.useBank !== false) {
     let pr = fs.existsSync(bank) ? U.probe(bank) : { ok: false };
     if (!pr.ok && opts.acquireBank) {
-      const got = acquireFullSource(id, cfg, cand, opts.meta);
+      const got = acquireFullSource(id, cfg, cand, opts.meta, opts.spec);
       if (got.ok) pr = { ok: true, width: got.width, height: got.height, duration: got.duration };
       else if (opts.bankOnly) return { ok: false, error: got.error };
     }
@@ -167,7 +201,7 @@ function downloadCandidate(id, cfg, cand, opts = {}) {
     // chhodna bewakoofi hai — ek baar poora laakar dekh lo (cap ke andar).
     if (opts.noFullRecovery !== true) {
       U.log(`     range fail — poori source se recovery try kar raha hoon (${cand.source_id})`);
-      const rec = acquireFullSource(id, cfg, { ...cand, manyUses: true }, opts.meta);
+      const rec = acquireFullSource(id, cfg, { ...cand, manyUses: true }, opts.meta, opts.spec);
       if (rec.ok) {
         if (cand.cut && cand.cut.start >= rec.duration) return { ok: false, error: `requested start ${cand.cut.start}s beyond source ${Math.round(rec.duration)}s` };
         return { ok: true, raw_file: path.relative(U.jobDir(id), bank), raw_offset: 0, raw_kind: 'job',
@@ -257,7 +291,7 @@ module.exports = function download(spec, cfg, st, resolved) {
       const meta = metaOf(sid);
       const t0 = Date.now();
       U.log(`   [source ${bi}/${wanted.length}] ${sid} (${Math.round((meta && meta.duration) || 0)}s, ${uses[sid]} moments) downloading...`);
-      const got = acquireFullSource(id, cfg, anyCand, meta);
+      const got = acquireFullSource(id, cfg, anyCand, meta, spec);
       bankState[sid] = got.ok;
       U.log(got.ok ? `   [source ${bi}/${wanted.length}] ${sid} OK via ${got.via} in ${secs(t0)}s — is source ke ${uses[sid]} clips ab bina download ke katenge`
                    : `   [source ${bi}/${wanted.length}] ${sid} FAILED in ${secs(t0)}s — ${String(got.error).slice(0, 100)} (per-moment range par gir jayenge)`);
@@ -289,7 +323,7 @@ module.exports = function download(spec, cfg, st, resolved) {
       for (const sid of extra) {
         const meta2 = metaOf(sid);
         const t0 = Date.now();
-        const got = acquireFullSource(id, cfg, { source_id: sid, url: sources[sid].url }, meta2);
+        const got = acquireFullSource(id, cfg, { source_id: sid, url: sources[sid].url }, meta2, spec);
         bankState[sid] = got.ok;
         U.log(`   [variety] ${sid} ${got.ok ? 'OK via ' + got.via : 'FAILED — ' + String(got.error).slice(0, 70)} in ${secs(t0)}s`);
       }
@@ -320,7 +354,7 @@ module.exports = function download(spec, cfg, st, resolved) {
     for (let ci = 0; ci < cands.length; ci++) {
       const t1 = Date.now();
       U.log(`     attempt ${ci + 1}/${cands.length} ${cands[ci].source_id}${cands[ci].url ? ' (yt-dlp range)' : ' (local file)'} ...`);
-      const res = downloadCandidate(id, cfg, cands[ci]);
+      const res = downloadCandidate(id, cfg, cands[ci], { spec });
       if (res.ok) {
         if (ci > 0) switched++;
         promote(e, cands[ci], ci, res);

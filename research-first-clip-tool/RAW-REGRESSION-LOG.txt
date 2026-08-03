@@ -1,4 +1,4 @@
-=== REGRESSION Mon Aug  3 13:10:43 UTC 2026 ===
+=== REGRESSION Mon Aug  3 14:28:27 UTC 2026 ===
 == M1.1 REGRESSION SUITE ==
   [PASS] T1 path-traversal --job rejected & nothing created outside jobs/  — exit=1
   [PASS] T1b unsafe moment_id rejected by validator  — exit=1
@@ -60,9 +60,17 @@
   [PASS] T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)  — assets=TEMPLATE_GRAPHIC_MEDIA
   [PASS] T-M340 range download does not ask yt-dlp to re-encode at cut points  — force-keyframes flag absent
   [PASS] T-M337 --redo removes the stale render manifest (report cannot show old numbers)  — stalePresent=false
+  [PASS] T-M361 stale/missing pack check blocks a production render (exit 3)  — exit=3 gateMsg=true
+  [PASS] T-M362 a fresh pack check for these exact inputs unblocks the render  — exit=0 hashes=true
+  [PASS] T-M363 a failed render still leaves job-result.json, NEEDS_SOURCE.csv and a readable report  — exit=1 status=FAILED csvHasMoment=true
+  [PASS] T-M364 the failure report names the critical beat that blocked it  — critical=["F_M1"]
+  [PASS] T-M365 the failure report never points at a file that does not exist  — artifacts=resolved.json,run.log,NEEDS_SOURCE.csv
+  [PASS] T-M366 same show, different episode does not leak footage without permission  — E2 shots=1 usedEp1=0 assets=GENERIC_TEXT_GRAPHIC
+  [PASS] T-M367 with allow_context_borrow it is used, and labelled SAME_SHOW_OTHER_EPISODE  — borrowed=1 rel=SAME_SHOW_OTHER_EPISODE
+  [PASS] T-M368 unknown-duration and over-cap sources are refused before any download  — unknown="UNK ki duration pata nahi chali — poori " long=true
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 60 PASS, 0 FAIL
+  REGRESSION SUMMARY: 68 PASS, 0 FAIL
 ======================================================================
 REG_EXIT=0

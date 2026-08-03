@@ -61,7 +61,10 @@ module.exports = function shotReview(spec, cfg, st) {
   const cards = shots.map((s, k) => {
     const col = CLASS_COLOR[s.asset] || '#495057';
     const hint = s.hint_time != null ? `hint ${s.hint_time}s → ${s.image_time != null ? s.image_time + 's' : '?'} (Δ${s.hint_delta ?? '?'}s)` : '';
-    const src = [s.source_id, s.media_start != null ? `@${Math.round(s.media_start)}s` : (s.image_time != null ? `@${Math.round(s.image_time)}s` : '')].filter(Boolean).join(' ');
+    const actual = s.actual_source_id || s.source_id;
+    const src = [actual, s.media_start != null ? `@${Math.round(s.media_start)}s` : (s.image_time != null ? `@${Math.round(s.image_time)}s` : '')].filter(Boolean).join(' ');
+    const swapped = s.planned_source_id && actual && s.planned_source_id !== actual;
+    const rel = s.scope_relation && s.scope_relation !== 'SAME_EPISODE' && s.scope_relation !== 'GRAPHIC' ? s.scope_relation : '';
     return `<div class="card" data-moment="${esc(s.moment_id)}" data-shot="${s.i}">
   <div class="thumbwrap">${thumbs[k] ? `<img loading="lazy" src="${esc(thumbs[k])}">` : '<div class="nothumb">no frame</div>'}
     <span class="badge" style="background:${col}">${esc(s.asset)}</span>
@@ -70,6 +73,9 @@ module.exports = function shotReview(spec, cfg, st) {
     <div class="cue">${esc((s.cue || '').slice(0, 150))}</div>
     <div class="row"><b>${esc(s.moment_id || '')}</b> ${esc(s.pack_id || '')} ${src ? '· ' + esc(src) : ''}</div>
     ${hint ? `<div class="row hint">${esc(hint)}</div>` : ''}
+    ${rel ? `<div class="row no">${esc(rel.replace(/_/g, ' ').toLowerCase())} — ye exact scene NAHI hai</div>` : ''}
+    ${swapped ? `<div class="row warn">planned ${esc(s.planned_source_id)} → actual ${esc(actual)}</div>` : ''}
+    ${s.criticality && s.criticality !== 'NORMAL' ? `<div class="row crit-b">${esc(s.criticality)}</div>` : ''}
     ${(s.must_show || []).length ? `<div class="row ok">must show: ${esc((s.must_show || []).join(', '))}</div>` : ''}
     ${(s.must_not_show || []).length ? `<div class="row no">must NOT show: ${esc((s.must_not_show || []).join(', '))}</div>` : ''}
     ${s.asset_note ? `<div class="row warn">${esc(s.asset_note)}</div>` : ''}
@@ -102,6 +108,7 @@ h1{font-size:17px;margin:0 0 6px}
 .meta{padding:10px 12px}
 .cue{color:#dfe5ef;margin-bottom:7px;font-size:13px}
 .row{font-size:11.5px;color:#93a0b3;margin:3px 0;word-break:break-word}
+.row.crit-b{color:#ff8787;font-weight:700}
 .row.ok{color:#69db7c}.row.no{color:#ffa8a8}.row.hint{color:#74c0fc}.row.warn{color:#ffd43b}.row.why{color:#7b8798;font-style:italic}
 a.row{color:#74c0fc;text-decoration:none}
 .flag{display:flex;gap:7px;align-items:center;margin-top:9px;font-size:12px;color:#aab3c2;cursor:pointer}

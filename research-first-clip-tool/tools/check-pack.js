@@ -437,6 +437,8 @@ fs.mkdirSync(outDir, { recursive: true });
 const reportJson = {
   schema: 'pack-report-v1',
   pack_file: path.basename(packFile), generated_at: new Date().toISOString(),
+  // Ye do hash production gate ke liye hain: report inhi inputs ki hai ya nahi.
+  pack_sha256: U.hashFile(packFile), srt_sha256: haveSrt ? U.hashFile(srtFile) : null,
   narration_seconds: +narrTotal.toFixed(1), have_srt: haveSrt,
   packs: pack.packs.length, moments: moments.length, sources: Object.keys(sourcesById).length,
   seconds_by_class: Object.fromEntries(Object.entries(secBy).map(([k, x]) => [k, +x.toFixed(1)])),

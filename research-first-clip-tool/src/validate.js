@@ -50,6 +50,7 @@ function validatePackObject(pack) {
   const allSourceIds = new Set();          // reuse ke liye global source map
   let momentCount = 0;
   let exactOrDialogue = 0;
+  let missingCriticality = 0;
   const sourcesById = {};
 
   // pehle sab sources index karo (reuse across packs allow)
@@ -106,6 +107,10 @@ function validatePackObject(pack) {
         warnings.push(`[${mid}] fallback.type unknown: ${m.fallback.type}`);
       if (m.criticality && !ENUM.criticality.includes(m.criticality))
         warnings.push(`[${mid}] criticality unknown: ${m.criticality}`);
+      // criticality na ho to runtime NORMAL maan leta hai — yaani HOOK/HARD_EVIDENCE
+      // gate un beats par lagta hi nahi jinpe wo sabse zaroori tha. Isliye ise
+      // ginte hain aur report mein saaf batate hain.
+      if (!m.criticality) missingCriticality++;
 
       // ---- fallback_plan validation (M2.1 contract) ----
       const fp = m.fallback_plan;
@@ -171,7 +176,8 @@ function validatePackObject(pack) {
   if (momentCount && ratio < 0.7)
     warnings.push(`RESEARCH_INCOMPLETE: sirf ${Math.round(ratio * 100)}% moments EXACT_TIME/DIALOGUE hain (target >=70%). Baaki NEEDS_SOURCE/fallback ho sakte hain.`);
 
-  const stats = { packs: pack.packs.length, sources: allSourceIds.size, moments: momentCount, exactOrDialogue, exactOrDialoguePct: Math.round(ratio * 100) };
+  const stats = { packs: pack.packs.length, sources: allSourceIds.size, moments: momentCount, exactOrDialogue, exactOrDialoguePct: Math.round(ratio * 100), missingCriticality };
+  if (missingCriticality) warnings.push(`${missingCriticality}/${momentCount} moments par criticality nahi hai — ye sab NORMAL maane jayenge, yaani HOOK/HARD_EVIDENCE gate un par lagega hi nahi`);
   return { ok: errors.length === 0, errors, warnings, stats };
 }
 

@@ -45,7 +45,14 @@ function makeNarr(dir, cues) {
   ff(['-f', 'lavfi', '-i', `sine=frequency=220:duration=${cues[cues.length - 1].end}`, '-c:a', 'aac', path.join(dir, 'voiceover.m4a')]);
 }
 function writePack(dir, pack) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'scene-research.json'), JSON.stringify(pack, null, 2)); }
-function runRFC(args, env = {}) { return spawnSync('node', ['src/run.js', ...args], { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: { ...process.env, ...env } }); }
+// Tests apne khud ke packs banate hain, unka koi output/pack-report.json nahi
+// hota. Production gate asli hai — isliye tests use documented escape hatch se
+// bypass karte hain, gate ko kamzor nahi karte. (T-GATE isse alag se test karta
+// hai ki bina override ke gate SACH mein rokta hai.)
+function runRFC(args, env = {}) {
+  const a = args.includes('--diagnostic-override') ? args : [...args, '--diagnostic-override'];
+  return spawnSync('node', ['src/run.js', ...a], { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: { ...process.env, ...env } });
+}
 function dur(f) { try { execFileSync(FFMPEG, ['-hide_banner', '-i', f], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { const m = String(e.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/); return m ? +m[1] * 3600 + +m[2] * 60 + parseFloat(m[3]) : 0; } return 0; }
 function colorAt(f, t) { const tmp = f + `.${t}.rgb`; ff(['-ss', String(t), '-i', f, '-frames:v', '1', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', tmp]); const b = fs.readFileSync(tmp); fs.rmSync(tmp, { force: true }); return [b[0], b[1], b[2]]; }
 function nearest(rgb) { let best; for (const k in PRGB) { const d = Math.hypot(rgb[0] - PRGB[k][0], rgb[1] - PRGB[k][1], rgb[2] - PRGB[k][2]); if (!best || d < best.d) best = { k, d: Math.round(d) }; } return best; }
@@ -882,6 +889,125 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     check('T-M337 --redo removes the stale render manifest (report cannot show old numbers)',
       after && !JSON.stringify(after).includes('STALE_MARKER'),
       `stalePresent=${after ? JSON.stringify(after).includes('STALE_MARKER') : 'no file'}`);
+  })();
+})();
+
+// ---------- T-M36: audit ke P0 items (asli run se aaye) ----------
+(() => {
+  const d = path.join(FX, 'm36');
+  makeNarr(d, [
+    { start: 0, end: 6, text: 'The alarm rings across the base.' },
+    { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+  ]);
+
+  // --- (1) PRODUCTION GATE: bina taaza pack-report ke render nahi ---
+  (() => {
+    writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'G', packs: [{
+      pack_id: 'G1', scope: { kind: 'SERIES', title: 'Show G' },
+      sources: [{ source_id: 'GS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [
+        { moment_id: 'G_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'GS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'G_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL',
+          locators: [{ source_id: 'GS', locator_type: 'EXACT_TIME', start_sec: 22, end_sec: 28, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+      ] }] });
+    // override ke BINA — gate ko rokna chahiye
+    const blocked = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_gate', '--redo'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    const out = (blocked.stdout || '') + (blocked.stderr || '');
+    check('T-M361 stale/missing pack check blocks a production render (exit 3)',
+      blocked.status === 3 && /PRODUCTION GATE/.test(out) && !fs.existsSync(path.join(JOBS, 'reg_gate', 'final.mp4')),
+      `exit=${blocked.status} gateMsg=${/PRODUCTION GATE/.test(out)}`);
+
+    // ab TAAZA report banao -> wahi run chal jana chahiye
+    const outDir = path.join(d, 'out');
+    spawnSync('node', ['tools/check-pack.js', path.join(d, 'scene-research.json'), path.join(d, 'voiceover.srt'), `--out=${outDir}`, '--no-probe'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    const rep = JSON.parse(fs.readFileSync(path.join(outDir, 'pack-report.json'), 'utf8'));
+    fs.mkdirSync(path.join(ROOT, 'output'), { recursive: true });
+    const prodRep = path.join(ROOT, 'output', 'pack-report.json');
+    const hadRep = fs.existsSync(prodRep) ? fs.readFileSync(prodRep) : null;
+    fs.writeFileSync(prodRep, JSON.stringify(rep));
+    const passed = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_gate', '--redo'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    check('T-M362 a fresh pack check for these exact inputs unblocks the render',
+      passed.status === 0 && fs.existsSync(path.join(JOBS, 'reg_gate', 'final.mp4'))
+        && rep.pack_sha256 && rep.srt_sha256,
+      `exit=${passed.status} hashes=${!!rep.pack_sha256}`);
+    if (hadRep) fs.writeFileSync(prodRep, hadRep); else fs.rmSync(prodRep, { force: true });
+  })();
+
+  // --- (2) FAIL PAR BHI REPAIR PACKAGE ---
+  (() => {
+    const fd = path.join(FX, 'm36fail');
+    makeNarr(fd, [{ start: 0, end: 8, text: 'The alarm rings across the base.' }]);
+    // koi source nahi -> timeline generic text -> render production mein rukega
+    writePack(fd, { schema_version: 'scene-research-pack-v1', project_title: 'F', packs: [{
+      pack_id: 'F1', scope: { kind: 'SERIES', title: 'Show F' }, sources: [],
+      moments: [{ moment_id: 'F_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'HARD_EVIDENCE',
+        locators: [], fallback: { type: 'NEEDS_SOURCE' } }] }] });
+    const r = runRFC([`--input=${fd}`, '--job=reg_m36fail', '--redo']);
+    const j = path.join(JOBS, 'reg_m36fail');
+    let jr = null; try { jr = JSON.parse(fs.readFileSync(path.join(j, 'job-result.json'), 'utf8')); } catch {}
+    const csv = fs.existsSync(path.join(j, 'NEEDS_SOURCE.csv')) ? fs.readFileSync(path.join(j, 'NEEDS_SOURCE.csv'), 'utf8') : '';
+    check('T-M363 a failed render still leaves job-result.json, NEEDS_SOURCE.csv and a readable report',
+      r.status !== 0 && jr && jr.status === 'FAILED' && csv.includes('F_M1')
+        && fs.existsSync(path.join(j, 'blocked-report.html')),
+      `exit=${r.status} status=${jr ? jr.status : 'none'} csvHasMoment=${csv.includes('F_M1')}`);
+    check('T-M364 the failure report names the critical beat that blocked it',
+      jr && jr.critical_unresolved.includes('F_M1') && jr.next_steps.length > 0,
+      `critical=${jr ? JSON.stringify(jr.critical_unresolved) : 'n/a'}`);
+    check('T-M365 the failure report never points at a file that does not exist',
+      jr && jr.artifacts.every(a => fs.existsSync(path.join(j, a))),
+      `artifacts=${jr ? jr.artifacts.join(',') : 'n/a'}`);
+  })();
+
+  // --- (3) SAME SHOW, ALAG EPISODE bina permission ke leak na ho ---
+  (() => {
+    const ep2 = makeEp(path.join(FX, 'ep'), 'ep2', [{ color: 'yellow', dialogue: 'second episode entirely different scene' }]);
+    const sd = path.join(FX, 'm36ep');
+    makeNarr(sd, [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    ]);
+    const mk = (borrow) => ({ schema_version: 'scene-research-pack-v1', project_title: 'EP', packs: [
+      { pack_id: 'E1', scope: { kind: 'SERIES', title: 'Show E', season: 1, episode_number: 1, episode_title: 'One' },
+        sources: [{ source_id: 'E1S', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'E1_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'E1S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'E2', scope: { kind: 'SERIES', title: 'Show E', season: 1, episode_number: 2, episode_title: 'Two' },
+        sources: [],   // is episode ki koi media nahi
+        moments: [{ moment_id: 'E2_M1', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL',
+          locators: [], fallback_plan: borrow ? { allow_context_borrow: true } : {}, fallback: { type: 'TEXT_CARD', text: 'ep2 media nahi' } }] },
+    ] });
+    writePack(sd, mk(false));
+    runRFC([`--input=${sd}`, '--job=reg_m36ep', '--redo', '--review']);
+    let TM = null; try { TM = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m36ep', 'render-manifest.json'), 'utf8')); } catch {}
+    const e2 = TM ? TM.shots.filter(s => s.moment_id === 'E2_M1') : [];
+    const leaked = e2.filter(s => s.actual_source_id === 'E1S');
+    check('T-M366 same show, different episode does not leak footage without permission',
+      e2.length > 0 && leaked.length === 0,
+      `E2 shots=${e2.length} usedEp1=${leaked.length} assets=${[...new Set(e2.map(s => s.asset))].join('/')}`);
+
+    writePack(sd, mk(true));
+    runRFC([`--input=${sd}`, '--job=reg_m36ep2', '--redo', '--review']);
+    let TM2 = null; try { TM2 = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m36ep2', 'render-manifest.json'), 'utf8')); } catch {}
+    const e2b = TM2 ? TM2.shots.filter(s => s.moment_id === 'E2_M1') : [];
+    const borrowed = e2b.filter(s => s.actual_source_id === 'E1S');
+    check('T-M367 with allow_context_borrow it is used, and labelled SAME_SHOW_OTHER_EPISODE',
+      borrowed.length > 0 && borrowed.every(s => s.scope_relation === 'SAME_SHOW_OTHER_EPISODE'),
+      `borrowed=${borrowed.length} rel=${[...new Set(e2b.map(s => s.scope_relation))].join('/')}`);
+  })();
+
+  // --- (4) unknown-duration / over-cap source poori download na ho ---
+  (() => {
+    const DL = require(path.join(ROOT, 'src', 'download.js'));
+    const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+    const unknown = DL.acquireFullSource('reg_capcheck', cfg, { source_id: 'UNK', url: 'https://www.youtube.com/watch?v=UNKNOWNDUR1' }, null);
+    const tooLong = DL.acquireFullSource('reg_capcheck', cfg, { source_id: 'LONG', url: 'https://www.youtube.com/watch?v=LONGSOURCE1' }, { duration: 5000 });
+    check('T-M368 unknown-duration and over-cap sources are refused before any download',
+      !unknown.ok && /duration pata nahi/i.test(unknown.error) && !tooLong.ok && tooLong.tooLong === true,
+      `unknown="${String(unknown.error).slice(0, 40)}" long=${tooLong.tooLong}`);
   })();
 })();
 

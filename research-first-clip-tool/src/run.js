@@ -30,6 +30,7 @@ const render = require('./render.js');
 const report = require('./report.js');
 const shotReview = require('./shotreview.js');
 const SUB = require('./subtitles.js');
+const jobResult = require('./jobresult.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -89,7 +90,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.5'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.6'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -111,6 +112,37 @@ async function main() {
     const jsOk = chk.results.find(r => r.key === 'jsruntime' && r.ok);
     if (!ytOk) { U.bad('URL sources hain par yt-dlp nahi mila — preflight STOP (misleading DONE se bachne ko).'); flushLog(spec.id); process.exit(2); }
     if (!jsOk) { U.bad('URL sources hain par koi usable JS runtime nahi (Deno 2.3+ ya Node 22+) — preflight STOP (yt-dlp YouTube EJS chahiye).'); flushLog(spec.id); process.exit(2); }
+  }
+
+  // --- PRODUCTION GATE ---
+  // Schema valid hona aur production-ready hona alag baat hai. Asli run mein
+  // menu ne "pack check: abhi tak nahi chalaya" dikhaya, phir bhi preview chal
+  // gaya — aur weak preview beech mein fail hua. Ab preview/full render ke liye
+  // ek TAAZA pack-report chahiye jo INHI inputs par bana ho.
+  const isPreviewRun = arg('preview-start') != null || arg('preview-duration') != null || arg('preview-moments');
+  const wantsRender = !only || /render|report/.test(only) || arg('from') != null || isPreviewRun;
+  if (wantsRender && !flag('diagnostic-override') && (cfg.output && cfg.output.mode) !== 'review') {
+    const repFile = path.join(U.ROOT, 'output', 'pack-report.json');
+    let rep = null; try { rep = JSON.parse(fs.readFileSync(repFile, 'utf8')); } catch {}
+    const packHash = U.hashFile(spec.packFile), srtHash = U.hashFile(spec.srt);
+    const stale = !rep || rep.pack_sha256 !== packHash || rep.srt_sha256 !== srtHash;
+    if (stale) {
+      U.bad('PRODUCTION GATE: is pack/SRT ka taaza check nahi hai.');
+      U.log('');
+      U.log('   Kyun: pack ya voiceover badla hai (ya check chalaya hi nahi gaya). Bina check ke');
+      U.log('   render chalane ka matlab hai 45 minute baad pata chalna ki kaunse moments toote the.');
+      U.log('');
+      U.log('   Chalao:  START_HERE.bat -> option 2   (ya)');
+      U.log('            node tools/check-pack.js input/scene-research.json input/voiceover.srt --apply-probe');
+      U.log('');
+      U.log('   Sirf dekhne ke liye (export nahi): isi command ke aage --diagnostic-override lagao.');
+      flushLog(spec.id);
+      process.exit(3);
+    }
+    if (rep.pass === false) {
+      U.warn(`pack check FAIL hua tha (${(rep.failed_checks || []).length} checks). Preview chal jayega par output production-grade nahi hoga:`);
+      (rep.failed_checks || []).slice(0, 6).forEach(f => U.log(`     - ${f.check} (${f.detail})`));
+    }
   }
 
   // --- redo: containment-safe cleanup ---
@@ -219,12 +251,36 @@ async function main() {
       });
     } catch (e) {
       U.bad(`stage ${key} fail: ${e.message}`);
+      // FAIL PAR BHI REPAIR FILES: pehle render fail hone par NEEDS_SOURCE.csv
+      // banti hi nahi thi (report stage render ke baad hai), aur error usi file
+      // ko dekhne bolta tha. Ab har fail ke saath repair package banta hai.
+      try {
+        resolved = resolved || jf('resolved.json');
+        tl = tl || jf('timeline.json');
+        const r = jobResult(spec, st, { status: 'FAILED', stage: key, message: e.message, resolved, tl });
+        U.log('');
+        U.log(`  ${r.repair.length} moments ko kaam chahiye — poori list yahan hai:`);
+        U.log(`     jobs/${spec.id}/NEEDS_SOURCE.csv        (spreadsheet mein khol lo)`);
+        U.log(`     jobs/${spec.id}/blocked-report.html     (padhne layak, repair list ke saath)`);
+        U.log(`     jobs/${spec.id}/job-result.json         (machine-readable)`);
+        if (r.critical_unresolved.length) U.bad(`   inme ${r.critical_unresolved.length} CRITICAL beats hain: ${r.critical_unresolved.slice(0, 6).join(', ')}`);
+      } catch (e2) { U.warn('repair package bhi nahi ban paya: ' + e2.message.slice(0, 80)); }
       ST.save(spec.id, st); flushLog(spec.id);
-      U.log(`\n  resume: node src/run.js --from=${STAGE_N[key]} --job=${spec.id}`);
+      U.log(`\n  jab moments theek ho jayein: node src/run.js --from=${STAGE_N[key]} --job=${spec.id}`);
       flushLog(spec.id);
       process.exit(1);
     }
   }
+
+  // SUCCESS bhi tabhi jab final.mp4 SACH mein bani ho
+  try {
+    resolved = resolved || jf('resolved.json'); tl = tl || jf('timeline.json');
+    const okFinal = fs.existsSync(U.p(spec.id, 'final.mp4')) && U.probe(U.p(spec.id, 'final.mp4')).ok;
+    jobResult(spec, st, { status: okFinal ? 'SUCCESS' : 'FAILED', stage: okFinal ? null : 'render',
+      message: okFinal ? 'final.mp4 ban gayi aur probe pass hui.' : 'saare stages chal gaye par final.mp4 valid nahi hai.',
+      resolved, tl });
+    if (!okFinal) { U.bad('final.mp4 valid nahi hai — job FAILED mana ja raha hai.'); flushLog(spec.id); process.exit(1); }
+  } catch (e) { U.warn('job-result likhne mein dikkat: ' + e.message.slice(0, 80)); }
 
   U.log('\n' + '='.repeat(60));
   U.log(`  DONE — ${path.relative(U.ROOT, U.jobDir(spec.id))}/`);

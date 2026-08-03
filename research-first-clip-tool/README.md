@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M3.5
+# Research-First Clip Tool — M3.6
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -320,6 +320,34 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M3.6 — foundation hardening (teeno preview ke audit se)**
+Weak preview FAIL hua tha par launcher ne "Ho gaya" likh diya, aur error ne jis
+`NEEDS_SOURCE.csv` ko dekhne bola wo bani hi nahi thi. Ye sab ab band hai.
+- **`START_HERE.bat` ab exit code padhta hai** aur `final.mp4` bhi check karta
+  hai. Fail par saaf `[FAILED]` + jo files SACH mein bani hain unki list.
+- **Fail par bhi repair package** — har job ab `job-result.json` (SUCCESS/FAILED),
+  `NEEDS_SOURCE.csv` aur `blocked-report.html` chhodta hai, chahe render beech
+  mein ruk jaye. Report kabhi aisi file ki taraf ishara nahi karti jo maujood na ho.
+- **Production gate** — preview/full render ke liye ab is pack aur is SRT ka
+  **taaza** `pack-report.json` chahiye (hash se tied). Nahi hai to exit 3 aur
+  saaf hidayat. Sirf dekhne ke liye `--diagnostic-override`.
+- **Episode-level scope** — "same show" ka matlab "same episode" nahi. Default
+  fallback ab episode ke andar rehta hai; doosre episode ka footage tabhi jab
+  research ne `allow_context_borrow: true` kaha ho, aur CRITICAL beats par kabhi
+  nahi. (Asli mid preview mein P06 ko P01 ka episode mil gaya tha.)
+- **Planned vs actual provenance** — har shot par `planned_source_id`,
+  `actual_source_id` aur `scope_relation` alag likhe jate hain; shot-review par
+  "ye exact scene NAHI hai" saaf dikhta hai.
+- **Recovery safety** — `acquireFullSource` ab metadata KHUD load karta hai
+  (caller par nirbhar nahi). Duration pata na chale to full download se inkaar,
+  cap dono jagah lagta hai, per-source circuit breaker (2 fail = us run mein
+  band), aur `.part` files saaf hoti hain.
+- **`criticality` missing** ab validator warning hai (count ke saath) — pehle
+  chupchap NORMAL ban jati thi, yaani gate lagta hi nahi tha.
+- **Review dashboard** (`option 9`) — teeno preview ek jagah, verdict ke saath ki
+  full render chalana chahiye ya nahi.
+- 8 naye regressions (T-M361..368). Suite ab **68 PASS / 0 FAIL**.
 
 **M3.5 — doosre asli preview se**
 - **Lambi source par range download bharosemand nahi hai** — ye ab naapa hua
