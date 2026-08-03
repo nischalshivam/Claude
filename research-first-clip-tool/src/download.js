@@ -161,6 +161,20 @@ function downloadCandidate(id, cfg, cand, opts = {}) {
     const err = (r.stderr || 'download fail').replace(/\s+/g, ' ').slice(0, 200);
     const flag = /403|forbidden|sign in|po.?token|not available|unavailable|requested format/i.test(err) ? '[403/unavailable] ' : '';
     try { if (fs.existsSync(rawFile)) fs.rmSync(rawFile, { force: true }); } catch {}
+    // RANGE FAIL -> POORI SOURCE SE RECOVERY.
+    // Asli run: usi source ka range 2x300s par ETIMEDOUT hua, jabki poora
+    // episode 11.8s mein aa gaya. Range fail hone par source ko haar maan kar
+    // chhodna bewakoofi hai — ek baar poora laakar dekh lo (cap ke andar).
+    if (opts.noFullRecovery !== true) {
+      U.log(`     range fail — poori source se recovery try kar raha hoon (${cand.source_id})`);
+      const rec = acquireFullSource(id, cfg, { ...cand, manyUses: true }, opts.meta);
+      if (rec.ok) {
+        if (cand.cut && cand.cut.start >= rec.duration) return { ok: false, error: `requested start ${cand.cut.start}s beyond source ${Math.round(rec.duration)}s` };
+        return { ok: true, raw_file: path.relative(U.jobDir(id), bank), raw_offset: 0, raw_kind: 'job',
+                 src_w: rec.width, src_h: rec.height, via: 'full-source-recovery' };
+      }
+      return { ok: false, error: `${flag}${err} | full-source recovery bhi fail: ${String(rec.error).slice(0, 90)}` };
+    }
     return { ok: false, error: flag + err };
   }
   // STRICT: empty/streamless/short download ko kabhi READY mat bolo (M1.3 ka 262-byte bug)
@@ -218,7 +232,15 @@ module.exports = function download(spec, cfg, st, resolved) {
     }
   }
   const minMissing = (cfg.acquire && cfg.acquire.lazyMinMissing) || 2;
-  const wanted = Object.keys(plan).filter(sid => plan[sid] && (missingBySource[sid] || 0) >= minMissing);
+  // ASLI RUN SE SEEKHA: lambi source par RANGE download bharosemand nahi hai.
+  // 1351s ke episode ka poora download 11.8s mein ho gaya, jabki usi source ka
+  // ek range download 300s par do baar ETIMEDOUT hua. Isliye lazy-skip sirf
+  // CHHOTI sources par lagta hai — lambi source ek moment ke liye bhi poori
+  // laana sasta aur zyada reliable hai.
+  const rangeUnsafeSec = (cfg.acquire && cfg.acquire.rangeUnsafeAboveSeconds) || 600;
+  const longSource = sid => { const m = metaOf(sid); return !!(m && m.duration && m.duration > rangeUnsafeSec); };
+  const wanted = Object.keys(plan).filter(sid => plan[sid]
+    && ((missingBySource[sid] || 0) >= minMissing || ((missingBySource[sid] || 0) >= 1 && longSource(sid))));
   const skipped = Object.keys(plan).filter(sid => plan[sid] && !wanted.includes(sid));
   // ---- ACQUISITION PLAN LOG (network se pehle) ----
   U.log(`   acquisition plan: ${Object.keys(uses).length} unique URL source(s) | cache se mil rahe: ${Object.keys(uses).length - Object.keys(missingBySource).length} | naye full downloads: ${wanted.length}`);
@@ -231,7 +253,7 @@ module.exports = function download(spec, cfg, st, resolved) {
       bi++;
       const anyCand = todo.flatMap(e => candList(e)).find(c => c.source_id === sid && c.url);
       if (!anyCand) continue;
-      anyCand.manyUses = (uses[sid] || 0) >= ((cfg.acquire && cfg.acquire.fullDownloadMinUses) || 2);
+      anyCand.manyUses = (uses[sid] || 0) >= ((cfg.acquire && cfg.acquire.fullDownloadMinUses) || 2) || longSource(sid);
       const meta = metaOf(sid);
       const t0 = Date.now();
       U.log(`   [source ${bi}/${wanted.length}] ${sid} (${Math.round((meta && meta.duration) || 0)}s, ${uses[sid]} moments) downloading...`);

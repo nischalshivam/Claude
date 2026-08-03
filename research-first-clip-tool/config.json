@@ -75,11 +75,13 @@
     "contextVarietyMinBeats": 3,
     "_varietyNote": "Jab bahut se beats bina exact clip ke hon, to itne tak same-scope sources laate hain taaki context footage mein variety rahe (ek episode loop na lage).",
     "fullDownloadHardMaxSeconds": 2400,
-    "_capNote": "fullDownloadMaxSeconds = variety/fallback ke liye. fullDownloadHardMaxSeconds = jab source kai moments ko chahiye (multi-use) \u2014 40 min tak poori source laana range-per-moment se sasta aur zyada reliable hai."
+    "_capNote": "fullDownloadMaxSeconds = variety/fallback ke liye. fullDownloadHardMaxSeconds = jab source kai moments ko chahiye (multi-use) \u2014 40 min tak poori source laana range-per-moment se sasta aur zyada reliable hai.",
+    "rangeUnsafeAboveSeconds": 600,
+    "_rangeNote": "Isse lambi source par per-moment range download bharosemand nahi (asli run: 300s timeout), isliye use ek moment ke liye bhi POORI laate hain. Range fail ho to bhi poori source se recovery hoti hai."
   },
   "download": {
     "_note": "Per-moment range download (jab source bank use na ho).",
-    "timeoutMs": 300000
+    "timeoutMs": 180000
   },
   "shots": {
     "_note": "Ek narration beat ko chhote shots mein todna. Koi lamba frozen frame nahi.",

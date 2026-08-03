@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M3.4 (real-preview fixes)
+# Research-First Clip Tool — M3.5
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -320,6 +320,19 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M3.5 — doosre asli preview se**
+- **Lambi source par range download bharosemand nahi hai** — ye ab naapa hua
+  sach hai: 1351s ka episode POORA 11.8s mein aaya, jabki usi source ka ek
+  range download 300s par do baar ETIMEDOUT hua. Isliye 10 minute se lambi
+  source ab EK moment ke liye bhi poori laayi jati hai (`rangeUnsafeAboveSeconds`).
+- **Range fail ho to poori source se RECOVERY** — pehle source haar kar chhod
+  diya jata tha aur us moment ka clip khatam. Ab ek baar poora download try
+  hota hai (cap ke andar).
+- Range timeout 300s → 180s (poora download hi ~12s ka hai, 300s intezaar bekaar).
+- **Preview ka audio message ab saaf hai** — preview mein voiceover poori hoti
+  hai par timeline sirf window jitni; wo normal hai, mismatch nahi. Ab wo INFO
+  line hai, warning nahi.
 
 **M3.4 — pehle asli preview se mile fixes**
 Ye sab tabhi mile jab asli YouTube ke saath 120-second preview chalaya gaya.

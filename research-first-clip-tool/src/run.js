@@ -89,7 +89,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.4'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.5'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -183,6 +183,7 @@ async function main() {
           for (const m of aligned.moments) { m.beat_start = +(m.beat_start - t0).toFixed(3); m.beat_end = +(m.beat_end - t0).toFixed(3); }
           aligned.total = +(t1 - t0).toFixed(3);
           spec.previewOffset = t0;
+          spec.isPreview = true;
           // ---- SRT bhi USI offset se rebase ----
           // Moments to 0 se shuru ho gaye, par timeline.js shot boundaries ke
           // liye ASLI SRT padhta raha — yaani 300s se shuru hone wala preview

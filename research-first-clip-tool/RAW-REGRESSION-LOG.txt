@@ -1,4 +1,4 @@
-=== REGRESSION Mon Aug  3 11:37:17 UTC 2026 ===
+=== REGRESSION Mon Aug  3 13:10:43 UTC 2026 ===
 == M1.1 REGRESSION SUITE ==
   [PASS] T1 path-traversal --job rejected & nothing created outside jobs/  — exit=1
   [PASS] T1b unsafe moment_id rejected by validator  — exit=1
@@ -11,6 +11,7 @@
   [PASS] T5 repeated dialogue WITHOUT context -> NEEDS_REVIEW (ambiguous)  — RB=NEEDS_REVIEW
   [PASS] T4 NEEDS_REVIEW clip not used in production final, and no diagnostic card either  — slot kinds=context_video
   [PASS] T6 range-cache keys distinct for 10.1-20.1 vs 10.9-20.9  — S__10100_20100__h480.mp4 vs S__10900_20900__h480.mp4
+     range fail — poori source se recovery try kar raha hoon (S)
   [PASS] T6 exact match reuses cache; shifted range does NOT reuse  — A=cache B=no-reuse
   [PASS] T7/T12 QA rejects BLACK, recovers via alternate (green)  — RESOLVED/GOOD/green
   [PASS] T12 download-time DEAD source -> alternate (RESOLVED via GOOD)  — RESOLVED/GOOD

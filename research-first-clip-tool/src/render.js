@@ -311,7 +311,12 @@ module.exports = function render(spec, cfg, st, tl) {
     const adurRaw = U.probe(audio).duration || 0;
     const audioAvail = Math.max(0, adurRaw - offset);
     const target = +vdur.toFixed(3);
-    if (!offset && adurRaw && Math.abs(adurRaw - vdur) > 1.0) {
+    // PREVIEW mein audio poori hoti hai par timeline sirf window jitni — ye
+    // normal hai, galti nahi. Isliye preview par ye ek saaf INFO line hai;
+    // sirf FULL run mein hi ye asli mismatch ka ishara hai.
+    if (spec.isPreview) {
+      U.log(`   preview: ${vdur.toFixed(1)}s window (${offset.toFixed(1)}s se) — voiceover ${adurRaw.toFixed(1)}s ka hai, usme se utna hi hissa liya gaya.`);
+    } else if (!offset && adurRaw && Math.abs(adurRaw - vdur) > 1.0) {
       U.warn(`audio ${adurRaw.toFixed(1)}s vs timeline ${vdur.toFixed(1)}s — ${Math.abs(adurRaw - vdur).toFixed(1)}s ka farak. ` +
         `(SRT aur voiceover mismatch ho sakta hai; video timeline ke hisaab se banega.)`);
     }
