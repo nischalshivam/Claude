@@ -19,6 +19,7 @@ const fs = require('fs');
 const U = require('./util.js');
 const SUB = require('./subtitles.js');
 const KF = require('./keyframes.js');
+const SCOPE = require('./scope.js');
 
 module.exports = function timeline(spec, cfg, st, resolved, total) {
   const id = spec.id;
@@ -111,13 +112,18 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // Har slot ko planned aur ACTUAL source alag-alag likhna hai. Pehle dono ek hi
   // field mein mil jate the, isliye report se pata hi nahi chalta tha ki plan
   // fail hone ke baad screen par kis source ka footage aaya.
+  // Source ka MAALIK ab pack se aata hai, guess se nahi.
+  // Pehle yahan "pehla aisa moment dhoondo jiske allowed_source_ids mein ye
+  // source hai" chalta tha. Ek hi source ko darjanon moments allow karte hain,
+  // isliye wo "owner" aksar galat nikalta tha aur scope_relation jhootha ho jata
+  // tha. Ab har source_id ka asli pack/scope catalog se milta hai.
+  const SRCIDX = SCOPE.indexPack(spec.pack);
   const relationOf = (e, actualSid) => {
     if (!actualSid) return 'NONE';
     if ((e.scope_key || '').startsWith('GRAPHIC::')) return 'GRAPHIC';
-    const owner = anchorList.find(x => (x.allowed_source_ids || []).includes(actualSid) || x.source_id === actualSid);
+    const owner = SRCIDX.sourceOwner[actualSid];
     if (!owner) return 'UNKNOWN';
-    if (scopeKeyOf(owner) !== scopeKeyOf(e)) return 'CROSS_SHOW';
-    return epKeyOf(owner) === epKeyOf(e) ? 'SAME_EPISODE' : 'SAME_SHOW_OTHER_EPISODE';
+    return SCOPE.relationOfKeys(scopeKeyOf(e), epKeyOf(e), owner.work_key, owner.episode_key);
   };
   function commonOf(e) {
     return {

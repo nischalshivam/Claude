@@ -31,6 +31,7 @@ const validate = require(path.join(ROOT, 'src', 'validate.js'));
 const SUB = require(path.join(ROOT, 'src', 'subtitles.js'));
 const SRC = require(path.join(ROOT, 'src', 'sources.js'));
 const align = require(path.join(ROOT, 'src', 'align.js'));
+const SCOPE = require(path.join(ROOT, 'src', 'scope.js'));
 
 const flags = process.argv.slice(2).filter(a => a.startsWith('--'));
 const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
@@ -80,30 +81,61 @@ const v = validate.validateFile(packFile);
 (v.warnings || []).slice(0, 6).forEach(w => say('  [warn] ' + w));
 if ((v.warnings || []).length > 6) say(`  [warn] ...aur ${v.warnings.length - 6} warnings`);
 if (!v.ok) { (v.errors || []).forEach(e => console.log('  [FAIL] ' + e)); fail('pack invalid hai — pehle ye errors theek karao.'); }
-const pack = v.pack;
+let pack = v.pack;
 
-// ---------- 2. sources + scope map (locate.js jaisa hi) ----------
-const sourcesById = {};
-for (const pk of pack.packs) for (const s of (pk.sources || [])) sourcesById[s.source_id] = { ...s, pack_id: pk.pack_id };
+// ---------- 2. sources + scope map (locate.js ka HI module) ----------
+//  M3.6 tak check-pack apna scope key `kind::title` se banata tha aur locate.js
+//  `kind::title::year::version` se — do alag hisaab, isliye ye report ka forecast
+//  render ke asli behaviour se match hi nahi karta tha. Ab dono src/scope.js
+//  use karte hain, aur SERIES ka air-year show ki pehchaan nahi banta.
+let sourcesById = {};
+const reindexSources = () => {
+  sourcesById = {};
+  for (const pk of pack.packs) for (const s of (pk.sources || [])) sourcesById[s.source_id] = { ...s, pack_id: pk.pack_id };
+};
+reindexSources();
 const isUsableSource = s => !!(s && (s.url || s.local_file));
 // probe chala ho to "usable" ka matlab hai ASLI mein reachable (dead URL nahi).
 // (probe neeche define hota hai; ye function uske baad hi call hota hai.)
 const isLive = s => isUsableSource(s) && (!probe.ran || !!(probe.meta[s.source_id] && probe.meta[s.source_id].available));
 
-const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}` : '';
-const packsByScope = {};
-for (const pk of pack.packs) {
-  const k = scopeKey(pk.scope);
-  if (!k || (pk.scope && pk.scope.kind === 'GRAPHIC')) continue;
-  (packsByScope[k] = packsByScope[k] || []).push(pk.pack_id);
-}
-const showScopes = Object.keys(packsByScope);
+let scopeIdx = SCOPE.indexPack(pack);
+const scopeKey = SCOPE.workKey;
+const epKey = SCOPE.episodeKey;
+let packsByScope = scopeIdx.byWork, packsByEpisode = scopeIdx.byEpisode;
+let showScopes = scopeIdx.works;
+const reindexScope = () => {
+  scopeIdx = SCOPE.indexPack(pack);
+  packsByScope = scopeIdx.byWork; packsByEpisode = scopeIdx.byEpisode; showScopes = scopeIdx.works;
+};
 
+// locate.js ka HI rule: legacy allowed_pack_ids se doosre episode/show ka pack
+// tabhi chalega jab borrow_approved/allow_context_borrow ho — aur critical beat
+// par kabhi nahi. Isliye report wahi udhaar dikhata hai jo render sach mein lega.
+const borrowNeedsApproval = [];
 function allowedPacksOf(m, pk) {
   const fp = m.fallback_plan || {};
-  if (fp.allowed_pack_ids && fp.allowed_pack_ids.length) return fp.allowed_pack_ids.slice();
+  if (fp.allowed_pack_ids && fp.allowed_pack_ids.length) {
+    if (pk.scope && pk.scope.kind === 'GRAPHIC') return fp.allowed_pack_ids.slice();
+    const myEp = epKey(pk.scope), myWork = scopeKey(pk.scope);
+    const crit = String(m.criticality || 'NORMAL').toUpperCase();
+    const isCritical = crit === 'HOOK' || crit === 'HARD_EVIDENCE';
+    const approved = !!(fp.borrow_approved || fp.allow_context_borrow);
+    const keep = [], dropped = [];
+    for (const pid of fp.allowed_pack_ids) {
+      const info = scopeIdx.byPack[pid];
+      if (!info || info.graphic || pid === pk.pack_id || info.episode_key === myEp) { keep.push(pid); continue; }
+      if (!isCritical && info.work_key === myWork && approved) { keep.push(pid); continue; }
+      dropped.push(pid);
+    }
+    if (dropped.length) borrowNeedsApproval.push({ moment_id: m.moment_id, pack_id: pk.pack_id, dropped });
+    return keep.length ? keep : [pk.pack_id];
+  }
   if (pk.scope && pk.scope.kind === 'GRAPHIC') return showScopes.length === 1 ? packsByScope[showScopes[0]].slice() : [pk.pack_id];
-  return [...new Set([pk.pack_id, ...((packsByScope[scopeKey(pk.scope)]) || [])])];
+  const mine = [...new Set([pk.pack_id, ...((packsByEpisode[epKey(pk.scope)]) || [])])];
+  const fpAny = m.fallback_plan || {};
+  if (fpAny.allow_context_borrow || fpAny.borrow_approved) return [...new Set([...mine, ...((packsByScope[scopeKey(pk.scope)]) || [])])];
+  return mine;
 }
 function allowedSourcesOf(m, pk) {
   const fp = m.fallback_plan || {};
@@ -183,6 +215,75 @@ if (PROBE) {
       say(`   [${String(i).padStart(2)}/${list.length}] ${sid.padEnd(14)} ${meta && meta.available ? `dur ${Math.round(meta.duration || 0)}s` : 'UNAVAILABLE'}  ${subs ? `captions: ${subs.count} cues (${subs.via})` : ''}`);
     }
     probe.ran = true;
+  }
+}
+
+// ---------- 3c. --apply-probe: NAAPI HUI baat pack mein LIKHO (analysis se PEHLE) ----------
+//  M3.6 KA BUG: ye block report likhne ke BAAD chalta tha. Yaani report mein
+//  pack ka PURANA hash jata tha, phir pack badal jata tha — aur agli hi run mein
+//  production gate report ko "stale" bolkar option 5/6/7 ko exit 3 de deta tha.
+//  User ko chupchap option 2 do baar chalana padta, aur kahin likha bhi nahi tha.
+//
+//  Ab order sahi hai: probe -> pack likho -> disk se DOBARA padho -> saare checks
+//  us FINAL pack par -> report SABSE AAKHIR mein. Report ka hash hamesha usi file
+//  ka hota hai jo disk par padi hai. Ek option-2 run kaafi hai.
+//
+//  Sirf naapi hui values likhte hain — koi guess nahi.
+const probeApplied = { changed: 0, notes: [] };
+if (has('apply-probe')) {
+  if (!probe.ran) { say('\n  [warn] --apply-probe ke liye probe chalna zaroori hai (--no-probe ke saath nahi).'); }
+  else {
+    const raw = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+    const stamp = new Date().toISOString();
+    let n = 0; const notes = [];
+    for (const pk of (raw.packs || [])) for (const s of (pk.sources || [])) {
+      const meta = probe.meta[s.source_id];
+      if (!meta) continue;
+      const bits = [];
+      // "khola nahi gaya" aur "khol kar dekha, mar chuka hai" DO ALAG baatein hain.
+      // Pehle dono METADATA_ONLY reh jate the, isliye dead source hamesha
+      // "verify karao" list mein latka rehta tha — jabki verify ho chuka tha.
+      if (!meta.available) {
+        if (s.availability_status !== 'DEAD') { bits.push('availability -> DEAD'); s.availability_status = 'DEAD'; }
+        s.source_notes = `[checkpack ${stamp.slice(0, 10)}] reachable nahi: ${String(meta.error || '').slice(0, 70)}`;
+        s.inspection_status = 'DEAD_VERIFIED';
+      } else {
+        if (s.availability_status !== 'WORKING') { bits.push('availability -> WORKING'); s.availability_status = 'WORKING'; }
+        if (meta.duration && Math.abs((s.duration_sec || 0) - meta.duration) > 1) { bits.push(`duration ${s.duration_sec || '?'}s -> ${Math.round(meta.duration)}s`); s.duration_sec = Math.round(meta.duration); }
+        const cues = (probe.subs[s.source_id] || {}).count || 0;
+        if (s.has_captions !== (cues > 0)) { bits.push(`captions ${cues > 0} (${cues} cues)`); s.has_captions = cues > 0; }
+        if (s.inspection_status !== 'TRANSCRIPT_CHECKED') { bits.push('status -> TRANSCRIPT_CHECKED'); s.inspection_status = 'TRANSCRIPT_CHECKED'; }
+      }
+      // health kab dekhi thi — purani health par bharosa na ho isliye
+      if (s.last_checked_at !== stamp) s.last_checked_at = stamp;
+      if (bits.length) { n++; notes.push(`${s.source_id}: ${bits.join(', ')}`); }
+    }
+    if (n) {
+      // atomic: pehle temp mein likho, backup lo, phir rename. Beech mein process
+      // mar jaye to pack aadha-likha nahi bachta.
+      const tmp = packFile + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(raw, null, 2));
+      fs.copyFileSync(packFile, packFile + '.bak');
+      fs.renameSync(tmp, packFile);
+      line('-');
+      say(`  --apply-probe: ${n} sources mein NAAPI HUI value likh di (backup: ${path.basename(packFile)}.bak)`);
+      notes.slice(0, 12).forEach(x => say('   ' + x));
+      probeApplied.changed = n; probeApplied.notes = notes;
+      // FINAL pack disk se dobara padho — aage ke saare checks aur report isi par
+      const v2 = validate.validateFile(packFile);
+      if (v2.ok) {
+        pack = v2.pack; reindexSources(); reindexScope();
+        // rows/moments purane pack objects par bane the — unhe FINAL pack ke
+        // objects par remap kar do, taaki aage ka har check EK hi (disk wale)
+        // pack ko dekhe. Do alag versions par aadhe-aadhe check = wahi purana jhooth.
+        const freshPk = {}; for (const pk of pack.packs) freshPk[pk.pack_id] = pk;
+        for (const r of rows) {
+          const pk2 = freshPk[r.pk.pack_id]; if (!pk2) continue;
+          const m2 = (pk2.moments || []).find(x => x.moment_id === r.m.moment_id);
+          r.pk = pk2; if (m2) r.m = m2;
+        }
+      } else say('  [warn] apply-probe ke baad pack validate nahi hua — purane state par hi report bani.');
+    } else say('\n  --apply-probe: sab already sahi tha, kuch badalna nahi pada.');
   }
 }
 const dcfg = (cfg.dialogue || {});
@@ -355,13 +456,24 @@ const checks = [
 // Dono baar-baar toote hain: "maine verify kiya" likh kar sources METADATA_ONLY
 // chhod dena, aur jo beats research nahi hui unhe GRAPHIC pack mein daal dena.
 const allSources = Object.values(sourcesById).filter(isUsableSource);
-const unopened = allSources.filter(s => (s.inspection_status || 'METADATA_ONLY') === 'METADATA_ONLY');
+// "khola nahi" aur "khol kar dekha, mar chuka hai" alag hain. DEAD_VERIFIED
+// source verify HO CHUKA hai — use "verify karao" list mein rakhna galat tha
+// (asli run mein dono dead movie sources dono list mein aa rahe the).
+const unopened = allSources.filter(s => (s.inspection_status || 'METADATA_ONLY') === 'METADATA_ONLY'
+  && (s.availability_status || '') !== 'DEAD');
 const graphicMoments = rows.filter(r => r.pk.scope && r.pk.scope.kind === 'GRAPHIC').length;
 const graphicPct = pct(graphicMoments, rows.length);
+// criticality ke bina HOOK/HARD_EVIDENCE gate kisi beat par lagta hi nahi —
+// yaani "critical beat par udhaar footage nahi" wala pura rule mara hua hai.
+const missingCrit = rows.filter(r => !r.m.criticality).length;
 checks.push(['Sources sach mein khole gaye (METADATA_ONLY nahi)', unopened.length === 0,
   `${unopened.length}/${allSources.length} sirf metadata se liye gaye`]);
 checks.push(['Analysis/GRAPHIC moments <= 25%', graphicPct <= 25,
   `abhi ${graphicPct}% (${graphicMoments}/${rows.length} moments)`]);
+if (borrowNeedsApproval.length) {
+  checks.push(['Purane allowed_pack_ids mein bina-approval udhaar nahi', false,
+    `${borrowNeedsApproval.length} moments doosre episode/show ka pack maang rahe hain (borrow_approved nahi)`]);
+}
 if (probe.ran) {
   checks.push(['Saare sources abhi live hain (video hata nahi)', probe.deadSources.length === 0, `${probe.deadSources.length} dead`]);
   checks.push(['EXACT_TIME timestamps episode ke andar hain', probe.timeBad.length === 0, `${probe.timeBad.length} bahar`]);
@@ -370,6 +482,14 @@ if (probe.ran) {
 }
 let pass = true;
 for (const [name, ok, detail] of checks) { say(`   [${ok ? 'OK ' : 'NO '}] ${name} — ${detail}`); if (!ok) pass = false; }
+// criticality alag darwaza hai. Ise "pack weak hai" mein ginne se purana har
+// pack hamesha weak dikhta (field hi baad mein aayi thi) aur asli problems
+// uske neeche dab jatin. Iska asar wahan hota hai jahan zaroori hai: POORA
+// EXPORT (option 8) iske bina chalta hi nahi.
+if (missingCrit) {
+  say(`   [!  ] Criticality — ${missingCrit}/${rows.length} moments par nahi likhi`);
+  say('          Preview chalega, POORA EXPORT nahi. REPAIR.bat -> criticality migrate karo.');
+}
 
 if (unopened.length) {
   line('-');
@@ -459,44 +579,28 @@ const reportJson = {
   } : { ran: false },
   weak_packs: weak.map(([id, s]) => ({ pack_id: id, weak_seconds: +s.weak.toFixed(1), total_seconds: +s.total.toFixed(1), sources: s.sources, moments: s.moments })),
   failed_checks: checks.filter(c => !c[1]).map(c => ({ check: c[0], detail: c[2] })),
+  // production gate inhe alag-alag padhta hai: weak pack diagnostic preview de
+  // sakta hai, par full export nahi.
+  missing_criticality: missingCrit,
+  borrow_needs_approval: borrowNeedsApproval,
+  probe_applied: probeApplied.changed,
+  status: pass ? 'PRODUCTION_READY' : 'NEEDS_RESEARCH',
   pass,
 };
 const jsonOut = path.join(outDir, 'pack-report.json');
 fs.writeFileSync(jsonOut, JSON.stringify(reportJson, null, 2));
 
-// ---------- 6b. --apply-probe: jo NAAPA gaya hai wo pack mein likh do ----------
-//  Probe ne asli duration aur caption-count dekh liya hai. Wo research ke
-//  ANUMAAN se behtar hai. Ise pack mein likhne se do faayde:
-//   1. baad ke timestamps SAHI duration par validate honge (galat duration par
-//      sahi timestamp bhi reject ho jata hai)
-//   2. stage 2 ko dobara wahi cheez verify nahi karni padegi
-//  Sirf naapi hui values likhte hain — koi guess nahi.
-if (has('apply-probe')) {
-  if (!probe.ran) { say('\n  [warn] --apply-probe ke liye probe chalna zaroori hai (--no-probe ke saath nahi).'); }
-  else {
-    const raw = JSON.parse(fs.readFileSync(packFile, 'utf8'));
-    let n = 0; const notes = [];
-    for (const pk of (raw.packs || [])) for (const s of (pk.sources || [])) {
-      const meta = probe.meta[s.source_id];
-      if (!meta) continue;
-      if (!meta.available) {
-        if (s.inspection_status !== 'DEAD_VERIFIED') { s.source_notes = `[checkpack] reachable nahi: ${String(meta.error || '').slice(0, 70)}`; n++; notes.push(`${s.source_id}: DEAD (note likh diya)`); }
-        continue;
-      }
-      const bits = [];
-      if (meta.duration && Math.abs((s.duration_sec || 0) - meta.duration) > 1) { bits.push(`duration ${s.duration_sec || '?'}s -> ${Math.round(meta.duration)}s`); s.duration_sec = Math.round(meta.duration); }
-      const cues = (probe.subs[s.source_id] || {}).count || 0;
-      if (s.has_captions !== (cues > 0)) { bits.push(`captions ${cues > 0} (${cues} cues)`); s.has_captions = cues > 0; }
-      if (s.inspection_status !== 'TRANSCRIPT_CHECKED') { bits.push('status -> TRANSCRIPT_CHECKED'); s.inspection_status = 'TRANSCRIPT_CHECKED'; }
-      if (bits.length) { n++; notes.push(`${s.source_id}: ${bits.join(', ')}`); }
-    }
-    if (n) {
-      fs.copyFileSync(packFile, packFile + '.bak');
-      fs.writeFileSync(packFile, JSON.stringify(raw, null, 2));
-      line('-');
-      say(`  --apply-probe: ${n} sources mein NAAPI HUI value likh di (backup: ${path.basename(packFile)}.bak)`);
-      notes.slice(0, 12).forEach(x => say('   ' + x));
-    } else say('\n  --apply-probe: sab already sahi tha, kuch badalna nahi pada.');
+// SELF-CHECK: report ka hash usi file ka hona chahiye jo abhi disk par hai.
+// M3.6 mein yahi toota tha (report pehle, pack ka mutation baad mein), aur
+// nateeja user ko option 5/6/7 par "stale check" ke roop mein mila. Ab agar
+// kabhi dobara koi mutation report ke baad ghusa, ye khud pakad kar bata dega.
+{
+  const onDisk = U.hashFile(packFile);
+  if (onDisk !== reportJson.pack_sha256) {
+    reportJson.pack_sha256 = onDisk;
+    reportJson.self_check = 'REWRITTEN — report ke baad pack badla tha';
+    fs.writeFileSync(jsonOut, JSON.stringify(reportJson, null, 2));
+    say('  [warn] report likhne ke baad pack badla mila — hash theek karke dobara likh diya.');
   }
 }
 
@@ -508,20 +612,32 @@ fs.writeFileSync(needFile, buildWorkOrder());
 const shortPath = p => { const r = path.relative(ROOT, p); return r.startsWith('..') ? p : r; };
 
 line();
+// SEMANTICS: check khud SAFAL raha — pack ki quality kam hai. Pehle yahan
+// "[FAILED]" chhap jata tha, jisse lagta tha ki tool toot gaya. "Tool toota" aur
+// "pack ko research chahiye" do alag baatein hain.
 if (pass) {
-  say(`  RESULT: pack RENDER KE LIYE ACHHA hai (exact/hint ${exactPct}%).`);
+  say(`  RESULT: CHECK COMPLETE — pack PRODUCTION READY hai (exact/hint ${exactPct}%).`);
 } else {
   const bad = checks.filter(c => !c[1]);
-  say(`  RESULT: pack WEAK hai — ${bad.length} check fail:`);
+  say(`  RESULT: CHECK COMPLETE — RESEARCH CHAHIYE (${bad.length} check fail):`);
   bad.forEach(c => say(`          - ${c[0]}  (${c[2]})`));
+  say('');
+  say('  (Ye tool ki galti nahi hai — check theek chala. Pack mein evidence kam hai.');
+  say('   Diagnostic preview 5/6/7 ab bhi chal sakte hain; sirf poora export ruka hai.)');
 }
 say(`  report : ${shortPath(jsonOut)}`);
 if (!pass || needExact.length) {
   say(`\n  AAGE KYA KARNA HAI:`);
-  say(`   1. ${shortPath(needFile)} kholo (ye tumhare liye ready hai)`);
-  say(`   2. poora text Genspark/Gemini ke USI chat mein paste karo jisme pack bana tha`);
-  say(`   3. jo JSON aaye usse scene-research.json mein merge karo`);
-  say(`   4. ye tool dobara chalao — verdict turant mil jayega (render ki zaroorat nahi)`);
+  say(`   1. REPAIR.bat chalao — ye ${shortPath(path.join(outDir, 'repair'))}\\ mein`);
+  say('      chhote-chhote standalone prompts bana dega (12-18 moments ke batch).');
+  say('   2. Har prompt KISI BHI NAYI chat/account mein chal jayega — purani Genspark');
+  say('      chat ki koi zaroorat nahi (ek-message-per-din wali dikkat khatam).');
+  say(`   3. Jo JSON aaye unhe ${shortPath(path.join(outDir, 'repair', 'responses'))}\\ mein daal do`);
+  say('      (kitni bhi files ho — naam kuch bhi rakho).');
+  say('   4. REPAIR.bat -> "jawab lagao" chalao. Wo khud merge karke CHECKPACK dobara chalayega.');
+  say('');
+  say('   Note: cue-mismatch wale moments ke liye kisi AI ki zaroorat NAHI —');
+  say('   REPAIR.bat ka "cue theek karo" option wo local SRT se hi theek kar deta hai.');
 }
 line();
 process.exit(pass ? 0 : 2);
@@ -532,9 +648,16 @@ function buildWorkOrder() {
   const P = s => L.push(s);
   P('================================================================');
   P('  FOLLOW-UP RESEARCH REQUEST  (research pack upgrade)');
-  P('  Ise Genspark / Gemini Pro ke usi chat mein paste karo jisme');
-  P('  ye scene-research.json bana tha (taaki context available rahe).');
+  P('');
+  P('  BEHTAR RASTA: REPAIR.bat chalao. Wo isi kaam ko chhote,');
+  P('  KHUD-MUKHTAR prompts mein baant deta hai (12-18 moments), jo');
+  P('  KISI BHI nayi chat/account mein chal jate hain — purani chat');
+  P('  ki zaroorat nahi. Ye file poora-ka-poora ek hi request hai;');
+  P('  bade packs par model beech mein hi thak jata hai.');
   P('================================================================');
+  P('');
+  P('Ye prompt bhi khud-mukhtar hai: jo bhi chahiye wo neeche likha hai.');
+  P('Kisi purani conversation ka hawala mat dhoondho.');
   P('');
   P('CONTEXT: pichhla pack ban chuka hai. Video engine ne use check kiya.');
   P(`Result: narration ke sirf ${exactPct}% seconds ke paas asli scene ka evidence hai.`);

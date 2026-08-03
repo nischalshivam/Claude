@@ -1,4 +1,3 @@
-=== REGRESSION Mon Aug  3 14:28:27 UTC 2026 ===
 == M1.1 REGRESSION SUITE ==
   [PASS] T1 path-traversal --job rejected & nothing created outside jobs/  — exit=1
   [PASS] T1b unsafe moment_id rejected by validator  — exit=1
@@ -27,7 +26,7 @@
   [PASS] T-PACK2 check-pack catches EXACT_TIME beyond episode duration  — bad_time=["M_OOB"]
   [PASS] T-PACK3 check-pack catches dead source (and does not blame its timestamp)  — dead=["S_DEAD"]
   [PASS] T-PACK4 check-pack catches near-duplicate scope titles (same show, 2 spellings)  — mismatch=1
-  [PASS] T-PACK5 weak pack -> exit 2 + work order names the weak moments  — exit=2 workOrderBytes=5737
+  [PASS] T-PACK5 weak pack -> exit 2 + work order names the weak moments  — exit=2 workOrderBytes=6026
   [PASS] T-PACK8 unopened (METADATA_ONLY) sources are named, not taken on trust  — unopened=["S_GUESS"]
   [PASS] T-PACK9 oversized GRAPHIC pack is flagged (beats parked as "analysis")  — graphic=75%
   [PASS] T-PACK6 healthy pack -> exit 0, no false alarms  — exit=0 exact=100% failed=[]
@@ -68,9 +67,20 @@
   [PASS] T-M366 same show, different episode does not leak footage without permission  — E2 shots=1 usedEp1=0 assets=GENERIC_TEXT_GRAPHIC
   [PASS] T-M367 with allow_context_borrow it is used, and labelled SAME_SHOW_OTHER_EPISODE  — borrowed=1 rel=SAME_SHOW_OTHER_EPISODE
   [PASS] T-M368 unknown-duration and over-cap sources are refused before any download  — unknown="UNK ki duration pata nahi chali — poori " long=true
+  [PASS] T-M3611 check-pack --apply-probe mutates the pack AND its report still matches it  — mutated=true reportMatchesDisk=true applied=1
+  [PASS] T-M3612 one check run is enough — the very next preview is not called stale  — exit=0 stale=false
+  [PASS] T-M3613 a weak pack still allows a DIAGNOSTIC preview but blocks the full export  — preview=0 diagLabel=true full=3
+  [PASS] T-M3614 a gate block still writes job-result.json and a readable blocked report  — status=BLOCKED reason=PACK_NOT_PRODUCTION_READY
+  [PASS] T-M3615 missing criticality blocks the full export and is counted in the report  — missing=2 exit=3
+  [PASS] T-M3616 same series with different episode air years is one show, two episodes  — series=SAME_SHOW_OTHER_EPISODE film=CROSS_SHOW
+  [PASS] T-M3617 a legacy allowed_pack_ids cannot silently authorise wrong-episode footage on a critical beat  — leaked=false shots=1 warned=true
+  [PASS] T-M3618 repair prompts are self-contained, batched 12-18, and never demand the original chat  — files=2 sizes=[15,5] exit=0
+  [PASS] T-M3619 apply-repair updates cue, criticality, overlay, allowed sources AND adds a new source  — exit=0 newSrc=true crit=HARD_EVIDENCE loc=1
+  [PASS] T-M36110 a mismatched narration cue is repaired locally from the SRT, with no AI call  — exit=0 cue="She opens the sealed hatch slowly."
+  [PASS] T-M36111 migration fills criticality everywhere and flags legacy cross-episode borrow  — m1=HOOK m2=NORMAL flagged=true
+  [PASS] T-M36112 the menu status tells the truth: not checked / fresh / stale  — s0=NOT_CHECKED s1=PRODUCTION_READY s2=STALE
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 68 PASS, 0 FAIL
+  REGRESSION SUMMARY: 80 PASS, 0 FAIL
 ======================================================================
-REG_EXIT=0

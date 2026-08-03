@@ -8,6 +8,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const U = require(path.join(ROOT, 'src', 'util.js'));
 // ISOLATED jobs root — production ROOT/jobs ko kabhi haath nahi (M1.2-C).
 const JOBS = path.join(ROOT, 'tests', 'tmp', 'reg_' + process.pid);
 process.env.RFC_JOBS_DIR = JOBS;   // spawned run.js isko inherit karega
@@ -1008,6 +1009,281 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     check('T-M368 unknown-duration and over-cap sources are refused before any download',
       !unknown.ok && /duration pata nahi/i.test(unknown.error) && !tooLong.ok && tooLong.tooLong === true,
       `unknown="${String(unknown.error).slice(0, 40)}" long=${tooLong.tooLong}`);
+  })();
+})();
+
+// ---------- T-M361x: M3.6.1 — asli Windows run se aaye workflow bugs ----------
+//  M3.6 ka engine is run mein fail nahi hua — wo CHALA HI NAHI. Option 2 ne pack
+//  ko badal kar apni hi report ko stale kar diya, aur 5/6/7 teeno gate par ruk
+//  gaye. Ye tests wahi cheezein pin karte hain.
+(() => {
+  const d = path.join(FX, 'm361');
+  makeNarr(d, [
+    { start: 0, end: 6, text: 'The alarm rings across the base.' },
+    { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+  ]);
+  const mkPack = (extra = {}) => ({
+    schema_version: 'scene-research-pack-v1', project_title: 'A61', packs: [{
+      pack_id: 'A1', scope: { kind: 'SERIES', title: 'Show A', year: 2011, season: 1, episode_number: 1 },
+      // duration jaan-boojh kar GALAT — probe ise theek karega, yaani pack badlega
+      sources: [{ source_id: 'AS', local_file: good.video, local_subs: good.srt, duration_sec: 9999, inspection_status: 'METADATA_ONLY' }],
+      moments: [
+        { moment_id: 'A_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'AS', locator_type: 'DIALOGUE', dialogue_exact: 'The alarm rings across the base.', confidence: 'MEDIUM' }],
+          fallback: { type: 'NEEDS_SOURCE' }, ...extra },
+        { moment_id: 'A_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL',
+          locators: [{ source_id: 'AS', locator_type: 'DIALOGUE', dialogue_exact: 'She opens the sealed hatch slowly.', confidence: 'MEDIUM' }],
+          fallback: { type: 'NEEDS_SOURCE' } },
+      ] }] });
+
+  // --- (1) CHECKPACK khud ko stale na kare: ek run, hash sach mein match kare ---
+  (() => {
+    const pf = path.join(d, 'scene-research.json'), srt = path.join(d, 'voiceover.srt');
+    writePack(d, mkPack());
+    const outDir = path.join(d, 'out1');
+    const before = U.hashFile(pf);
+    spawnSync('node', ['tools/check-pack.js', pf, srt, `--out=${outDir}`, '--apply-probe'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let rep = null; try { rep = JSON.parse(fs.readFileSync(path.join(outDir, 'pack-report.json'), 'utf8')); } catch {}
+    const after = U.hashFile(pf);
+    const mutated = before !== after;            // probe ne sach mein pack badla
+    const matches = rep && String(rep.pack_sha256).toUpperCase() === String(after).toUpperCase();
+    check('T-M3611 check-pack --apply-probe mutates the pack AND its report still matches it',
+      mutated && matches && rep.probe_applied > 0,
+      `mutated=${mutated} reportMatchesDisk=${matches} applied=${rep ? rep.probe_applied : 'n/a'}`);
+
+    // --- (2) ek option-2 ke baad preview stale na bole ---
+    fs.mkdirSync(path.join(ROOT, 'output'), { recursive: true });
+    const prodRep = path.join(ROOT, 'output', 'pack-report.json');
+    const hadRep = fs.existsSync(prodRep) ? fs.readFileSync(prodRep) : null;
+    fs.writeFileSync(prodRep, JSON.stringify(rep));
+    const prev = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m361prev', '--redo',
+      '--preview-start=0', '--preview-duration=120'], { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    const pout = (prev.stdout || '') + (prev.stderr || '');
+    check('T-M3612 one check run is enough — the very next preview is not called stale',
+      prev.status !== 3 && !/taaza check nahi hai/.test(pout),
+      `exit=${prev.status} stale=${/taaza check nahi hai/.test(pout)}`);
+
+    // --- (3) weak pack: preview DIAGNOSTIC chale, poora export ruke ---
+    const weakRep = { ...rep, pass: false, failed_checks: [{ check: 'test', detail: 'forced weak' }] };
+    fs.writeFileSync(prodRep, JSON.stringify(weakRep));
+    const dPrev = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m361diag', '--redo',
+      '--preview-start=0', '--preview-duration=120'], { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    const dOut = (dPrev.stdout || '') + (dPrev.stderr || '');
+    const full = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m361full', '--redo'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    const fOut = (full.stdout || '') + (full.stderr || '');
+    check('T-M3613 a weak pack still allows a DIAGNOSTIC preview but blocks the full export',
+      dPrev.status !== 3 && /DIAGNOSTIC PREVIEW/.test(dOut) && full.status === 3 && /poora export nahi hoga/.test(fOut),
+      `preview=${dPrev.status} diagLabel=${/DIAGNOSTIC PREVIEW/.test(dOut)} full=${full.status}`);
+
+    // --- (4) gate par ruke to bhi repair package bane ---
+    let jr = null; const jdir = path.join(JOBS, 'reg_m361full');
+    try { jr = JSON.parse(fs.readFileSync(path.join(jdir, 'job-result.json'), 'utf8')); } catch {}
+    check('T-M3614 a gate block still writes job-result.json and a readable blocked report',
+      jr && jr.status === 'BLOCKED' && jr.blocked_reason === 'PACK_NOT_PRODUCTION_READY'
+        && fs.existsSync(path.join(jdir, 'blocked-report.html'))
+        && jr.artifacts.every(a => fs.existsSync(path.join(jdir, a))),
+      `status=${jr ? jr.status : 'none'} reason=${jr ? jr.blocked_reason : 'n/a'}`);
+
+    // --- (5) criticality ke bina poora export na ho ---
+    const noCrit = mkPack();
+    for (const m of noCrit.packs[0].moments) delete m.criticality;
+    const cd = path.join(FX, 'm361crit');
+    makeNarr(cd, [{ start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' }]);
+    writePack(cd, noCrit);
+    const cOut2 = path.join(cd, 'out');
+    spawnSync('node', ['tools/check-pack.js', path.join(cd, 'scene-research.json'), path.join(cd, 'voiceover.srt'),
+      `--out=${cOut2}`, '--no-probe'], { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let cRep = null; try { cRep = JSON.parse(fs.readFileSync(path.join(cOut2, 'pack-report.json'), 'utf8')); } catch {}
+    fs.writeFileSync(prodRep, JSON.stringify({ ...cRep, pass: true }));
+    const cFull = spawnSync('node', ['src/run.js', `--input=${cd}`, '--job=reg_m361nc', '--redo'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 600000, env: process.env });
+    check('T-M3615 missing criticality blocks the full export and is counted in the report',
+      cRep && cRep.missing_criticality === 2 && cFull.status === 3,
+      `missing=${cRep ? cRep.missing_criticality : 'n/a'} exit=${cFull.status}`);
+
+    if (hadRep) fs.writeFileSync(prodRep, hadRep); else fs.rmSync(prodRep, { force: true });
+  })();
+
+  // --- (6) SERIES ka air year show ki pehchaan na bane ---
+  (() => {
+    const SCOPE = require(path.join(ROOT, 'src', 'scope.js'));
+    const e1 = { kind: 'SERIES', title: 'Phineas and Ferb', year: 2011, season: 3, episode_number: 21 };
+    const e2 = { kind: 'SERIES', title: 'Phineas and Ferb', year: 2008, season: 1, episode_number: 24 };
+    const f1 = { kind: 'FILM', title: 'Same Name', year: 1998 };
+    const f2 = { kind: 'FILM', title: 'Same Name', year: 2015 };
+    check('T-M3616 same series with different episode air years is one show, two episodes',
+      SCOPE.workKey(e1) === SCOPE.workKey(e2) && SCOPE.relation(e1, e2) === 'SAME_SHOW_OTHER_EPISODE'
+        && SCOPE.workKey(f1) !== SCOPE.workKey(f2) && SCOPE.relation(f1, f2) === 'CROSS_SHOW',
+      `series=${SCOPE.relation(e1, e2)} film=${SCOPE.relation(f1, f2)}`);
+  })();
+
+  // --- (7) purani allowed_pack_ids chupke se doosra episode na khol de ---
+  (() => {
+    const ep2 = makeEp(path.join(FX, 'ep'), 'ep2', [{ color: 'yellow', dialogue: 'second episode entirely different scene' }]);
+    const bd = path.join(FX, 'm361borrow');
+    makeNarr(bd, [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'A beat with no source of its own at all.' },
+    ]);
+    const pack = { schema_version: 'scene-research-pack-v1', project_title: 'B61', packs: [
+      { pack_id: 'B1', scope: { kind: 'SERIES', title: 'Show B', year: 2011, season: 1, episode_number: 1 },
+        sources: [{ source_id: 'BS1', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'B_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'BS1', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      // alag EPISODE (year bhi alag — asli Candace pack jaisa), koi apna source nahi,
+      // aur purane style ki `allowed_pack_ids` jo B1 ko allow karti hai
+      { pack_id: 'B2', scope: { kind: 'SERIES', title: 'Show B', year: 2012, season: 3, episode_number: 42 },
+        sources: [{ source_id: 'BS2', local_file: ep2.video, local_subs: ep2.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'B_M2', script_cue_exact: 'A beat with no source of its own at all.', criticality: 'HARD_EVIDENCE',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' },
+          fallback_plan: { allowed_pack_ids: ['B2', 'B1'], frame_hints: [] } }] },
+    ] };
+    writePack(bd, pack);
+    const r = runRFC([`--input=${bd}`, '--job=reg_m361borrow', '--redo', '--diagnostic-override', '--review']);
+    const rOut = (r.stdout || '') + (r.stderr || '');
+    let man = null; try { man = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m361borrow', 'render-manifest.json'), 'utf8')); } catch {}
+    const m2shots = ((man && man.shots) || []).filter(s => s.moment_id === 'B_M2');
+    const leaked = m2shots.some(s => s.actual_source_id === 'BS1');
+    const warned = /borrow_approved nahi|critical beat udhaar/.test(rOut);
+    check('T-M3617 a legacy allowed_pack_ids cannot silently authorise wrong-episode footage on a critical beat',
+      man && !leaked && warned,
+      `leaked=${leaked} shots=${m2shots.length} warned=${warned}`);
+  })();
+
+  // --- (8) repair prompts standalone hon, batch mein hon, aur toote locator bhi lein ---
+  (() => {
+    const rd = path.join(FX, 'm361rep');
+    makeNarr(rd, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
+    const moments = [];
+    for (let i = 1; i <= 20; i++) moments.push({ moment_id: `R_M${String(i).padStart(2, '0')}`,
+      script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL', locators: [], fallback: { type: 'NEEDS_SOURCE' } });
+    writePack(rd, { schema_version: 'scene-research-pack-v1', project_title: 'R61', packs: [{
+      pack_id: 'R1', scope: { kind: 'SERIES', title: 'Show R', year: 2011, season: 1, episode_number: 1 },
+      sources: [{ source_id: 'RS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments }] });
+    const rout = path.join(rd, 'out');
+    const rr = spawnSync('node', ['tools/repair.js', path.join(rd, 'scene-research.json'), `--out=${rout}`, '--batch=15'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    const dir = path.join(rout, 'repair');
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.txt')) : [];
+    const texts = files.map(f => fs.readFileSync(path.join(dir, f), 'utf8'));
+    let man = null; try { man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch {}
+    const sizes = (man && man.batches.map(b => b.moments.length)) || [];
+    check('T-M3618 repair prompts are self-contained, batched 12-18, and never demand the original chat',
+      files.length >= 2 && sizes.every(n => n <= 15) && sizes.reduce((a, b) => a + b, 0) === 20
+        && texts.every(t => /SELF-CONTAINED/.test(t) && /research-repair-v2/.test(t))
+        && !texts.some(t => /usi chat|same chat/i.test(t)),
+      `files=${files.length} sizes=${JSON.stringify(sizes)} exit=${rr.status}`);
+
+    // --- (9) apply-repair poora contract lagaye, sahi tarteeb mein ---
+    const respDir = path.join(dir, 'responses');
+    fs.writeFileSync(path.join(respDir, 'batch1.json'), JSON.stringify({
+      schema_version: 'research-repair-v2', batch_id: 'test-01',
+      source_additions: [{ source_id: 'RS2', pack_id: 'R1', url: 'https://example.com/watch?v=NEWSRC', duration_sec: 300, has_captions: true }],
+      moment_updates: [{
+        moment_id: 'R_M01',
+        script_cue_exact: 'She opens the sealed hatch slowly.',
+        criticality: 'HARD_EVIDENCE',
+        overlay_text: 'the receipts',
+        allowed_source_ids: ['RS', 'RS2'],
+        locators: [{ source_id: 'RS2', locator_type: 'EXACT_TIME', start_sec: 10, end_sec: 16, confidence: 'HIGH' }],
+        frame_hints: [{ source_id: 'RS2', time_sec: 12, reason: 'test hint' }],
+      }],
+    }, null, 2));
+    const ar = spawnSync('node', ['tools/apply-repair.js', path.join(rd, 'scene-research.json'), '--apply', `--responses=${respDir}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let after = null; try { after = JSON.parse(fs.readFileSync(path.join(rd, 'scene-research.json'), 'utf8')); } catch {}
+    const m1 = after && after.packs[0].moments.find(m => m.moment_id === 'R_M01');
+    const newSrc = after && after.packs[0].sources.find(s => s.source_id === 'RS2');
+    check('T-M3619 apply-repair updates cue, criticality, overlay, allowed sources AND adds a new source',
+      ar.status === 0 && newSrc && m1 && m1.script_cue_exact === 'She opens the sealed hatch slowly.'
+        && m1.criticality === 'HARD_EVIDENCE' && m1.fallback_plan.overlay_text === 'the receipts'
+        && (m1.locators || []).some(L => L.source_id === 'RS2')
+        && (m1.fallback_plan.frame_hints || []).some(h => h.source_id === 'RS2'),
+      `exit=${ar.status} newSrc=${!!newSrc} crit=${m1 ? m1.criticality : 'n/a'} loc=${m1 ? (m1.locators || []).length : 0}`);
+  })();
+
+  // --- (10) cue LOCAL theek ho — koi AI nahi ---
+  (() => {
+    const cd = path.join(FX, 'm361cue');
+    makeNarr(cd, [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    ]);
+    writePack(cd, { schema_version: 'scene-research-pack-v1', project_title: 'C61', packs: [{
+      pack_id: 'C1', scope: { kind: 'SERIES', title: 'Show C', year: 2011, season: 1, episode_number: 1 },
+      sources: [{ source_id: 'CS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [{ moment_id: 'C_M1',
+        // narration mein hai "She opens the sealed hatch slowly." — research ne apne shabd likh diye
+        script_cue_exact: 'Then she opens up that sealed hatch very slowly indeed',
+        criticality: 'NORMAL',
+        locators: [{ source_id: 'CS', locator_type: 'EXACT_TIME', start_sec: 22, end_sec: 28, confidence: 'HIGH' }],
+        fallback: { type: 'NEEDS_SOURCE' } }] }] });
+    const pf = path.join(cd, 'scene-research.json');
+    const fc = spawnSync('node', ['tools/fix-cues.js', pf, path.join(cd, 'voiceover.srt'), '--apply'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let after = null; try { after = JSON.parse(fs.readFileSync(pf, 'utf8')); } catch {}
+    const cue = after && after.packs[0].moments[0].script_cue_exact;
+    check('T-M36110 a mismatched narration cue is repaired locally from the SRT, with no AI call',
+      fc.status === 0 && cue === 'She opens the sealed hatch slowly.',
+      `exit=${fc.status} cue=${JSON.stringify(String(cue).slice(0, 50))}`);
+  })();
+
+  // --- (11) migrate-pack criticality bhare aur purana udhaar surface kare ---
+  (() => {
+    const md = path.join(FX, 'm361mig');
+    makeNarr(md, [{ start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 300, end: 306, text: 'She opens the sealed hatch slowly.' }]);
+    writePack(md, { schema_version: 'scene-research-pack-v1', project_title: 'M61', packs: [
+      { pack_id: 'M1', scope: { kind: 'SERIES', title: 'Show M', year: 2011, season: 1, episode_number: 1 },
+        sources: [{ source_id: 'MS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'M_M1', script_cue_exact: 'The alarm rings across the base.', locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'M2', scope: { kind: 'SERIES', title: 'Show M', year: 2012, season: 3, episode_number: 42 },
+        sources: [], moments: [{ moment_id: 'M_M2', script_cue_exact: 'She opens the sealed hatch slowly.',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' }, fallback_plan: { allowed_pack_ids: ['M2', 'M1'] } }] },
+    ] });
+    const pf = path.join(md, 'scene-research.json');
+    const mg = spawnSync('node', ['tools/migrate-pack.js', pf, path.join(md, 'voiceover.srt'), '--apply'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let after = null; try { after = JSON.parse(fs.readFileSync(pf, 'utf8')); } catch {}
+    const m1 = after && after.packs[0].moments[0], m2 = after && after.packs[1].moments[0];
+    check('T-M36111 migration fills criticality everywhere and flags legacy cross-episode borrow',
+      mg.status === 0 && m1 && m1.criticality === 'HOOK' && m2 && m2.criticality
+        && !(m2.fallback_plan || {}).borrow_approved && /M_M2/.test(mg.stdout || ''),
+      `m1=${m1 ? m1.criticality : 'n/a'} m2=${m2 ? m2.criticality : 'n/a'} flagged=${/M_M2/.test(mg.stdout || '')}`);
+  })();
+
+  // --- (12) menu ka status jhooth na bole ---
+  (() => {
+    const sd = path.join(FX, 'm361stat');
+    makeNarr(sd, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
+    writePack(sd, { schema_version: 'scene-research-pack-v1', project_title: 'S61', packs: [{
+      pack_id: 'S1', scope: { kind: 'SERIES', title: 'Show S', year: 2011, season: 1, episode_number: 1 },
+      sources: [{ source_id: 'SS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [{ moment_id: 'S_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+        locators: [{ source_id: 'SS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] }] });
+    const pf = path.join(sd, 'scene-research.json'), srt = path.join(sd, 'voiceover.srt');
+    const so = path.join(sd, 'out');
+    const stat = (extra = []) => {
+      const r = spawnSync('node', ['tools/pack-status.js', pf, srt, path.join(so, 'pack-report.json'), ...extra],
+        { cwd: ROOT, encoding: 'utf8', timeout: 60000, env: process.env });
+      return (r.stdout || '').trim();
+    };
+    const s0 = stat();                                   // report hai hi nahi
+    spawnSync('node', ['tools/check-pack.js', pf, srt, `--out=${so}`, '--no-probe'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    const s1 = stat();                                   // taaza
+    // ab pack badal do — report wahi purani reh gayi
+    const raw = JSON.parse(fs.readFileSync(pf, 'utf8'));
+    raw.packs[0].moments[0].purpose = 'changed after the check';
+    fs.writeFileSync(pf, JSON.stringify(raw, null, 2));
+    const s2 = stat();
+    check('T-M36112 the menu status tells the truth: not checked / fresh / stale',
+      /^NOT_CHECKED/.test(s0) && /^(PRODUCTION_READY|NEEDS_RESEARCH|DIAGNOSTIC_READY)/.test(s1) && /^STALE/.test(s2),
+      `s0=${s0.split(' ')[0]} s1=${s1.split(' ')[0]} s2=${s2.split(' ')[0]}`);
   })();
 })();
 

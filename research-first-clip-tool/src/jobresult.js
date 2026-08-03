@@ -91,15 +91,16 @@ ${res.repair.length ? `<div class="box"><b>${res.repair.length} moments ko kaam 
 }
 
 // status: SUCCESS | FAILED | BLOCKED
-module.exports = function jobResult(spec, st, { status, message, stage = null, resolved = null, tl = null, nextSteps = [] }) {
+module.exports = function jobResult(spec, st, { status, message, stage = null, resolved = null, tl = null, nextSteps = [], blockedReason = null }) {
   const id = spec.id;
+  U.ensureDir(U.jobDir(id));   // gate se pehle bhi call ho sakta hai
   const want = ['final.mp4', 'shot-review.html', 'quality-report.html', 'NEEDS_SOURCE.csv', 'timeline.json', 'resolved.json', 'run.log'];
   const artifacts = [], missing = [];
   for (const f of want) (fs.existsSync(U.p(id, f)) ? artifacts : missing).push(f);
 
   const repair = repairList(resolved, tl);
   const res = {
-    schema: 'job-result-v1', job: id, status, stage, message,
+    schema: 'job-result-v1', job: id, status, stage, message, blocked_reason: blockedReason,
     generated_at: new Date().toISOString(),
     is_preview: !!spec.isPreview,
     preview_offset: spec.previewOffset || 0,

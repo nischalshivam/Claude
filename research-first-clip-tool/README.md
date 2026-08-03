@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M3.6
+# Research-First Clip Tool — M3.6.1
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -77,26 +77,40 @@ stage-1 ke links ko **verify** bhi karta hai.
    videos** dhoondhna. Timestamps yahan zaroori nahi — isliye model ka poora
    budget browsing par lagta hai.
 
-**STAGE 2 — verify + timestamps** (doosra account)
+**STAGE 2 — verify + timestamps** (`REPAIR.bat`)
 
 ```
-node tools\make-stage2.js input\scene-research.json
+CHECKPACK.bat        pehle — taaki tool jaan sake kya toota hai
+REPAIR.bat           -> 1. Repair prompts banao
 ```
 
-4. `output\STAGE2_PROMPT.txt` doosre account mein paste karo
-5. Jo JSON array aaye use `stage2.json` mein save karo
-6. ```
-   node tools\apply-stage2.js input\scene-research.json stage2.json
-   CHECKPACK.bat
-   ```
+4. `output\repair\` mein chhoti-chhoti prompt files banti hain (12–18 moments each)
+5. Har file **kisi bhi nayi chat/account** mein paste karo — Genspark, Gemini,
+   ChatGPT, Perplexity, jiske paas live web ho. **Purani chat ki zaroorat nahi.**
+6. Jo JSON aaye unhe `output\repair\responses\` mein daal do (naam kuch bhi)
+7. `REPAIR.bat` -> **2. Jawab lagao** — sab merge hoga aur CHECKPACK khud chalega
 
    Is stage ka kaam: stage-1 ke har source ko **kholna aur verify karna**, dead/
    galat URL ko **badalna**, aur har beat ka asli timestamp/dialogue/frame dena.
 
-`apply-stage2.js` bharosa nahi karta — check karta hai. Jo galat hai wo pack mein
+**Genspark ki ek-message-per-din wali dikkat**: prompts ab khud-mukhtar hain,
+isliye ek din ek batch bhejo, doosre din doosra — responses folder mein jama
+karte raho. Apply tool jitni files milengi utni laga dega. Koi chat memory nahi
+chahiye.
+
+**Aur ye do cheezein AI ke bina hi theek hoti hain** (`REPAIR.bat` -> 3/4):
+
+- **cue mismatch** — `tools/fix-cues.js` narration cue ko `voiceover.srt` se
+  hubahu mila deta hai. Sahi jawab pehle se aapki apni SRT mein padha hai.
+- **criticality** — `tools/migrate-pack.js` har moment par HOOK / HARD_EVIDENCE /
+  NORMAL bhar deta hai, aur purani `allowed_pack_ids` wali cross-episode
+  permission ko approval ke liye saamne rakh deta hai.
+
+`apply-repair.js` bharosa nahi karta — check karta hai. Jo galat hai wo pack mein
 **jata hi nahi** aur console par wajah ke saath dikhta hai: doosre show ka source,
 episode ki length se bahar ka timestamp, pack mein na hone wala moment_id,
 do-shabd ka dialogue, ya junk replacement URL. Pack ka `.bak` bhi banta hai.
+Pehle **dry run** chalta hai — dekh kar haan bolo tabhi pack badalta hai.
 
 Bade packs (80+ moments) ke liye stage 2 ko `--part=1/2` se do accounts mein
 baant sakte ho.
@@ -320,6 +334,40 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M3.6.1 — asli Windows run se: engine chala hi nahi tha**
+
+Sabse bada: **CHECKPACK apni hi report ko stale kar deta tha.** `--apply-probe`
+report likhne ke BAAD pack ko badalta tha, isliye report mein purana hash reh
+jata tha. Nateeja — option 2 chalane ke turant baad 5/6/7 teeno production gate
+par exit 3 khate the. Na align, na download, na render. User ke liye ye "sab kuch
+fail ho gaya" dikhta tha, jabki engine ko chalne ka mauka hi nahi mila.
+
+| Kya toota tha | Ab |
+|---|---|
+| report ka hash pack ke mutation se pehle ka hota tha | probe → pack likho → disk se reload → checks → report SABSE AAKHIR mein; likhne ke baad khud verify bhi karta hai |
+| weak pack par sirf warning, poora export phir bhi chal jata | preview = DIAGNOSTIC (chalega), poora export = `pass:true` ke bina **block** |
+| gate par ruka run koi repair file nahi chhodta tha | job dir gate se pehle banti hai; har block par `job-result.json` + `blocked-report.html` |
+| menu sirf file dekh kar "pack check: ho chuka" likh deta tha | `tools/pack-status.js` — NOT_CHECKED / STALE / NEEDS_RESEARCH / DIAGNOSTIC_READY / PRODUCTION_READY |
+| weak pack par `[FAILED]` chhapta tha (lagta tool toot gaya) | `CHECK COMPLETE — RESEARCH CHAHIYE`; `[FAILED]` sirf asli crash par |
+| check-pack aur locate ke scope key alag the | ek `src/scope.js` — aur SERIES ka **air year ab show ki pehchaan nahi** (P&F ke 7 episodes 7 alag "show" ban rahe the) |
+| `scope_relation` padosi moment se guess hota tha | source ka asli maalik pack se — authoritative catalog |
+| purani `allowed_pack_ids` chupke se doosre episode ka footage khol deti thi | `borrow_approved` ke bina nahi, aur critical beat par kabhi nahi |
+| criticality missing = sab NORMAL, gate lagta hi nahi | poora export block; `tools/migrate-pack.js` se migrate |
+
+**Aur repair loop poora badla** — yehi Genspark ki ek-message-per-din wali dikkat
+ka asli hal hai:
+
+- `tools/repair.js` — chhote **khud-mukhtar** prompts (12–18 moments), jo kisi
+  bhi nayi chat/account mein chalte hain. "Usi chat mein paste karo" har jagah
+  se hataya gaya.
+- `tools/apply-repair.js` — `research-repair-v2`: cue, criticality, locators,
+  frame hints, allowed packs/sources, borrow approval, overlay, source
+  add/replace/update. Permissions **hints se pehle** lagti hain (pehle naya hint
+  purane scope par reject ho jata tha). Ek saath kitni bhi response files.
+- `tools/fix-cues.js` — cue mismatch **local SRT se** theek, koi AI call nahi.
+- Repair batches ab un moments ko bhi lete hain jinka locator MAUJOOD hai par
+  CHECKPACK ne use toota sabit kiya (pehle wo kisi batch mein aate hi nahi the).
 
 **M3.6 — foundation hardening (teeno preview ke audit se)**
 Weak preview FAIL hua tha par launcher ne "Ho gaya" likh diya, aur error ne jis

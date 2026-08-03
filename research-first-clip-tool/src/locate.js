@@ -12,6 +12,7 @@ const fs = require('fs');
 const U = require('./util.js');
 const SRC = require('./sources.js');
 const SUB = require('./subtitles.js');
+const SCOPE = require('./scope.js');
 
 const CONF_RANK = { HIGH: 0, MEDIUM: 1, LOW: 2, NONE: 3 };
 // researcher priority (source.priority) + confidence ko respect karo — EXACT_TIME
@@ -27,31 +28,44 @@ module.exports = function locate(spec, cfg, st, aligned) {
   const resolved = [];
   let nAccept = 0, nReview = 0, nGraphic = 0, nNeeds = 0;
 
-  // scope key = show/film identity (same-show inference ke liye). Isse P09 jaise
-  // "0 sources" wale pack bhi USI show ke doosre packs ke frames use kar sakte hain —
-  // par kisi DOOSRE show ke nahi (cross-show bleed band).
-  // Scope identity mein year/version bhi — warna same-title remake (jaise 2 alag
-  // saal ki same-naam film) ek doosre ke frames use kar lete.
-  // SHOW-level identity (kaunsa show/film hai) — cross-show bleed rokta hai.
-  const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}::${sc.year || ''}::${String(sc.version || '').trim().toLowerCase()}` : '';
-  // EPISODE-level identity — "same show" ka matlab "same episode" NAHI hai.
-  // Asli mid preview mein P06 (alag episode) ke beats ko P01_S01 ka footage mil
-  // gaya tha kyunki dono ka show ek tha. Ab default fallback episode ke andar
-  // rehta hai; doosre episode par jaana explicit permission maangta hai.
-  const epKey = sc => sc ? `${scopeKey(sc)}::s${sc.season ?? ''}e${sc.episode_number ?? ''}::${String(sc.episode_title || '').trim().toLowerCase()}::${String(sc.language || sc.dub || '').trim().toLowerCase()}` : '';
-  const packsByScope = {}, packsByEpisode = {};
-  for (const pk of spec.pack.packs) {
-    const k = scopeKey(pk.scope);
-    if (!k || (pk.scope && pk.scope.kind === 'GRAPHIC')) continue;
-    (packsByScope[k] = packsByScope[k] || []).push(pk.pack_id);
-    const ek = epKey(pk.scope);
-    (packsByEpisode[ek] = packsByEpisode[ek] || []).push(pk.pack_id);
-  }
+  // Show/episode identity ab src/scope.js se aati hai — check-pack, timeline,
+  // repair aur review sab WAHI module use karte hain. Pehle har file apna key
+  // banati thi, isliye check-pack ka forecast render se match hi nahi karta tha.
+  // (Aur SERIES ka `year` episode ka air year hota hai — use show ki pehchaan
+  // maan lene se ek hi show ke episodes alag-alag "show" ban jate the.)
+  const scopeKey = SCOPE.workKey;
+  const epKey = SCOPE.episodeKey;
+  const idx = SCOPE.indexPack(spec.pack);
+  const packsByScope = idx.byWork, packsByEpisode = idx.byEpisode;
   const sourcesOfPacks = ids => {
     const out = [];
     for (const pk of spec.pack.packs) if (ids.includes(pk.pack_id)) for (const s of (pk.sources || [])) out.push(s.source_id);
     return out;
   };
+
+  // Legacy allowed_pack_ids se cross-episode/cross-show entries hatao jab tak
+  // research ne unhe explicitly approve na kiya ho. Jo hataya wo chupke nahi —
+  // report mein dikhta hai (borrowBlocked) taaki repair prompt usse maang sake.
+  const borrowBlocked = [];
+  function filterBorrow(ids, m, fp) {
+    const myEp = epKey(m._scope), myWork = scopeKey(m._scope);
+    if (m._scope && m._scope.kind === 'GRAPHIC') return ids;      // analysis card ka backdrop
+    const crit = String(m.criticality || 'NORMAL').toUpperCase();
+    const isCritical = crit === 'HOOK' || crit === 'HARD_EVIDENCE';
+    const approved = !!(fp && (fp.borrow_approved || fp.allow_context_borrow));
+    const keep = [], dropped = [];
+    for (const pid of ids) {
+      const info = idx.byPack[pid];
+      if (!info || info.graphic || pid === m._packId) { keep.push(pid); continue; }
+      if (info.episode_key === myEp) { keep.push(pid); continue; }             // wahi episode
+      const sameShow = info.work_key === myWork;
+      if (isCritical) { dropped.push(`${pid} (critical beat udhaar nahi le sakta)`); continue; }
+      if (sameShow && approved) { keep.push(pid); continue; }                  // saaf permission
+      dropped.push(`${pid} (${sameShow ? 'doosra episode' : 'doosra show'}, borrow_approved nahi)`);
+    }
+    if (dropped.length) borrowBlocked.push({ moment_id: m.moment_id, pack_id: m._packId, dropped });
+    return keep.length ? keep : [m._packId];
+  }
 
   for (const m of aligned.moments) {
     const fp = m.fallback_plan && typeof m.fallback_plan === 'object' ? m.fallback_plan : null;
@@ -60,7 +74,15 @@ module.exports = function locate(spec, cfg, st, aligned) {
     // plus (3) USI show ke doosre packs (same scope title) — aur kuch nahi.
     let allowedPacks;
     if (fp && fp.allowed_pack_ids && fp.allowed_pack_ids.length) {
-      allowedPacks = fp.allowed_pack_ids.slice();
+      // PURANE PACK KA CHUPA HUA DARWAZA (M3.6.1):
+      // M3.6 ne default fallback ko episode-tight kiya, lekin `allowed_pack_ids`
+      // ko jaise-ka-taisa maan liya. Asli Candace pack mein P06 ke moments par
+      // pehle se `allowed_pack_ids: [P06, P01]` likha tha — yaani code badalne
+      // ke baad bhi P06 ke beats P01 (doosra episode) ka footage utha sakte the.
+      // Ab doosre episode/show ka pack tabhi chalega jab research ne SAAF-SAAF
+      // `borrow_approved: true` (ya allow_context_borrow) likha ho. Aur critical
+      // beats par kabhi nahi.
+      allowedPacks = filterBorrow(fp.allowed_pack_ids.slice(), m, fp);
     } else if (m._scope && m._scope.kind === 'GRAPHIC') {
       // GRAPHIC/analysis beat ka backdrop: agar poore project mein SIRF EK show hai
       // to us show ke frames safe hain (koi ambiguity nahi). Cross-show project mein
@@ -83,8 +105,10 @@ module.exports = function locate(spec, cfg, st, aligned) {
     const base = {
       moment_id: m.moment_id, pack_id: m._packId, scope: m._scope, scope_key: myScopeKey,
       episode_key: epKey(m._scope),
-      // research explicitly bole tabhi doosre episode ka footage udhaar milega
-      allow_context_borrow: !!(fp && fp.allow_context_borrow),
+      // research explicitly bole tabhi doosre episode ka footage udhaar milega.
+      // `borrow_approved` repair/migration ka saaf-saaf haan hai; purana
+      // `allow_context_borrow` bhi wahi matlab rakhta hai.
+      allow_context_borrow: !!(fp && (fp.allow_context_borrow || fp.borrow_approved)),
       script_cue_exact: m.script_cue_exact, purpose: m.purpose || '',
       must_show: (fp && fp.must_show) || m.must_show || [], must_not_show: (fp && fp.must_not_show) || m.must_not_show || [],
       beat_start: m.beat_start, beat_end: m.beat_end, align_flag: m.align_flag, align_score: m.align_score,
@@ -189,7 +213,14 @@ module.exports = function locate(spec, cfg, st, aligned) {
   const outFile = U.p(id, 'resolved.json');
   fs.writeFileSync(outFile, JSON.stringify(resolved, null, 2));
   U.ok(`located: ${nAccept} RESOLVED, ${nReview} NEEDS_REVIEW, ${nGraphic} graphic/text, ${nNeeds} NEEDS_SOURCE`);
-  st.meta.locate = { resolved: nAccept, review: nReview, graphic: nGraphic, needsSource: nNeeds };
+  if (borrowBlocked.length) {
+    U.warn(`${borrowBlocked.length} moments par purani allowed_pack_ids se doosre episode/show ka pack hataya gaya (borrow_approved nahi):`);
+    borrowBlocked.slice(0, 6).forEach(b => U.log(`     ${b.moment_id}: ${b.dropped.join('; ')}`));
+    U.log('     Chahiye to research/repair mein us moment par "borrow_approved": true likhwao.');
+  }
+  st.meta.locate = { resolved: nAccept, review: nReview, graphic: nGraphic, needsSource: nNeeds,
+    borrow_blocked: borrowBlocked.length };
+  st.meta.borrow_blocked = borrowBlocked;
   return resolved;
 };
 

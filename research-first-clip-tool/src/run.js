@@ -90,7 +90,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.6'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.6.1'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -114,41 +114,78 @@ async function main() {
     if (!jsOk) { U.bad('URL sources hain par koi usable JS runtime nahi (Deno 2.3+ ya Node 22+) — preflight STOP (yt-dlp YouTube EJS chahiye).'); flushLog(spec.id); process.exit(2); }
   }
 
+  // --- redo: containment-safe cleanup ---
+  if (flag('redo')) cleanJob(spec.id, spec.inputDir);
+  // Job dir GATE SE PEHLE banti hai. M3.6 mein gate job dir banne se pehle exit
+  // kar jata tha, isliye "har fail par repair package milega" ka wada gate wale
+  // fail par toot jata tha — user ke paas na video thi, na koi file bata rahi
+  // thi ki kya karna hai.
+  U.ensureDir(U.jobDir(spec.id));
+  U.assertInside(U.jobsRoot(), U.jobDir(spec.id), 'job dir');
+
   // --- PRODUCTION GATE ---
-  // Schema valid hona aur production-ready hona alag baat hai. Asli run mein
-  // menu ne "pack check: abhi tak nahi chalaya" dikhaya, phir bhi preview chal
-  // gaya — aur weak preview beech mein fail hua. Ab preview/full render ke liye
-  // ek TAAZA pack-report chahiye jo INHI inputs par bana ho.
+  //  Do alag darwaze, kyunki do alag cheezein hain:
+  //   PREVIEW (5/6/7): sirf TAAZA check chahiye. Pack weak ho to bhi preview
+  //     chalega — usi ko dekh kar to pata chalega ki engine kya kar raha hai.
+  //     Aisa preview saaf-saaf DIAGNOSTIC likha jata hai.
+  //   POORA EXPORT (8): taaza check + pack sach mein PASS + har moment par
+  //     criticality + koi critical beat khaali nahi. Weak evidence par 45 minute
+  //     ka final render banana bekaar hai.
   const isPreviewRun = arg('preview-start') != null || arg('preview-duration') != null || arg('preview-moments');
   const wantsRender = !only || /render|report/.test(only) || arg('from') != null || isPreviewRun;
+  const isFullExport = wantsRender && !isPreviewRun;
+  const blockAndExit = (reason, message, steps) => {
+    U.bad(`PRODUCTION GATE: ${message}`);
+    U.log('');
+    steps.forEach(s => U.log('   ' + s));
+    U.log('');
+    try {
+      const r = jobResult(spec, { meta: {} }, { status: 'BLOCKED', stage: 'gate', message, nextSteps: steps, blockedReason: reason });
+      U.log(`   Poori detail: jobs/${spec.id}/blocked-report.html  (aur job-result.json)`);
+      if (r && r.repair && r.repair.length) U.log(`   ${r.repair.length} moments ki list: jobs/${spec.id}/NEEDS_SOURCE.csv`);
+    } catch (e) { U.warn('blocked-report nahi ban paya: ' + e.message.slice(0, 70)); }
+    flushLog(spec.id);
+    process.exit(3);
+  };
   if (wantsRender && !flag('diagnostic-override') && (cfg.output && cfg.output.mode) !== 'review') {
     const repFile = path.join(U.ROOT, 'output', 'pack-report.json');
     let rep = null; try { rep = JSON.parse(fs.readFileSync(repFile, 'utf8')); } catch {}
     const packHash = U.hashFile(spec.packFile), srtHash = U.hashFile(spec.srt);
     const stale = !rep || rep.pack_sha256 !== packHash || rep.srt_sha256 !== srtHash;
     if (stale) {
-      U.bad('PRODUCTION GATE: is pack/SRT ka taaza check nahi hai.');
-      U.log('');
-      U.log('   Kyun: pack ya voiceover badla hai (ya check chalaya hi nahi gaya). Bina check ke');
-      U.log('   render chalane ka matlab hai 45 minute baad pata chalna ki kaunse moments toote the.');
-      U.log('');
-      U.log('   Chalao:  START_HERE.bat -> option 2   (ya)');
-      U.log('            node tools/check-pack.js input/scene-research.json input/voiceover.srt --apply-probe');
-      U.log('');
-      U.log('   Sirf dekhne ke liye (export nahi): isi command ke aage --diagnostic-override lagao.');
-      flushLog(spec.id);
-      process.exit(3);
+      blockAndExit('STALE_PACK_REPORT', 'is pack/SRT ka taaza check nahi hai.', [
+        'Kyun: pack ya voiceover badla hai (ya check chalaya hi nahi gaya). Bina check ke',
+        'render chalane ka matlab hai 45 minute baad pata chalna ki kaunse moments toote the.',
+        '',
+        'Chalao:  START_HERE.bat -> option 2   (ya)',
+        '         node tools/check-pack.js input/scene-research.json input/voiceover.srt --apply-probe',
+        '',
+        'Sirf dekhne ke liye (export nahi): isi command ke aage --diagnostic-override lagao.',
+      ]);
     }
     if (rep.pass === false) {
-      U.warn(`pack check FAIL hua tha (${(rep.failed_checks || []).length} checks). Preview chal jayega par output production-grade nahi hoga:`);
+      if (isFullExport) {
+        blockAndExit('PACK_NOT_PRODUCTION_READY', `pack check mein ${(rep.failed_checks || []).length} cheezein fail hain — poora export nahi hoga.`, [
+          ...(rep.failed_checks || []).slice(0, 8).map(f => `- ${f.check} (${f.detail})`),
+          '',
+          'Preview (option 5/6/7) ab bhi chal sakte hain — wo DIAGNOSTIC hain, final nahi.',
+          'Theek karne ke liye: REPAIR.bat chalao (standalone prompts + local cue fix).',
+        ]);
+      }
+      U.warn(`DIAGNOSTIC PREVIEW — pack check fail hai (${(rep.failed_checks || []).length} checks). Ye engine dekhne ke liye hai, final output nahi:`);
       (rep.failed_checks || []).slice(0, 6).forEach(f => U.log(`     - ${f.check} (${f.detail})`));
+      spec.isDiagnostic = true;
+    }
+    if (isFullExport && rep.missing_criticality) {
+      blockAndExit('CRITICALITY_MISSING', `${rep.missing_criticality} moments par criticality nahi hai — HOOK/HARD_EVIDENCE ka koi bachav nahi lagega.`, [
+        'Criticality bataati hai ki kaunsa beat bina asli footage ke chhap hi nahi sakta.',
+        'Ye na ho to engine sab kuch NORMAL maan leta hai aur udhaar footage chup-chaap chalta hai.',
+        '',
+        'Chalao:  REPAIR.bat -> "criticality migrate karo"  (ya)',
+        '         node tools/migrate-pack.js input/scene-research.json --apply',
+      ]);
     }
   }
-
-  // --- redo: containment-safe cleanup ---
-  if (flag('redo')) cleanJob(spec.id, spec.inputDir);
-  U.ensureDir(U.jobDir(spec.id));
-  U.assertInside(U.jobsRoot(), U.jobDir(spec.id), 'job dir');
 
   let st = flag('redo') ? { done: {}, meta: {} } : ST.load(spec.id);
 
