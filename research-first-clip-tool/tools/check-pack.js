@@ -453,6 +453,42 @@ const reportJson = {
 const jsonOut = path.join(outDir, 'pack-report.json');
 fs.writeFileSync(jsonOut, JSON.stringify(reportJson, null, 2));
 
+// ---------- 6b. --apply-probe: jo NAAPA gaya hai wo pack mein likh do ----------
+//  Probe ne asli duration aur caption-count dekh liya hai. Wo research ke
+//  ANUMAAN se behtar hai. Ise pack mein likhne se do faayde:
+//   1. baad ke timestamps SAHI duration par validate honge (galat duration par
+//      sahi timestamp bhi reject ho jata hai)
+//   2. stage 2 ko dobara wahi cheez verify nahi karni padegi
+//  Sirf naapi hui values likhte hain — koi guess nahi.
+if (has('apply-probe')) {
+  if (!probe.ran) { say('\n  [warn] --apply-probe ke liye probe chalna zaroori hai (--no-probe ke saath nahi).'); }
+  else {
+    const raw = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+    let n = 0; const notes = [];
+    for (const pk of (raw.packs || [])) for (const s of (pk.sources || [])) {
+      const meta = probe.meta[s.source_id];
+      if (!meta) continue;
+      if (!meta.available) {
+        if (s.inspection_status !== 'DEAD_VERIFIED') { s.source_notes = `[checkpack] reachable nahi: ${String(meta.error || '').slice(0, 70)}`; n++; notes.push(`${s.source_id}: DEAD (note likh diya)`); }
+        continue;
+      }
+      const bits = [];
+      if (meta.duration && Math.abs((s.duration_sec || 0) - meta.duration) > 1) { bits.push(`duration ${s.duration_sec || '?'}s -> ${Math.round(meta.duration)}s`); s.duration_sec = Math.round(meta.duration); }
+      const cues = (probe.subs[s.source_id] || {}).count || 0;
+      if (s.has_captions !== (cues > 0)) { bits.push(`captions ${cues > 0} (${cues} cues)`); s.has_captions = cues > 0; }
+      if (s.inspection_status !== 'TRANSCRIPT_CHECKED') { bits.push('status -> TRANSCRIPT_CHECKED'); s.inspection_status = 'TRANSCRIPT_CHECKED'; }
+      if (bits.length) { n++; notes.push(`${s.source_id}: ${bits.join(', ')}`); }
+    }
+    if (n) {
+      fs.copyFileSync(packFile, packFile + '.bak');
+      fs.writeFileSync(packFile, JSON.stringify(raw, null, 2));
+      line('-');
+      say(`  --apply-probe: ${n} sources mein NAAPI HUI value likh di (backup: ${path.basename(packFile)}.bak)`);
+      notes.slice(0, 12).forEach(x => say('   ' + x));
+    } else say('\n  --apply-probe: sab already sahi tha, kuch badalna nahi pada.');
+  }
+}
+
 // ---------- 7. Genspark work order ----------
 const needFile = path.join(outDir, 'NEEDS_RESEARCH.txt');
 fs.writeFileSync(needFile, buildWorkOrder());

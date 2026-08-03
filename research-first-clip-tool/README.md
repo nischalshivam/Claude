@@ -151,6 +151,18 @@ CHECKPACK.bat  ->  NEEDS_RESEARCH.txt Genspark mein paste  ->  naya JSON merge
 
 Exit codes: `0` = pack theek, `2` = weak (upgrade karo), `1` = pack padha nahi gaya.
 
+**`CHECKPACK.bat` ke baad `--apply-probe` chalana faydemand hai:**
+
+```
+node tools\check-pack.js input\scene-research.json input\voiceover.srt --apply-probe
+```
+
+Probe ne jo **naapa** hai (asli duration, captions hain ya nahi) wo pack mein
+likh deta hai — research ke anumaan ki jagah. Isse do faayde: baad ke timestamps
+**sahi** duration par check honge (galat duration par sahi timestamp bhi reject
+ho jata hai), aur stage 2 ko wahi cheez dobara verify nahi karni padegi.
+Backup `.bak` bhi banta hai.
+
 ---
 
 ## 1c. Jab research AI ne research ki hi nahi
@@ -334,7 +346,14 @@ khatam).
 - **CHECKPACK ab do aur cheezein pakadta hai** — `METADATA_ONLY` sources (AI ne
   search mein dekha, khola nahi) aur 25% se bada GRAPHIC pack. Dono pack ke apne
   fields se check hote hain, AI ki self-report se nahi.
-- 23 naye regression tests (T-PACK1..9, T-MERGE1..5, T-S21..29). Suite ab **46 PASS / 0 FAIL**.
+- **CHECKPACK ka naapa hua sach ab stage 2 tak jata hai** — `make-stage2.js`
+  `output/pack-report.json` padh kar har source ko `[CONFIRMED WORKING]` (asli
+  duration + captions ke saath) ya `*** CONFIRMED DEAD — REPLACE ***` mark karta
+  hai, aur wo dialogue lines bhi naam se batata hai jo asli captions mein nahi
+  mile. Stage 2 ko wahi kaam dobara nahi karna padta.
+- **`--apply-probe`** — naapi hui duration/captions pack mein likh deta hai.
+- 26 naye regression tests (T-PACK1..9, T-MERGE1..5, T-S21..29, T-S210..212).
+  Suite ab **49 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping

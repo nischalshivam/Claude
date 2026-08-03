@@ -53,6 +53,20 @@ for (const pk of pack.packs) for (const s of (pk.sources || [])) sourcesById[s.s
 const usable = Object.values(sourcesById).filter(s => s.url || s.local_file);
 const placeholderish = Object.values(sourcesById).filter(s => (s.inspection_status || '') === 'METADATA_ONLY');
 
+// ---------- CHECKPACK ka verified data (agar maujood ho) ----------
+//  Ye sabse kaam ki cheez hai jo hum stage 2 ko de sakte hain: hum LOCALLY khol
+//  kar dekh chuke hain ki kaunsa URL chalta hai, kitna lamba hai, aur uspar
+//  captions hain ya nahi. Wo sach stage 2 ko de dene se uska aadha kaam bach
+//  jata hai — aur wo dead sources par timestamp banane ki koshish nahi karega.
+const reportFile = val('report', path.join(outDir, 'pack-report.json'));
+let verified = null;
+try {
+  const r = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  if (r && r.live_verify && r.live_verify.ran !== false) verified = r;
+} catch (e) { /* report nahi hai — koi baat nahi */ }
+const deadIds = new Set(verified ? (verified.live_verify.dead_sources || []).map(d => d.source_id) : []);
+const badDialogue = verified ? (verified.live_verify.dialogue_not_found || []) : [];
+
 // ---------- moments ko script order mein lao ----------
 // pack ka order source-wise ho sakta hai; prompt padhne wale ke liye script
 // order zyada samajhne layak hai.
@@ -128,13 +142,45 @@ for (const pk of pack.packs) {
   P(`  ${pk.pack_id}  [${pk.scope.kind}] ${pk.scope.title}${pk.scope.episode_title ? ' — ' + pk.scope.episode_title : ''}`);
   for (const s of srcs) {
     const unopened = (s.inspection_status || 'METADATA_ONLY') === 'METADATA_ONLY';
-    P(`     source_id: ${s.source_id}${unopened ? '   *** NOT OPENED IN STAGE 1 — VERIFY THIS ONE CAREFULLY ***' : ''}`);
-    P(`     ${s.url || ('local file: ' + s.local_file)}`);
-    if (s.duration_sec) P(`     stage-1 claims: ${s.duration_sec}s${typeof s.has_captions === 'boolean' ? `, captions ${s.has_captions}` : ''}  (${unopened ? 'UNVERIFIED GUESS — check both' : 'confirm both'})`);
+    const dead = deadIds.has(s.source_id);
+    if (dead) {
+      P(`     source_id: ${s.source_id}   *** CONFIRMED DEAD — REPLACE THIS ONE ***`);
+      P(`     ${s.url || s.local_file}   <- we opened this ourselves; it does not play`);
+      P('     Do not write any timestamp against this URL. Find a working upload of');
+      P('     the same episode/film and return it under "replace_sources".');
+    } else if (verified) {
+      // hum khud khol chuke hain — ye ANUMAAN nahi, naapi hui baat hai
+      P(`     source_id: ${s.source_id}   [CONFIRMED WORKING]`);
+      P(`     ${s.url || ('local file: ' + s.local_file)}`);
+      P(`     verified: ${s.duration_sec ? s.duration_sec + 's' : 'duration unknown'}${s.has_captions === false ? ', NO CAPTIONS — use EXACT_TIME here, dialogue will not work' : (s.has_captions === true ? ', has captions' : '')}`);
+    } else {
+      P(`     source_id: ${s.source_id}${unopened ? '   *** NOT OPENED IN STAGE 1 — VERIFY THIS ONE CAREFULLY ***' : ''}`);
+      P(`     ${s.url || ('local file: ' + s.local_file)}`);
+      if (s.duration_sec) P(`     stage-1 claims: ${s.duration_sec}s${typeof s.has_captions === 'boolean' ? `, captions ${s.has_captions}` : ''}  (${unopened ? 'UNVERIFIED GUESS — check both' : 'confirm both'})`);
+    }
   }
   P('');
 }
-if (placeholderish.length) {
+if (verified) {
+  P('IMPORTANT: the durations and caption flags above are NOT stage-1 claims. We');
+  P('opened every one of these URLs ourselves and measured them. Trust them.');
+  P(`${deadIds.size} of ${usable.length} were confirmed dead and are marked above.`);
+  P('');
+  P('So your priorities, in order:');
+  P(`  1. Replace the ${deadIds.size} dead source(s). Everything attached to them is`);
+  P('     currently unusable, and that is the largest single loss in this pack.');
+  P('  2. Produce locators for the moments listed below.');
+  P('  You do NOT need to re-verify the sources marked CONFIRMED WORKING. Their');
+  P('  duration and caption status are already measured facts.');
+  P('');
+  if (badDialogue.length) {
+    P('Also: we searched the real captions for the dialogue lines stage 1 gave, and');
+    P('these were NOT found. Whoever wrote them was working from memory. Replace');
+    P('them with lines you actually read in the captions:');
+    badDialogue.slice(0, 12).forEach(d => P(`  ${d.moment_id} (${d.source_id}): "${String(d.dialogue || '').slice(0, 64)}"`));
+    P('');
+  }
+} else if (placeholderish.length) {
   P(`NOTE: ${placeholderish.length} of these were marked METADATA_ONLY by stage 1 — the`);
   P('researcher found them in search results but never opened them. Their stated');
   P('duration and caption flags are guesses, and some may not exist at all. Start');

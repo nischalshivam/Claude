@@ -607,6 +607,50 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     C.status === 0 && fs.existsSync(pf + '.bak') && JSON.parse(fs.readFileSync(pf + '.bak', 'utf8')).packs.length === 3,
     `exit=${C.status} bak=${fs.existsSync(pf + '.bak')}`);
 
+  // ---- CHECKPACK ka naapa hua sach stage-2 prompt tak pahunchna chahiye ----
+  // Hum khud sources khol kar dekh chuke hote hain. Wo sach stage 2 ko na dena
+  // matlab usse wahi kaam dobara karwana — aur dead source par timestamp
+  // banwana, jo poora bekaar jata hai.
+  (() => {
+    const dd = path.join(d, 'verified');
+    fs.mkdirSync(dd, { recursive: true });
+    const vp = {
+      schema_version: 'scene-research-pack-v1', project_title: 'V',
+      packs: [{ pack_id: 'VP', scope: { kind: 'SERIES', title: 'Show V' },
+        sources: [
+          { source_id: 'V_LIVE', local_file: good.video, local_subs: good.srt, inspection_status: 'METADATA_ONLY', duration_sec: 999 },
+          { source_id: 'V_DEAD', local_file: 'tests/fixtures/reg/ep/GONE_missing.mp4', inspection_status: 'METADATA_ONLY', duration_sec: 500 },
+        ],
+        moments: [
+          { moment_id: 'V_M1', script_cue_exact: 'The alarm rings across the base.', locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+          { moment_id: 'V_M2', script_cue_exact: 'She opens the sealed hatch slowly.',
+            locators: [{ source_id: 'V_LIVE', locator_type: 'DIALOGUE', dialogue_exact: 'this line was never spoken in the episode at all', confidence: 'MEDIUM' }], fallback: { type: 'NEEDS_SOURCE' } },
+        ] }],
+    };
+    const vf = path.join(dd, 'pack.json'); fs.writeFileSync(vf, JSON.stringify(vp, null, 2));
+    // probe chalao (local files -> network ki zaroorat nahi) + naapi hui value likh do
+    const CP = spawnSync('node', ['tools/check-pack.js', vf, path.join(dd, 'none.srt'), `--out=${dd}`, '--apply-probe'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 300000, env: process.env });
+    let rep = null; try { rep = JSON.parse(fs.readFileSync(path.join(dd, 'pack-report.json'), 'utf8')); } catch {}
+    const after = JSON.parse(fs.readFileSync(vf, 'utf8'));
+    const liveSrc = after.packs[0].sources.find(s => s.source_id === 'V_LIVE');
+    check('T-S210 --apply-probe writes MEASURED duration/captions into the pack',
+      liveSrc && liveSrc.duration_sec === 80 && liveSrc.has_captions === true && liveSrc.inspection_status === 'TRANSCRIPT_CHECKED'
+        && fs.existsSync(vf + '.bak'),
+      `dur=${liveSrc ? liveSrc.duration_sec : '?'} caps=${liveSrc ? liveSrc.has_captions : '?'} status=${liveSrc ? liveSrc.inspection_status : '?'}`);
+
+    const MK = spawnSync('node', ['tools/make-stage2.js', vf, `--out=${dd}`, `--report=${path.join(dd, 'pack-report.json')}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+    const pr = fs.existsSync(path.join(dd, 'STAGE2_PROMPT.txt')) ? fs.readFileSync(path.join(dd, 'STAGE2_PROMPT.txt'), 'utf8') : '';
+    check('T-S211 stage-2 prompt marks the confirmed-dead source and the confirmed-working one',
+      MK.status === 0 && /V_DEAD[\s\S]{0,80}CONFIRMED DEAD/.test(pr) && /V_LIVE\s+\[CONFIRMED WORKING\]/.test(pr)
+        && /we opened this ourselves/.test(pr),
+      `dead=${/CONFIRMED DEAD/.test(pr)} live=${/CONFIRMED WORKING/.test(pr)}`);
+    check('T-S212 dialogue proven absent from real captions is named for replacement',
+      /NOT found/.test(pr) && /V_M2/.test(pr) && /never spoken in the episode/.test(pr),
+      `listed=${/V_M2/.test(pr)} reportBad=${rep ? (rep.live_verify.dialogue_not_found || []).length : '?'}`);
+  })();
+
   // ---- stage 2 ko stage 1 ke TOOTE sources theek karne dena ----
   // Yahi do-stage ka asli faayda hai: stage 1 ne jo jhootha/dead URL diya, wo
   // yahan pakda aur badla jata hai. Par naya URL bhi bina check ke andar na jaye.
