@@ -16,7 +16,9 @@ const info = {
   version: pkg.version,
   git_commit: sh('git rev-parse HEAD'),
   git_branch: sh('git rev-parse --abbrev-ref HEAD'),
-  git_dirty: !!sh('git status --porcelain'),
+  // BUILD_INFO.json khud ko ignore karo — warna ye hamesha "dirty" dikhata hai
+  // (isse likhte hi tree dirty ho jata hai). Baaki har file ginii jaati hai.
+  git_dirty: !!sh('git status --porcelain').split('\n').filter(l => l.trim() && !/BUILD_INFO\.json$/.test(l)).length,
   built_at: new Date().toISOString(),
   schema_version: 'scene-research-pack-v1',
   node: process.version,
