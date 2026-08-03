@@ -21,7 +21,9 @@ const ENUM = {
   scopeKind: ['SERIES', 'FILM', 'DOCUMENTARY', 'REAL_WORLD', 'GRAPHIC', 'MULTI_SOURCE'],
   visual: ['EXACT_SCENE', 'CONTEXT_SCENE', 'LOCAL_GRAPHIC', 'MULTI_SOURCE_MONTAGE', 'STILL_FROM_VERIFIED_SOURCE'],
   sourceKind: ['OFFICIAL_EPISODE', 'OFFICIAL_CLIP', 'LICENSED_UPLOAD', 'CLEAN_SCENE', 'COMPILATION', 'OTHER'],
-  inspection: ['VERIFIED_WATCHED', 'TRANSCRIPT_CHECKED', 'METADATA_ONLY'],
+  // DEAD_VERIFIED = hum khud khol kar dekh chuke hain, source mar chuka hai.
+  // "khola hi nahi" (METADATA_ONLY) se ye alag hai — check-pack ise likhta hai.
+  inspection: ['VERIFIED_WATCHED', 'TRANSCRIPT_CHECKED', 'METADATA_ONLY', 'DEAD_VERIFIED'],
   locator: ['EXACT_TIME', 'DIALOGUE', 'APPROX_WINDOW', 'SEARCH_ONLY', 'UNRESOLVED'],
   confidence: ['HIGH', 'MEDIUM', 'LOW', 'NONE'],
   criticality: ['HOOK', 'HARD_EVIDENCE', 'NORMAL', 'BRIDGE'],

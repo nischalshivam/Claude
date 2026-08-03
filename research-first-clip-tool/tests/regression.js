@@ -11,6 +11,8 @@ const ROOT = path.resolve(__dirname, '..');
 const U = require(path.join(ROOT, 'src', 'util.js'));
 // ISOLATED jobs root — production ROOT/jobs ko kabhi haath nahi (M1.2-C).
 const JOBS = path.join(ROOT, 'tests', 'tmp', 'reg_' + process.pid);
+const DATA = path.join(ROOT, 'tests', 'tmp', 'data_' + process.pid);
+process.env.RFC_DATA_DIR = DATA;
 process.env.RFC_JOBS_DIR = JOBS;   // spawned run.js isko inherit karega
 const FX = path.join(ROOT, 'tests', 'fixtures', 'reg');
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
@@ -1284,6 +1286,183 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     check('T-M36112 the menu status tells the truth: not checked / fresh / stale',
       /^NOT_CHECKED/.test(s0) && /^(PRODUCTION_READY|NEEDS_RESEARCH|DIAGNOSTIC_READY)/.test(s1) && /^STALE/.test(s2),
       `s0=${s0.split(' ')[0]} s1=${s1.split(' ')[0]} s2=${s2.split(' ')[0]}`);
+  })();
+})();
+
+// ---------- T-M4: hybrid completion — jab footage internet par hai hi nahi ----------
+//  Asli project mein movie (P03) ke dono uploads mar chuke hain: 21 moments,
+//  ~162 second. Koi AI wo clip nahi bana sakta. Ye tests wo raasta pin karte
+//  hain jisse video phir bhi poori banti hai — user apna media deta hai.
+(() => {
+  const gapplan = require(path.join(ROOT, 'src', 'gapplan.js'));
+  const manual = require(path.join(ROOT, 'src', 'manual.js'));
+
+  // --- (1) gap ID sthir rahe, aur paas-paas ke gaps jud jayein ---
+  (() => {
+    const cues = [];
+    for (let i = 0; i < 12; i++) cues.push({ start: i * 5, end: i * 5 + 5, text: `line number ${i} of the narration here` });
+    const mkMan = () => ({ preview_offset: 0, shots: [
+      { i: 0, start: 0, end: 5, asset: 'EXACT_VIDEO', moment_id: 'A', pack_id: 'P1', cue: cues[0].text },
+      // do khaali slot bilkul saath-saath -> ek hi request banni chahiye
+      { i: 1, start: 5, end: 10, asset: 'GENERIC_TEXT_GRAPHIC', moment_id: 'B', pack_id: 'P1', cue: cues[1].text },
+      { i: 2, start: 10, end: 15, asset: 'GENERIC_TEXT_GRAPHIC', moment_id: 'C', pack_id: 'P1', cue: cues[2].text },
+      { i: 3, start: 15, end: 20, asset: 'VERIFIED_SOURCE_STILL', moment_id: 'D', pack_id: 'P1', cue: cues[3].text },
+      // door wala khaali slot -> alag request
+      { i: 4, start: 40, end: 45, asset: 'GENERIC_TEXT_GRAPHIC', moment_id: 'E', pack_id: 'P1', cue: cues[8].text },
+    ] });
+    const args = { manifest: mkMan(), resolved: [], cues, packIndex: { P1: { scope: { kind: 'SERIES', title: 'Show G' } } },
+      fingerprint: { pack_sha256: 'x', srt_sha256: 'y' }, projectId: 'proj', cfg: {} };
+    const a = gapplan.plan(args), b = gapplan.plan(args);
+    const ids = a.requests.map(r => r.request_id);
+    check('T-M41 gap requests merge adjacent misses and keep the same id across runs',
+      a.requests.length === 2 && ids.join() === b.requests.map(r => r.request_id).join()
+        && a.requests[0].range.start_sec === 5 && a.requests[0].range.end_sec === 15
+        && a.requests[0].moment_ids.join() === 'B,C',
+      `n=${a.requests.length} first=${JSON.stringify(a.requests[0] && a.requests[0].range)} stable=${ids.join() === b.requests.map(r => r.request_id).join()}`);
+
+    // --- (2) preview ka rebased waqt POORE audio ke waqt par wapas aaye ---
+    const off = gapplan.plan({ ...args, manifest: { ...mkMan(), preview_offset: 300 } });
+    check('T-M42 a preview-rebased gap is reported in absolute full-audio time',
+      off.requests[0].range.start_sec === 305 && off.requests[0].range.end_sec === 315,
+      `range=${JSON.stringify(off.requests[0].range)}`);
+
+    // --- (3) narration aur search words request mein hon ---
+    const r0 = a.requests[0];
+    check('T-M43 the request carries the exact narration and usable search words',
+      /line number 1/.test(r0.narration_exact) && /line number 2/.test(r0.narration_exact)
+        && r0.search_queries.length >= 1 && r0.search_queries.every(q => q.length > 3)
+        && r0.suggested_media.minimum_unique_assets >= 1,
+      `cue="${r0.narration_exact.slice(0, 40)}" q=${JSON.stringify(r0.search_queries)}`);
+
+    // --- (4) media-backed graphic blocking NAHI hai, generic card hai ---
+    const cls1 = gapplan.classifyShot({ asset: 'TEMPLATE_GRAPHIC_MEDIA', criticality: 'NORMAL' }, {});
+    const cls2 = gapplan.classifyShot({ asset: 'GENERIC_TEXT_GRAPHIC', criticality: 'NORMAL' }, {});
+    const cls3 = gapplan.classifyShot({ asset: 'USER_IMAGE', scope_relation: 'USER_APPROVED', criticality: 'HOOK' }, {});
+    check('T-M44 a media-backed graphic is fine, a generic text card is not, user media satisfies a critical beat',
+      cls1.level === 'OK' && cls2.level === 'BLOCKING' && cls3.level === 'OK',
+      `graphic=${cls1.level} generic=${cls2.level} user=${cls3.level}`);
+  })();
+
+  // --- (5) POORA HYBRID CYCLE — bina internet ke ---
+  (() => {
+    const d = path.join(FX, 'm4hybrid');
+    makeNarr(d, [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+      { start: 12, end: 18, text: 'They meet on the rooftop at night.' },
+    ]);
+    // beat 2 aur 3 ke paas kuch bhi nahi — yahi wo "footage exist hi nahi karta" wali haalat hai
+    writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'H4', packs: [
+      { pack_id: 'H1', scope: { kind: 'SERIES', title: 'Show H', year: 2011, season: 1, episode_number: 1 },
+        sources: [{ source_id: 'HS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [
+          { moment_id: 'H_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+            locators: [{ source_id: 'HS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'H2', scope: { kind: 'FILM', title: 'A Film With No Upload', year: 2020 }, sources: [],
+        moments: [
+          { moment_id: 'H_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL',
+            locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+          { moment_id: 'H_M3', script_cue_exact: 'They meet on the rooftop at night.', criticality: 'NORMAL',
+            locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+    ] });
+    const dataDir = path.join(ROOT, 'tests', 'tmp', 'data_hy_' + process.pid);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    const env = { ...process.env, RFC_DATA_DIR: dataDir, RFC_JOBS_DIR: JOBS };
+    const runJob = (extra) => spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m4hy', '--redo',
+      '--diagnostic-override', ...extra], { cwd: ROOT, encoding: 'utf8', timeout: 900000, env });
+
+    // ---- DRAFT: rukta nahi, poori timeline banti hai ----
+    const draft = runJob(['--draft']);
+    const jdir = path.join(JOBS, 'reg_m4hy');
+    const draftFile = path.join(jdir, 'draft.mp4');
+    let man = null, gp = null, jr = null;
+    try { man = JSON.parse(fs.readFileSync(path.join(jdir, 'render-manifest.json'), 'utf8')); } catch {}
+    try { gp = JSON.parse(fs.readFileSync(path.join(jdir, 'gap-plan.json'), 'utf8')); } catch {}
+    try { jr = JSON.parse(fs.readFileSync(path.join(jdir, 'job-result.json'), 'utf8')); } catch {}
+    const placeholders = ((man && man.shots) || []).filter(s => s.asset === 'MISSING_PLACEHOLDER');
+    check('T-M45 draft renders to the very end and marks every gap with a numbered placeholder',
+      draft.status === 0 && fs.existsSync(draftFile) && !fs.existsSync(path.join(jdir, 'final.mp4'))
+        && placeholders.length > 0 && Math.abs((man.total || 0) - 18) < 1.5,
+      `exit=${draft.status} draft=${fs.existsSync(draftFile)} placeholders=${placeholders.length} total=${man && man.total}`);
+    check('T-M46 a draft with gaps never reports plain SUCCESS',
+      jr && jr.status === 'DRAFT_NEEDS_HUMAN' && /DATA/.test(jr.message || ''),
+      `status=${jr && jr.status}`);
+
+    // ---- DATA folders ----
+    const reqDirs = fs.existsSync(dataDir) ? fs.readdirSync(dataDir).filter(n => /^MISSING_/.test(n)) : [];
+    const first = reqDirs.length ? path.join(dataDir, reqDirs[0]) : null;
+    const readme = first ? fs.readFileSync(path.join(first, 'WHAT_IS_MISSING.txt'), 'utf8') : '';
+    check('T-M47 every gap gets a folder with plain-language instructions and the exact narration',
+      reqDirs.length > 0 && gp && gp.requests.length === reqDirs.length
+        && /Video time:/.test(readme) && /sealed hatch|rooftop/.test(readme)
+        && fs.existsSync(path.join(first, 'media')) && fs.existsSync(path.join(dataDir, 'READ_ME_FIRST.txt')),
+      `folders=${reqDirs.length} readmeBytes=${readme.length}`);
+
+    // ---- FINAL abhi block hona chahiye ----
+    const early = runJob([]);
+    let ejr = null; try { ejr = JSON.parse(fs.readFileSync(path.join(jdir, 'job-result.json'), 'utf8')); } catch {}
+    check('T-M48 the final export is blocked while any gap is still waiting for media',
+      early.status === 3 && ejr && ejr.status === 'BLOCKED' && ejr.blocked_reason === 'NEEDS_HUMAN_MEDIA',
+      `exit=${early.status} reason=${ejr && ejr.blocked_reason}`);
+
+    // ---- user media daalo (image + video), order 01_/02_/10_ ----
+    for (const rd of reqDirs) {
+      const m = path.join(dataDir, rd, 'media');
+      ff(['-f', 'lavfi', '-i', 'color=c=0x1E90FF:s=640x360:d=1', '-frames:v', '1', path.join(m, '02_second.jpg')]);
+      ff(['-f', 'lavfi', '-i', 'color=c=0xFF8C00:s=640x360:d=1', '-frames:v', '1', path.join(m, '10_last.jpg')]);
+      ff(['-f', 'lavfi', '-i', 'color=c=0x228B22:s=640x360:r=25:d=6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(m, '01_first.mp4')]);
+      fs.writeFileSync(path.join(m, 'broken.mp4'), 'not a video at all');
+    }
+    const scan = manual.scan(dataDir, { cfg: JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8')) });
+    const r0 = scan.requests[0];
+    check('T-M49 user media is validated, ordered naturally (01,02,10) and the corrupt file is refused with a reason',
+      r0 && r0.files.length === 3 && r0.files.map(f => f.file).join() === '01_first.mp4,02_second.jpg,10_last.jpg'
+        && r0.invalid.length === 1 && /kharab|khaali|support/.test(r0.invalid[0].problem),
+      `files=${r0 ? r0.files.map(f => f.file).join() : 'n/a'} invalid=${r0 ? JSON.stringify(r0.invalid) : ''}`);
+    check('T-M410 with valid media in every gap the project reaches HYBRID_READY',
+      scan.ready === true && scan.requests.every(r => r.status === 'READY'),
+      `ready=${scan.ready} states=${scan.requests.map(r => r.status).join()}`);
+
+    // ---- ab FINAL banni chahiye ----
+    const fin = runJob([]);
+    let fman = null, fjr = null;
+    try { fman = JSON.parse(fs.readFileSync(path.join(jdir, 'render-manifest.json'), 'utf8')); } catch {}
+    try { fjr = JSON.parse(fs.readFileSync(path.join(jdir, 'job-result.json'), 'utf8')); } catch {}
+    const userShots = ((fman && fman.shots) || []).filter(s => ['USER_VIDEO', 'USER_IMAGE', 'USER_MONTAGE'].includes(s.asset));
+    const badShots = ((fman && fman.shots) || []).filter(s =>
+      ['GENERIC_TEXT_GRAPHIC', 'DIAGNOSTIC_CARD', 'RENDER_FAILURE_FALLBACK', 'MISSING_PLACEHOLDER'].includes(s.asset));
+    check('T-M411 user media unblocks the final render and fills exactly the missing ranges',
+      fin.status === 0 && fs.existsSync(path.join(jdir, 'final.mp4'))
+        && userShots.length > 0 && badShots.length === 0,
+      `exit=${fin.status} userShots=${userShots.length} leftoverCards=${badShots.length}`);
+    check('T-M412 user media is labelled USER_APPROVED and never as researched exact footage',
+      userShots.every(s => s.scope_relation === 'USER_APPROVED')
+        && userShots.every(s => s.asset !== 'EXACT_VIDEO')
+        && fjr && fjr.status === 'SUCCESS',
+      `rel=${[...new Set(userShots.map(s => s.scope_relation))].join()} status=${fjr && fjr.status}`);
+
+    // ---- final ki lambai voiceover se milni chahiye ----
+    const fdur = dur(path.join(jdir, 'final.mp4'));
+    check('T-M413 the final video length still matches the narration (manual media never shifts audio)',
+      Math.abs(fdur - 18) <= 0.5, `final=${fdur.toFixed(2)}s expected~18s`);
+
+    // ---- lagatar do shots par ek hi file nahi ----
+    const seq = userShots.map(s => s.source_id || s.image || s.media_file || '');
+    let adjacentDup = false;
+    for (let i = 1; i < userShots.length; i++) {
+      if (userShots[i].moment_id === userShots[i - 1].moment_id
+        && (userShots[i].image || userShots[i].media_file) === (userShots[i - 1].image || userShots[i - 1].media_file)) adjacentDup = true;
+    }
+    check('T-M414 no user asset repeats on two adjacent shots while another asset is available',
+      !adjacentDup, `shots=${userShots.length} dup=${adjacentDup} seq=${seq.length}`);
+
+    // ---- upload path traversal band ----
+    const inside = U.isInside(path.join(dataDir, 'x', 'media'), path.join(dataDir, 'x', 'media', 'ok.jpg'));
+    const outside = U.isInside(path.join(dataDir, 'x', 'media'), path.join(dataDir, 'x', 'media', '..', '..', 'evil.jpg'));
+    check('T-M415 a media path outside its own request folder is refused',
+      inside === true && outside === false, `inside=${inside} outside=${outside}`);
+
+    fs.rmSync(dataDir, { recursive: true, force: true });
   })();
 })();
 

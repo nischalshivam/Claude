@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M3.6.1
+# Research-First Clip Tool — M4
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -334,6 +334,47 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M4 — jab footage internet par hai hi nahi (human-assisted completion)**
+
+Ye milestone research ko behtar banane ki koshish NAHI hai. Ye us sachai ko
+maan leta hai jo Candace project ne saabit ki: kuch footage public web par hai
+hi nahi. P03 (movie) ke dono uploads mar chuke hain — 21 moments, ~162 second.
+Genspark, Gemini, Claude, koi bhi wo clip nahi bana sakta.
+
+Ab tak iska nateeja ye tha ki poori video hi atak jati thi. Ab:
+
+| Ab kya hota hai | Kaise |
+|---|---|
+| Tool jo bana sakta hai wo **poora** bana deta hai | `--draft` mode — timeline end tak jati hai, kabhi beech mein rukti nahi |
+| Khaali jagah **chhupti nahi** | laal `MISSING 001` placeholder, uspar waqt aur narration likhi hui |
+| Har khaali jagah ka apna folder | `DATA/MISSING_001__02m03s-02m24s__P03_M01/` — tool khud banata hai, aapko naam guess nahi karna |
+| Folder mein saaf-saaf likha hota hai kya chahiye | `WHAT_IS_MISSING.txt` — asli video-time, hubahu narration, kya dikhna/na dikhna chahiye, aur **search karne ke shabd** |
+| Aap sirf files daalte ho | `media/` folder mein. Order chahiye to `01_`, `02_`, `03_` |
+| Ya dashboard se | `START_UI.bat` — drag & drop, sirf 127.0.0.1 par, koi account/key nahi |
+| Video phir poori ban jati hai | `HYBRID_READY` — final render tabhi jab har slot par sach mein media ho |
+
+**Do cheezein jaan-boojh kar nahi ki gayin:**
+
+1. Koi AI andaza nahi lagata ki aapki 10 files mein se kaunsi kis line par
+   lagni chahiye. Order **aap** batate ho (filename ya drag). Jo tool nahi
+   jaanta, wo jaanne ka dikhawa nahi karta.
+2. Aapka media kabhi `EXACT_VIDEO` label nahi paata. Wo `USER_VIDEO` /
+   `USER_IMAGE` / `USER_MONTAGE` hai, `scope_relation: USER_APPROVED` ke saath.
+   Automation ka score aapki files se **kabhi nahi badalta** — warna report
+   bekaar ho jati.
+
+**Aur wo bug jisne aapke 10 cue fixes aur 109 criticality values kha liye:**
+`REPAIR.bat` ke confirm prompt mein `(y/n)` likha tha — cmd.exe us `)` ko
+if-block ka END samajh leta hai. Isliye option 3/4 chalte hi nahi the, aur phir
+bhi `[OK] pura hua` chhap jata tha. Ab har action apni alag label par hai, aur
+mana karne par saaf `CANCELLED — NO CHANGES APPLIED` aata hai.
+
+**Preview ab rukte nahi.** Mid/weak preview download, cut aur QA sab paar kar
+gaye the aur ek missing graphic par poora render ruk gaya — yaani jise dekhne ke
+liye preview chalaya tha wahi kabhi bani hi nahi. Preview ab draft hai:
+placeholder lagta hai aur video end tak banti hai. **Final ab bhi block hota
+hai** — wo rule nahi badla.
 
 **M3.6.1 — asli Windows run se: engine chala hi nahi tha**
 

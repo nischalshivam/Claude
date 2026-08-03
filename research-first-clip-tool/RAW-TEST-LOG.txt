@@ -22,7 +22,8 @@
 >>> 9. report
   [OK]   report: quality-report.html (5 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 11 shots ka contact sheet (har shot ka asli frame + evidence)
-  DONE — tests/tmp/mini_9091/akatsuki/
+  [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi (coverage 100%)
+  DONE — tests/tmp/mini_5643/akatsuki/
    final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
 
 == run pipeline: crossshow ==
@@ -47,7 +48,8 @@
 >>> 9. report
   [OK]   report: quality-report.html (3 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 9 shots ka contact sheet (har shot ka asli frame + evidence)
-  DONE — tests/tmp/mini_9091/crossshow/
+  [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi (coverage 100%)
+  DONE — tests/tmp/mini_5643/crossshow/
    final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
 
 == run pipeline: edgecases ==
@@ -72,7 +74,8 @@
 >>> 9. report
   [OK]   report: quality-report.html (1 resolved, 1 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 6 shots ka contact sheet (har shot ka asli frame + evidence)
-  DONE — tests/tmp/mini_9091/edgecases/
+  [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi (coverage 100%)
+  DONE — tests/tmp/mini_5643/edgecases/
    final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
 
 ==============================================================================

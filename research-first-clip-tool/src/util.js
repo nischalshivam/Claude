@@ -145,6 +145,10 @@ function ytRuntimeArgs(cfg) { const s = jsRuntimeSpec(cfg); return s ? ['--js-ru
 // jobs root override (test isolation): RFC_JOBS_DIR set ho to wahi, warna ROOT/jobs
 function jobsRoot() { const e = process.env.RFC_JOBS_DIR; return (e && e.trim()) ? path.resolve(e.trim()) : path.join(ROOT, 'jobs'); }
 const jobDir = id => path.join(jobsRoot(), id);
+// DATA root (user ka apna media) — tests ke liye RFC_DATA_DIR se alag kiya ja
+// sakta hai, warna ROOT/DATA. Ye job ke andar JAAN-BOOJH kar nahi hai: job
+// dobara banti hai, user ki dhoondhi hui files kabhi nahi khoni chahiye.
+function dataRoot() { const e = process.env.RFC_DATA_DIR; return (e && e.trim()) ? path.resolve(e.trim()) : path.join(ROOT, 'DATA'); }
 const outDir = () => path.join(ROOT, 'output');
 const p = (id, ...rest) => path.join(jobDir(id), ...rest);
 function ensureDir(d) { fs.mkdirSync(d, { recursive: true }); return d; }
@@ -172,7 +176,7 @@ function hashStr(s) { return sha256(Buffer.from(String(s))); }
 module.exports = {
   ROOT, log, ok, warn, bad, step,
   config, env, tool, run, ffmpeg, ffmpegRaw, ytdlp, probe,
-  jobDir, jobsRoot, outDir, p, ensureDir, slug,
+  jobDir, jobsRoot, dataRoot, outDir, p, ensureDir, slug,
   isSafeId, assertSafeId, isInside, assertInside,
   sha256, hashFile, hashStr,
   jsRuntimeSpec, ytRuntimeArgs,

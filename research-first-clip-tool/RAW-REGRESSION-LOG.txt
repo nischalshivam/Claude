@@ -79,8 +79,23 @@
   [PASS] T-M36110 a mismatched narration cue is repaired locally from the SRT, with no AI call  — exit=0 cue="She opens the sealed hatch slowly."
   [PASS] T-M36111 migration fills criticality everywhere and flags legacy cross-episode borrow  — m1=HOOK m2=NORMAL flagged=true
   [PASS] T-M36112 the menu status tells the truth: not checked / fresh / stale  — s0=NOT_CHECKED s1=PRODUCTION_READY s2=STALE
+  [PASS] T-M41 gap requests merge adjacent misses and keep the same id across runs  — n=2 first={"start_sec":5,"end_sec":15,"duration_sec":10} stable=true
+  [PASS] T-M42 a preview-rebased gap is reported in absolute full-audio time  — range={"start_sec":305,"end_sec":315,"duration_sec":10}
+  [PASS] T-M43 the request carries the exact narration and usable search words  — cue="line number 1 of the narration here line" q=["Show G line number narration","Show G line number narration here scene","Show G line number narration here"]
+  [PASS] T-M44 a media-backed graphic is fine, a generic text card is not, user media satisfies a critical beat  — graphic=OK generic=BLOCKING user=OK
+  [PASS] T-M45 draft renders to the very end and marks every gap with a numbered placeholder  — exit=0 draft=true placeholders=2 total=18
+  [PASS] T-M46 a draft with gaps never reports plain SUCCESS  — status=DRAFT_NEEDS_HUMAN
+  [PASS] T-M47 every gap gets a folder with plain-language instructions and the exact narration  — folders=1 readmeBytes=1178
+  [PASS] T-M48 the final export is blocked while any gap is still waiting for media  — exit=3 reason=NEEDS_HUMAN_MEDIA
+  [PASS] T-M49 user media is validated, ordered naturally (01,02,10) and the corrupt file is refused with a reason  — files=01_first.mp4,02_second.jpg,10_last.jpg invalid=[{"file":"broken.mp4","problem":"ye video khul nahi rahi — kharab/adhoori file lagti hai"}]
+  [PASS] T-M410 with valid media in every gap the project reaches HYBRID_READY  — ready=true states=READY
+  [PASS] T-M411 user media unblocks the final render and fills exactly the missing ranges  — exit=0 userShots=2 leftoverCards=0
+  [PASS] T-M412 user media is labelled USER_APPROVED and never as researched exact footage  — rel=USER_APPROVED status=SUCCESS
+  [PASS] T-M413 the final video length still matches the narration (manual media never shifts audio)  — final=18.00s expected~18s
+  [PASS] T-M414 no user asset repeats on two adjacent shots while another asset is available  — shots=2 dup=false seq=2
+  [PASS] T-M415 a media path outside its own request folder is refused  — inside=true outside=false
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 80 PASS, 0 FAIL
+  REGRESSION SUMMARY: 95 PASS, 0 FAIL
 ======================================================================

@@ -16,3 +16,6 @@ tests/tmp/
 *.gray
 *.log
 # RAW-*-LOG.txt release evidence hain — ye ZIP mein jaate hain (ignore NAHI)
+
+# DATA/ user ke apne dhoondhe hue media ka folder hai — repo mein kabhi nahi
+DATA/

@@ -66,6 +66,26 @@ function renderSolid(cfg, seg, dur, bg) {
     '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
 }
 
+// DRAFT ka numbered placeholder. Ye dekhne wale ko turant batata hai:
+// kaunsa gap hai (MISSING 003), video mein kahan hai, aur kya bola ja raha hai.
+// Laal rang jaan-boojh kar — ye kabhi final video jaisa nahi dikhna chahiye.
+function renderPlaceholder(cfg, seg, dur, tag, s, font, drawtextOK, W, H, FPS) {
+  const at = t => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const lines = [tag, `${at(s.start)} - ${at(s.end)}  (${dur.toFixed(1)}s)`,
+    s.moment_id ? `beat: ${s.moment_id}` : '', '',
+    String(s.cue || '').replace(/\s+/g, ' ').slice(0, 160), '',
+    'is jagah ke liye media DATA folder mein daalo'].filter(x => x !== null);
+  const args = ['-f', 'lavfi', '-i', `color=c=0x3B1113:s=${W}x${H}:r=${FPS}:d=${dur.toFixed(3)}`];
+  if (font && drawtextOK) {
+    const txtFile = seg + '.txt';
+    fs.writeFileSync(txtFile, lines.join('\n'));
+    args.push('-vf', `drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=0xFFC9C9:fontsize=40:line_spacing=16:x=(w-text_w)/2:y=(h-text_h)/2`);
+  }
+  args.push('-t', dur.toFixed(3), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21),
+    '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg);
+  return U.ffmpeg(args, { timeout: 120000 });
+}
+
 module.exports = function render(spec, cfg, st, tl) {
   const id = spec.id;
   const W = cfg.canvas.width, H = cfg.canvas.height, FPS = cfg.canvas.fps;
@@ -75,7 +95,19 @@ module.exports = function render(spec, cfg, st, tl) {
   if (!font) U.warn('koi TTF font nahi mila — text cards bina text ke (solid color) banenge. config.render.fontFile set karo.');
   else if (!drawtextOK) U.warn('is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.');
 
-  const production = (cfg.output && cfg.output.mode) !== 'review';
+  // DRAFT vs PRODUCTION (M4).
+  //  production : ek bhi missing asset par export rukta hai. Final video mein
+  //               kabhi placeholder nahi aa sakta — ye rule waisa ka waisa hai.
+  //  draft      : poori timeline banti hai, aur jahan media nahi hai wahan ek
+  //               SAAF-SAAF numbered "MISSING NNN" placeholder lagta hai.
+  //  Kyun: asli run mein mid/weak preview download, cut aur QA sab paar kar gaye,
+  //  phir ek missing graphic par poora render ruk gaya — yaani jis cheez ko dekhne
+  //  ke liye preview chalaya tha, wahi kabhi dikhi hi nahi. Diagnostic preview ka
+  //  kaam kami DIKHANA hai, uspar rukna nahi.
+  const mode = (cfg.output && cfg.output.mode) || 'production';
+  const production = mode !== 'review' && mode !== 'draft';
+  let missingNo = 0;
+  const missingSlots = [];
   const manifest = [];
   const listLines = [];
   let n = 0, failed = 0;
@@ -232,8 +264,13 @@ module.exports = function render(spec, cfg, st, tl) {
     // render hua. Generic text graphic sirf usi slot par jo GENERIC plan hua tha.
     const PLANNED_ASSET = { video: 'EXACT_VIDEO', context_video: 'CONTEXT_VIDEO', still: 'VERIFIED_SOURCE_STILL',
       montage: 'MONTAGE', graphic: 'TEMPLATE_GRAPHIC_MEDIA' };
-    let assetUsed = PLANNED_MEDIA[s.kind] ? PLANNED_ASSET[s.kind]
-      : (['needs_source', 'needs_review'].includes(s.kind) ? 'DIAGNOSTIC_CARD' : 'GENERIC_TEXT_GRAPHIC');
+    // USER KA MEDIA ALAG GINA JATA HAI. Ye kabhi "automatically researched exact
+    // clip" nahi bolna chahiye — wo jhooth report ko meaningless bana deta hai
+    // aur automation ki asli kaamyabi bhi chhupa deta hai.
+    const USER_ASSET = { video: 'USER_VIDEO', context_video: 'USER_VIDEO', still: 'USER_IMAGE', montage: 'USER_MONTAGE' };
+    let assetUsed = s.manual ? (USER_ASSET[s.kind] || 'USER_IMAGE')
+      : (PLANNED_MEDIA[s.kind] ? PLANNED_ASSET[s.kind]
+        : (['needs_source', 'needs_review'].includes(s.kind) ? 'DIAGNOSTIC_CARD' : 'GENERIC_TEXT_GRAPHIC'));
     let assetNote = null;
     if (missingReason || !r || !r.ok || !fs.existsSync(seg)) {
       // VERIFIED FALLBACK STATE MACHINE — kabhi chupchap doosre renderer mein nahi.
@@ -263,9 +300,15 @@ module.exports = function render(spec, cfg, st, tl) {
         // Production mein CHHUPANA nahi — export rok do.
         if (production) throw new Error(`shot ${s.i} (${s.kind}, ${s.start}-${s.end}s): ${why}. Koi verified alternate bhi nahi mila. ` +
           `Production export rok raha hoon (pehle ye chupchap text card ban jata tha aur report media-backed bolti thi). NEEDS_SOURCE.csv dekho.`);
-        const fb = renderSolid(cfg, seg, dur, '0x202020');
+        // DRAFT: rukna nahi — ek saaf-saaf gina hua placeholder lagao aur aage badho.
+        // Ye placeholder chhupata nahi, chillata hai: number, waqt, aur narration.
+        missingNo++;
+        const tag = `MISSING ${String(missingNo).padStart(3, '0')}`;
+        const fb = renderPlaceholder(cfg, seg, dur, tag, s, font, drawtextOK, W, H, FPS);
         if (!fb.ok || !fs.existsSync(seg)) throw new Error(`seg ${s.i} placeholder bhi fail`);
-        assetUsed = 'RENDER_FAILURE_FALLBACK'; assetNote = why;
+        assetUsed = 'MISSING_PLACEHOLDER'; assetNote = why;
+        missingSlots.push({ tag, i: s.i, start: s.start, end: s.end, moment_id: s.moment_id || null,
+          pack_id: s.pack_id || null, cue: s.cue || null, why });
       }
       failed++;
     }
@@ -299,7 +342,12 @@ module.exports = function render(spec, cfg, st, tl) {
   }
 
   // master voiceover mux
-  const finalOut = U.p(id, 'final.mp4');
+  //  DRAFT ka output ka naam ALAG hai. draft.mp4 mein placeholder ho sakte hain;
+  //  final.mp4 ka matlab hi ye hai ki usme koi khaali jagah nahi bachi.
+  //  Dono ko ek hi naam dena sabse aasan tareeka hota adhoori video ko final
+  //  samajh lene ka — isliye naam alag hai.
+  const outName = mode === 'draft' ? 'draft.mp4' : 'final.mp4';
+  const finalOut = U.p(id, outName);
   const audio = spec.audio;
   const vdur = U.probe(master).duration || tl.total;
   if (audio && fs.existsSync(audio)) {
@@ -336,9 +384,21 @@ module.exports = function render(spec, cfg, st, tl) {
     throw new Error('voiceover audio nahi mila. Production render ke liye audio zaroori (ya config.render.allowSilent=true test ke liye).');
   }
 
-  fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({ total: tl.total, shots: manifest }, null, 2));
+  fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({
+    total: tl.total, mode, is_draft: mode === 'draft',
+    // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
+    // waqt chahiye, isliye offset yahin likh dete hain.
+    preview_offset: spec.previewOffset || 0,
+    missing_placeholders: missingSlots,
+    shots: manifest,
+  }, null, 2));
   const pr = U.probe(finalOut);
-  U.ok(`render: final.mp4 (${n} segments${failed ? ', ' + failed + ' fallback-card' : ''}, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
-  st.meta.render = { segments: n, failed, duration: pr.ok ? +pr.duration.toFixed(1) : null, file: 'final.mp4' };
+  U.ok(`render: ${outName} (${n} segments${missingNo ? ', ' + missingNo + ' MISSING placeholder' : ''}${failed && !missingNo ? ', ' + failed + ' fallback' : ''}, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
+  if (missingNo) {
+    U.log(`   ${missingNo} jagah placeholder laga hai — ye draft hai, final nahi.`);
+    U.log('   Har placeholder par uska number likha hai (MISSING 001, 002 ...) aur wahi');
+    U.log('   number DATA folder mein bhi milega.');
+  }
+  st.meta.render = { segments: n, failed, missing: missingNo, duration: pr.ok ? +pr.duration.toFixed(1) : null, file: outName };
   return { file: finalOut, segments: n, duration: pr.ok ? pr.duration : null };
 };
