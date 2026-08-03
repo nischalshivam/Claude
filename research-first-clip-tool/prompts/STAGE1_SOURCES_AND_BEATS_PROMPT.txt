@@ -154,9 +154,18 @@ beats, but they are NOT an excuse to skip research. A previous attempt put 59 of
 83 moments into a GRAPHIC pack — 71% of the video with nothing to show.
 
 Rules:
-  - Keep GRAPHIC moments under 25% of total moments. If more than a quarter of
-    the script is landing in the graphic pack, you are using it as a dumping
-    ground for beats you did not research.
+  - HARD LIMIT: GRAPHIC moments must be under 25% of total moments. This is not a
+    guideline. Before you output, count them. If the number is over 25%, you must
+    go back and move beats out of the graphic pack into the show pack they are
+    actually discussing — not adjust the number you report.
+  - The test for each beat is simple: does this line talk about something that
+    happens on screen? "Candace watches the footage and realizes what she's
+    holding" is a SCENE, even though the sentence is analytical. Only a line with
+    no on-screen referent at all — a pure thesis statement or chapter transition —
+    belongs in the graphic pack.
+  - A previous attempt put 49 of 109 moments (45%) in the graphic pack while
+    reporting the count correctly in coverage_check. Knowing the number and
+    shipping anyway is the failure. Fix the packs, not the report.
   - Most analysis lines are ABOUT something that happens on screen. If the line
     analyses a scene, make it a normal moment in that show's pack, not a card.
   - For the analysis beats that genuinely have no scene, give each one a
@@ -327,7 +336,16 @@ Verify each item and fix what fails. Do not print this checklist.
 - Every script_cue_exact is an exact continuous substring of the supplied script;
   every sentence covered once, in order; each cue 8-30 words and unique; no
   moment over ~40 words.
-- moments_in_graphic_pack is under 25% of moments_total.
+- moments_total equals the real number of moments in the output, and
+  moments_in_graphic_pack is under 25% of it. If it is not, move beats — do not
+  ship the violation with an accurate count attached to it.
+- sources_opened_and_verified counts ONLY sources whose inspection_status is
+  VERIFIED_WATCHED or TRANSCRIPT_CHECKED. A METADATA_ONLY source was not opened,
+  so it does not count here, and its has_captions must be omitted rather than
+  guessed. If that leaves the number low, that is the honest number.
+- entire_script_covered is true ONLY when uncovered_script_cues AND
+  packs_needing_more_research are BOTH empty. If you listed anything under
+  packs_needing_more_research, entire_script_covered is false. No exceptions.
 - Every dialogue_exact was read in that source's captions, verbatim, one
   continuous utterance.
 - Every EXACT_TIME you did include was actually watched, end_sec > start_sec, and

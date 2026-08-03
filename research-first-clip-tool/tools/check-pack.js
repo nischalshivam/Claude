@@ -330,6 +330,17 @@ const checks = [
   ['Alignment saaf (script_cue_exact SRT se milta hai)', alignBad.length === 0, `${alignBad.length} moments ka cue match nahi/ambiguous`],
   ['Scope titles consistent (ek show = ek hi title)', scopeMismatch.length === 0, `${scopeMismatch.length} title mismatch`],
 ];
+// Ye do check research AI ki self-report par nahi, pack ke apne fields par hain.
+// Dono baar-baar toote hain: "maine verify kiya" likh kar sources METADATA_ONLY
+// chhod dena, aur jo beats research nahi hui unhe GRAPHIC pack mein daal dena.
+const allSources = Object.values(sourcesById).filter(isUsableSource);
+const unopened = allSources.filter(s => (s.inspection_status || 'METADATA_ONLY') === 'METADATA_ONLY');
+const graphicMoments = rows.filter(r => r.pk.scope && r.pk.scope.kind === 'GRAPHIC').length;
+const graphicPct = pct(graphicMoments, rows.length);
+checks.push(['Sources sach mein khole gaye (METADATA_ONLY nahi)', unopened.length === 0,
+  `${unopened.length}/${allSources.length} sirf metadata se liye gaye`]);
+checks.push(['Analysis/GRAPHIC moments <= 25%', graphicPct <= 25,
+  `abhi ${graphicPct}% (${graphicMoments}/${rows.length} moments)`]);
 if (probe.ran) {
   checks.push(['Saare sources abhi live hain (video hata nahi)', probe.deadSources.length === 0, `${probe.deadSources.length} dead`]);
   checks.push(['EXACT_TIME timestamps episode ke andar hain', probe.timeBad.length === 0, `${probe.timeBad.length} bahar`]);
@@ -339,6 +350,23 @@ if (probe.ran) {
 let pass = true;
 for (const [name, ok, detail] of checks) { say(`   [${ok ? 'OK ' : 'NO '}] ${name} — ${detail}`); if (!ok) pass = false; }
 
+if (unopened.length) {
+  line('-');
+  say(`  YE ${unopened.length} SOURCE "METADATA_ONLY" HAIN — research AI ne inhe search results`);
+  say('  mein dekha, KHOLA nahi. Inka URL, duration aur captions sab abhi ANUMAAN hain:');
+  unopened.slice(0, 10).forEach(s => say(`   ${String(s.pack_id).padEnd(14)} ${s.source_id.padEnd(10)} ${String(s.url || s.local_file).slice(0, 44)}`));
+  if (unopened.length > 10) say(`   ...aur ${unopened.length - 10}`);
+  say('  Inpar timestamps banwane se PEHLE verify karao — CHECKPACK.bat (probe ke saath)');
+  say('  khud khol kar bata dega, ya stage 2 inhe verify/replace kar dega.');
+}
+if (graphicPct > 25) {
+  line('-');
+  say(`  ANALYSIS/GRAPHIC PACK MEIN ${graphicMoments} MOMENTS (${graphicPct}%) — ye zyada hai.`);
+  say('  Aksar iska matlab hai ki jin beats ki research nahi hui, unhe "analysis" bolkar');
+  say('  yahan daal diya gaya. Bahut si analysis lines kisi SCENE ke baare mein hi hoti');
+  say('  hain — unhe us show ke pack mein hona chahiye, card mein nahi.');
+  say('  (Stage 2 inpar frame_hints maangega, to ye poori tarah bekaar nahi jayenge.)');
+}
 if (scopeMismatch.length) {
   line('-');
   say('  SCOPE TITLE MISMATCH — ye do titles ek hi show lagte hain par alag likhe hain.');
@@ -400,6 +428,8 @@ const reportJson = {
   empty_moments: gaps.map(r => ({ moment_id: r.m.moment_id, pack_id: r.pk.pack_id, seconds: +r.dur.toFixed(1) })),
   borrowed_moments: borrowed.map(r => ({ moment_id: r.m.moment_id, pack_id: r.pk.pack_id, seconds: +r.dur.toFixed(1) })),
   scope_title_mismatch: scopeMismatch,
+  unopened_sources: unopened.map(s => ({ source_id: s.source_id, pack_id: s.pack_id, url: s.url || s.local_file || null })),
+  graphic_moment_percent: graphicPct,
   live_verify: probe.ran ? {
     locators_checked: probe.checked, dialogue_found: probe.dialogueOK,
     dead_sources: probe.deadSources, bad_exact_time: probe.timeBad, dialogue_not_found: probe.dialogueBad,

@@ -422,11 +422,42 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     A.status === 2 && /M_FAKEDLG/.test(A.need) && /M_OOB/.test(A.need),
     `exit=${A.status} workOrderBytes=${A.need.length}`);
 
+  // --- (a2) research AI ki do aam chaalbaaziyan: "verify kiya" bolkar sources
+  //          METADATA_ONLY chhodna, aur bina research wale beats ko "analysis"
+  //          bolkar GRAPHIC pack mein daal dena. Dono pack ke apne fields se
+  //          pakde jate hain, AI ki self-report se nahi.
+  const sloppy = {
+    schema_version: 'scene-research-pack-v1', project_title: 'Sloppy',
+    packs: [
+      { pack_id: 'P1', scope: { kind: 'SERIES', title: 'Show S' },
+        sources: [{ source_id: 'S_OPEN', local_file: good.video, local_subs: good.srt, inspection_status: 'TRANSCRIPT_CHECKED' },
+                  { source_id: 'S_GUESS', url: 'https://www.youtube.com/watch?v=NEVEROPEN1', inspection_status: 'METADATA_ONLY' }],
+        moments: [{ moment_id: 'S_M1', script_cue_exact: 'The alarm rings across the base.',
+          locators: [{ source_id: 'S_OPEN', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'P9_G', scope: { kind: 'GRAPHIC', title: 'Analysis cards' }, sources: [],
+        moments: [
+          { moment_id: 'G_M1', script_cue_exact: 'She opens the sealed hatch slowly.', locators: [], fallback_plan: { allowed_pack_ids: ['P1'] }, fallback: { type: 'LOCAL_GRAPHIC', text: 'a' } },
+          { moment_id: 'G_M2', script_cue_exact: 'They meet on the rooftop at night.', locators: [], fallback_plan: { allowed_pack_ids: ['P1'] }, fallback: { type: 'LOCAL_GRAPHIC', text: 'b' } },
+          { moment_id: 'G_M3', script_cue_exact: 'The final shot fades to black.', locators: [], fallback_plan: { allowed_pack_ids: ['P1'] }, fallback: { type: 'LOCAL_GRAPHIC', text: 'c' } },
+        ] },
+    ],
+  };
+  const sf = path.join(d, 'sloppy.json'); fs.writeFileSync(sf, JSON.stringify(sloppy, null, 2));
+  const S = run(sf, path.join(d, 'out_sloppy'), ['--no-probe']);
+  const sFailed = (S.rep && S.rep.failed_checks || []).map(f => f.check).join(' | ');
+  check('T-PACK8 unopened (METADATA_ONLY) sources are named, not taken on trust',
+    S.rep && (S.rep.unopened_sources || []).length === 1 && S.rep.unopened_sources[0].source_id === 'S_GUESS'
+      && /METADATA_ONLY/.test(sFailed) && /NEVEROPEN1/.test(S.stdout),
+    `unopened=${S.rep ? JSON.stringify((S.rep.unopened_sources || []).map(x => x.source_id)) : 'n/a'}`);
+  check('T-PACK9 oversized GRAPHIC pack is flagged (beats parked as "analysis")',
+    S.rep && S.rep.graphic_moment_percent === 75 && /GRAPHIC moments <= 25%/.test(sFailed),
+    `graphic=${S.rep ? S.rep.graphic_moment_percent : '?'}%`);
+
   // --- (b) saaf pack: koi jhoothi alarm nahi ---
   const goodPack = {
     schema_version: 'scene-research-pack-v1', project_title: 'PackCheckOK',
     packs: [{ pack_id: 'P1', scope: { kind: 'SERIES', title: 'The Amazing World of X' },
-      sources: [{ source_id: 'S_OK', local_file: good.video, local_subs: good.srt }],
+      sources: [{ source_id: 'S_OK', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
       moments: [
         { moment_id: 'G1', script_cue_exact: 'The alarm rings across the base.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
         { moment_id: 'G2', script_cue_exact: 'She opens the sealed hatch slowly.', locators: [{ source_id: 'S_OK', locator_type: 'EXACT_TIME', start_sec: 22, end_sec: 28, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },

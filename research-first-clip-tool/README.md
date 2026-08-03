@@ -131,6 +131,8 @@ Kya check hota hai:
 | **source abhi live hai ya delete/private ho gaya** | pack purana ho to URLs mar jate hain |
 | **scope title mismatch** | ek hi show ke do alag spelling = engine unhe do alag show samajhta hai = sources aapas mein use nahi hote |
 | **alignment** | `script_cue_exact` voiceover se hubahu match hona chahiye, warna clip galat jagah lagegi |
+| **source sach mein khola gaya?** | `METADATA_ONLY` ka matlab hai AI ne sirf search result dekha. Us par timestamp banwana coin-flip hai |
+| **GRAPHIC pack ka size** | 25% se zyada = jin beats ki research nahi hui unhe "analysis" bolkar park kiya gaya |
 
 Do files banti hain `output/` mein:
 
@@ -329,7 +331,10 @@ khatam).
   Stage 2 stage-1 ke dead/galat sources ko replace bhi kar sakta hai; junk URL
   aur unknown source_id refuse hote hain, aur timestamps corrected duration par
   check hote hain.
-- 21 naye regression tests (T-PACK1..7, T-MERGE1..5, T-S21..29). Suite ab **44 PASS / 0 FAIL**.
+- **CHECKPACK ab do aur cheezein pakadta hai** — `METADATA_ONLY` sources (AI ne
+  search mein dekha, khola nahi) aur 25% se bada GRAPHIC pack. Dono pack ke apne
+  fields se check hote hain, AI ki self-report se nahi.
+- 23 naye regression tests (T-PACK1..9, T-MERGE1..5, T-S21..29). Suite ab **46 PASS / 0 FAIL**.
 
 **M1.3**
 - **Narration runner-up fix** — dense micro-cue (Whisper) SRT mein overlapping

@@ -127,10 +127,18 @@ for (const pk of pack.packs) {
   if (!srcs.length) continue;
   P(`  ${pk.pack_id}  [${pk.scope.kind}] ${pk.scope.title}${pk.scope.episode_title ? ' — ' + pk.scope.episode_title : ''}`);
   for (const s of srcs) {
-    P(`     source_id: ${s.source_id}`);
+    const unopened = (s.inspection_status || 'METADATA_ONLY') === 'METADATA_ONLY';
+    P(`     source_id: ${s.source_id}${unopened ? '   *** NOT OPENED IN STAGE 1 — VERIFY THIS ONE CAREFULLY ***' : ''}`);
     P(`     ${s.url || ('local file: ' + s.local_file)}`);
-    if (s.duration_sec) P(`     stated duration: ${s.duration_sec}s  (VERIFY this against the real upload)`);
+    if (s.duration_sec) P(`     stage-1 claims: ${s.duration_sec}s${typeof s.has_captions === 'boolean' ? `, captions ${s.has_captions}` : ''}  (${unopened ? 'UNVERIFIED GUESS — check both' : 'confirm both'})`);
   }
+  P('');
+}
+if (placeholderish.length) {
+  P(`NOTE: ${placeholderish.length} of these were marked METADATA_ONLY by stage 1 — the`);
+  P('researcher found them in search results but never opened them. Their stated');
+  P('duration and caption flags are guesses, and some may not exist at all. Start');
+  P('with those. Every timestamp you write on an unopened source is a coin flip.');
   P('');
 }
 P('For each source, one of three things is true:');
