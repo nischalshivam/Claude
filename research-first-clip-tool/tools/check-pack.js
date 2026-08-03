@@ -63,7 +63,19 @@ const fail = msg => { console.log('  [FAIL] ' + msg); process.exit(1); };
 line(); say('  RESEARCH PACK REPORT CARD  (render se pehle 5-second check)'); line();
 
 // ---------- 1. pack load + validate ----------
-if (!fs.existsSync(packFile)) fail(`pack nahi mila: ${packFile}`);
+if (!fs.existsSync(packFile)) {
+  console.log(`  [FAIL] pack nahi mila: ${packFile}`);
+  console.log('');
+  console.log('  Kya karna hai:');
+  console.log('   1. Genspark se jo JSON aaya hai use save karo');
+  console.log(`   2. uska naam BILKUL "scene-research.json" rakho (test.json nahi)`);
+  console.log(`   3. use is folder ke "input" folder ke andar daalo:`);
+  console.log(`        ${path.join(ROOT, 'input')}`);
+  console.log('   4. phir CHECKPACK.bat par double-click karo');
+  console.log('');
+  console.log('  (voiceover.srt bhi ho to seconds exact aayenge — na ho to bhi chal jayega.)');
+  process.exit(1);
+}
 const v = validate.validateFile(packFile);
 (v.warnings || []).slice(0, 6).forEach(w => say('  [warn] ' + w));
 if ((v.warnings || []).length > 6) say(`  [warn] ...aur ${v.warnings.length - 6} warnings`);
