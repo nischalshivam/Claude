@@ -352,6 +352,9 @@ khatam).
   hai, aur wo dialogue lines bhi naam se batata hai jo asli captions mein nahi
   mile. Stage 2 ko wahi kaam dobara nahi karna padta.
 - **`--apply-probe`** — naapi hui duration/captions pack mein likh deta hai.
+- **Enum normalization** — `apply-stage2` ab AI ke near-miss enums (`WATCHED`,
+  `LICENSED_CLIP`) ko sahi value par map karta hai; jo pehchana na jaye use
+  chhod deta hai. Pehle wo seedha pack mein chala jata tha aur schema todta tha.
 - 26 naye regression tests (T-PACK1..9, T-MERGE1..5, T-S21..29, T-S210..212).
   Suite ab **49 PASS / 0 FAIL**.
 

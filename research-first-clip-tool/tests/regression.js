@@ -676,6 +676,21 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   check('T-S28 junk replacement URL and unknown source_id are refused',
     s1 && /youtube|\.mp4$/i.test(String(s1.url || s1.local_file || '')) && !/not a url/.test(String(s1.url || '')) && !src('NOPE_S99'),
     `p1src=${s1 ? String(s1.url || s1.local_file).slice(0, 26) : 'n/a'}`);
+  // AI enum ke aas-paas ki value likh deta hai ("WATCHED", "LICENSED_CLIP").
+  // Wo jaisi ki waisi pack mein chali gayi to schema toot jata hai.
+  const enumFix = [{ replace_sources: [{ source_id: 'P02_S01', url: 'https://www.youtube.com/watch?v=ENUMFIX001', duration_sec: 900, source_kind: 'LICENSED_CLIP', inspection_status: 'WATCHED' }] },
+                   { source_updates: [{ source_id: 'P01_S01', inspection_status: 'nonsense_status' }] }];
+  const ef = path.join(d, 'enum.json'); fs.writeFileSync(ef, JSON.stringify(enumFix));
+  const outPack3 = path.join(d, 'enum-out.json');
+  const E = spawnSync('node', ['tools/apply-stage2.js', pf2, ef, '-o', outPack3], { cwd: ROOT, encoding: 'utf8', timeout: 120000, env: process.env });
+  let EP = null; try { EP = JSON.parse(fs.readFileSync(outPack3, 'utf8')); } catch {}
+  const esrc = sid => { for (const p of (EP ? EP.packs : [])) for (const s of (p.sources || [])) if (s.source_id === sid) return s; return null; };
+  const e2 = esrc('P02_S01'), e1 = esrc('P01_S01');
+  check('T-S213 near-miss enum values are mapped, unknown ones left alone (schema stays valid)',
+    E.status === 0 && e2 && e2.source_kind === 'LICENSED_UPLOAD' && e2.inspection_status === 'VERIFIED_WATCHED'
+      && e1 && e1.inspection_status !== 'nonsense_status' && /pehchana nahi/.test(E.stdout),
+    `kind=${e2 ? e2.source_kind : '?'} status=${e2 ? e2.inspection_status : '?'} untouched=${e1 ? e1.inspection_status : '?'}`);
+
   check('T-S29 timestamps are validated against the CORRECTED duration, not the stale one',
     fm1 && fm1.locators.some(l => l.start_sec === 900),
     `applied900=${fm1 ? fm1.locators.some(l => l.start_sec === 900) : 'n/a'}`);

@@ -77,6 +77,27 @@ const srcNotes = [];
 const findSourceObj = sid => { for (const pk of pack.packs) for (const s of (pk.sources || [])) if (s.source_id === sid) return s; return null; };
 const looksLikeUrl = u => /^https?:\/\/[^\s"']+$/i.test(String(u || ''));
 
+// AI aksar enum ke aas-paas ki value likh deta hai ("WATCHED", "LICENSED_CLIP").
+// Unhe jaisa ka waisa pack mein likhna matlab schema todna. Jo saaf-saaf samajh
+// aata hai use map karo, baaki chhod do (purani value rehne do) — kabhi guess nahi.
+const ENUM = require(path.join(ROOT, 'src', 'validate.js')).ENUM;
+const ALIAS = {
+  inspection: { WATCHED: 'VERIFIED_WATCHED', VIEWED: 'VERIFIED_WATCHED', VERIFIED: 'VERIFIED_WATCHED',
+    TRANSCRIPT: 'TRANSCRIPT_CHECKED', CAPTIONS_CHECKED: 'TRANSCRIPT_CHECKED', METADATA: 'METADATA_ONLY' },
+  sourceKind: { LICENSED_CLIP: 'LICENSED_UPLOAD', OFFICIAL_FULL_EPISODE: 'OFFICIAL_EPISODE',
+    FULL_EPISODE: 'OFFICIAL_EPISODE', CLIP: 'OFFICIAL_CLIP', SCENE: 'CLEAN_SCENE', FAN_UPLOAD: 'OTHER' },
+};
+function normEnum(kind, value, sid) {
+  if (value == null) return null;
+  const v = String(value).trim().toUpperCase();
+  const allowed = ENUM[kind] || [];
+  if (allowed.includes(v)) return v;
+  const mapped = (ALIAS[kind] || {})[v];
+  if (mapped) { srcNotes.push(`${sid}: ${kind} "${value}" -> "${mapped}"`); return mapped; }
+  srcNotes.push(`${sid}: ${kind} "${value}" pehchana nahi — purani value rehne di`);
+  return null;
+}
+
 for (const r of replaceSrc) {
   const s = findSourceObj(r.source_id);
   if (!s) { srcNotes.push(`replace_sources: "${r.source_id}" pack mein nahi — chhoda`); continue; }
@@ -87,9 +108,9 @@ for (const r of replaceSrc) {
   if (r.title) s.title = r.title;
   if (r.channel) s.channel = r.channel;
   if (typeof r.duration_sec === 'number' && r.duration_sec > 0) s.duration_sec = r.duration_sec;
-  if (r.source_kind) s.source_kind = r.source_kind;
+  const sk = normEnum('sourceKind', r.source_kind, r.source_id); if (sk) s.source_kind = sk;
   if (typeof r.has_captions === 'boolean') s.has_captions = r.has_captions;
-  s.inspection_status = r.inspection_status || 'VERIFIED_WATCHED';
+  s.inspection_status = normEnum('inspection', r.inspection_status, r.source_id) || 'VERIFIED_WATCHED';
   s.source_notes = `stage2 replaced (${r.reason || 'original unusable'})`;
   sourcesById[r.source_id] = { ...s, pack_id: (sourcesById[r.source_id] || {}).pack_id };
   srcNotes.push(`REPLACED ${r.source_id}: ${String(old).slice(0, 34)} -> ${String(r.url).slice(0, 34)}`);
@@ -100,7 +121,8 @@ for (const u of srcUpdates) {
   const bits = [];
   if (typeof u.duration_sec === 'number' && u.duration_sec > 0 && u.duration_sec !== s.duration_sec) { bits.push(`duration ${s.duration_sec || '?'}s -> ${u.duration_sec}s`); s.duration_sec = u.duration_sec; }
   if (typeof u.has_captions === 'boolean' && u.has_captions !== s.has_captions) { bits.push(`captions ${u.has_captions}`); s.has_captions = u.has_captions; }
-  if (u.inspection_status && u.inspection_status !== s.inspection_status) { bits.push(`${s.inspection_status || '?'} -> ${u.inspection_status}`); s.inspection_status = u.inspection_status; }
+  const ins = normEnum('inspection', u.inspection_status, u.source_id);
+  if (ins && ins !== s.inspection_status) { bits.push(`${s.inspection_status || '?'} -> ${ins}`); s.inspection_status = ins; }
   if (bits.length) { sourcesById[u.source_id] = { ...s, pack_id: (sourcesById[u.source_id] || {}).pack_id }; srcNotes.push(`updated ${u.source_id}: ${bits.join(', ')}`); }
 }
 if (srcNotes.length) { console.log(''); srcNotes.forEach(n => console.log('  [src] ' + n)); }
