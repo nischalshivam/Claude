@@ -33,6 +33,16 @@ function bankPath(id, sourceId) { return U.p(id, 'cache', '_bank', `${sourceId}.
 // chhod dete hain (wajah ke saath).
 const _srcFails = {};
 const MAX_SRC_FAILS = 2;
+// M4.1: kuch nakaamiyan "shayad agli baar chal jaye" wali nahi hoti — wo source
+// ka hi kharab hona batati hain (koi video stream hi nahi, format support nahi,
+// video hata diya gaya). Asli run mein P02_S02 ne aisi hi ek galti par DO baar
+// ~165-165 second khaye — yaani 5.5 minute, do baar wahi jawab paane ke liye.
+// Aisa source pehli baar mein hi is run ke liye band ho jata hai.
+const _srcDead = {};
+const FATAL_RE = /zero video streams|no usable video stream|unsupported|video unavailable|private video|removed by the uploader|is not available/i;
+function isFatalSourceError(err) { return FATAL_RE.test(String(err || '')); }
+function markSourceDead(sid, why) { if (sid && !_srcDead[sid]) _srcDead[sid] = String(why || '').slice(0, 120); }
+function sourceDeadReason(sid) { return _srcDead[sid] || null; }
 
 function acquireFullSource(id, cfg, cand, meta, spec) {
   const bank = bankPath(id, cand.source_id);
@@ -353,6 +363,14 @@ module.exports = function download(spec, cfg, st, resolved) {
     let done = false;
     for (let ci = 0; ci < cands.length; ci++) {
       const t1 = Date.now();
+      const dead = sourceDeadReason(cands[ci].source_id);
+      if (dead) {
+        // is source ko is run mein pehle hi kharab paya ja chuka hai — dobara
+        // 3 minute uspar kharch karna bekaar hai.
+        U.log(`     skip ${cands[ci].source_id} — is run mein pehle hi fail ho chuka (${dead})`);
+        dlAttempts.push({ candidate: ci, source_id: cands[ci].source_id, error: `skipped: ${dead}` });
+        continue;
+      }
       U.log(`     attempt ${ci + 1}/${cands.length} ${cands[ci].source_id}${cands[ci].url ? ' (yt-dlp range)' : ' (local file)'} ...`);
       const res = downloadCandidate(id, cfg, cands[ci], { spec });
       if (res.ok) {
@@ -365,8 +383,12 @@ module.exports = function download(spec, cfg, st, resolved) {
         ok++; done = true; break;
       }
       dlAttempts.push({ candidate: ci, source_id: cands[ci].source_id, error: res.error });
-      const more = ci + 1 < cands.length;
       U.log(`     FAILED in ${secs(t1)}s — ${String(res.error).slice(0, 110)}`);
+      if (isFatalSourceError(res.error)) {
+        markSourceDead(cands[ci].source_id, res.error);
+        U.log(`     -> ${cands[ci].source_id} is run ke liye band (ye source ki hi kharabi hai, timestamp ki nahi)`);
+      }
+      const more = cands.slice(ci + 1).some(c => !sourceDeadReason(c.source_id));
       if (more) U.log(`     -> agla alternate candidate try kar rahe hain`);
     }
     if (!done) {
@@ -391,3 +413,5 @@ module.exports.rangeKey = rangeKey;
 module.exports.bankPath = bankPath;
 module.exports.acquireFullSource = acquireFullSource;
 module.exports.planAcquisition = planAcquisition;
+module.exports.isFatalSourceError = isFatalSourceError;
+module.exports.sourceDeadReason = sourceDeadReason;

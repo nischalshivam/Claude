@@ -13,7 +13,7 @@ cd /d "%~dp0"
 :menu
 cls
 echo ==============================================================
-echo   RESEARCH-FIRST CLIP TOOL  -  M4
+echo   RESEARCH-FIRST CLIP TOOL  -  M4.1
 echo ==============================================================
 if exist "input\scene-research.json" (echo   pack       : input\scene-research.json  [mila]) else (echo   pack       : NAHI MILA  -^> Genspark ka JSON input\ mein daalo)
 if exist "input\voiceover.srt" (echo   voiceover  : input\voiceover.srt  [mila]) else (echo   voiceover  : NAHI MILA  -^> preview/render nahi chalega)
@@ -34,11 +34,12 @@ echo   8. Poora render             ^(sirf jab pack PRODUCTION_READY ho^)
 echo   9. Review dashboard         ^(teeno preview ek saath^)
 echo.
 echo   D. Draft banao              ^(poori video, khaali jagah par MISSING card^)
+echo   R. Draft - saaf shuruat     ^(sab dobara download - normally zaroorat nahi^)
 echo   M. Missing media complete karo  ^(dashboard - apni images/videos daalo^)
 echo   L. Local fixes ^(bina AI ke^) - cue theek karo + criticality migrate
 echo   0. Bahar
 echo.
-set /p c=  Kya karna hai (0-9, D, M, L)?
+set /p c=  Kya karna hai (0-9, D, R, M, L)?
 
 if "%c%"=="1" ( node src\run.js --only=check & call :done "setup check" & goto menu )
 if "%c%"=="2" ( node tools\check-pack.js input\scene-research.json input\voiceover.srt --apply-probe & call :check & goto menu )
@@ -57,7 +58,8 @@ if "%c%"=="6" ( node src\run.js --job=preview_mid  --redo --preview-start=300 --
 if "%c%"=="7" ( node src\run.js --job=preview_weak --redo --preview-start=600 --preview-duration=120 & call :job preview_weak & goto menu )
 if "%c%"=="8" ( node src\run.js & call :job "" & goto menu )
 if "%c%"=="9" ( node tools\review-dashboard.js & call :done "review dashboard" & goto menu )
-if /i "%c%"=="D" ( node src\run.js --draft --redo & call :job "" & goto menu )
+if /i "%c%"=="D" ( node src\run.js --draft & call :job "" & goto menu )
+if /i "%c%"=="R" ( node src\run.js --draft --redo & call :job "" & goto menu )
 if /i "%c%"=="M" ( node tools\ui.js & goto menu )
 if /i "%c%"=="L" goto local
 if "%c%"=="0" exit /b 0

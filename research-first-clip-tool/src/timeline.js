@@ -28,7 +28,11 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   const MINS = S.minSeconds || 3;
   const MAXS = S.maxSeconds || 7.5;
   const ABSORB = S.gapAbsorbSeconds || 1.5;
-  const production = (cfg.output && cfg.output.mode) !== 'review';
+  // M4.1: draft bhi diagnostic hai. Pehle yahan sirf 'review' ko chhoot thi,
+  // isliye --draft bhi production mana jata tha aur criticality gate 13 critical
+  // beats par THROW kar deta tha — render, gap plan aur DATA folders bane hi
+  // nahi. Yaani "draft kabhi rukta nahi" asli critical pack par galat nikla.
+  const production = (cfg.output && cfg.output.mode) !== 'review' && (cfg.output && cfg.output.mode) !== 'draft';
 
   const cues = SUB.parseFile(spec.srt);
   if (!total) total = cues.length ? cues[cues.length - 1].end : 0;
@@ -477,13 +481,18 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
       got: mine.map(s => s.asset).filter((v, i, a) => a.indexOf(v) === i).join('/') || 'nothing',
       cue: String(e.script_cue_exact || '').slice(0, 60) });
   }
+  // M4.1: TIMELINE AB THROW NAHI KARTA.
+  //  Pehle gate yahin lagta tha — aur yahi asli project ko marta tha, kyunki
+  //  user ka apna media (DATA folder) timeline ke BAAD lagta hai. Matlab critical
+  //  beat ke liye user file de bhi de, wo kabhi lagti hi nahi thi: timeline
+  //  pehle hi mar jati thi.
+  //  Ab tarteeb ye hai:
+  //     candidate timeline  ->  manual media  ->  EK effective gate  ->  render
+  //  Gate src/effectivegate.js mein hai aur CLI/UI/tests sab wahi use karte hain.
   if (critFails.length) {
-    U.warn(`${critFails.length} HOOK/HARD_EVIDENCE moments ke paas exact evidence nahi hai:`);
+    U.warn(`${critFails.length} HOOK/HARD_EVIDENCE moments ke paas abhi exact evidence nahi hai:`);
     critFails.slice(0, 10).forEach(f => U.log(`     ${f.criticality.padEnd(14)} ${f.moment_id.padEnd(12)} mila: ${f.got}  "${f.cue}..."`));
-    if (production) {
-      throw new Error(`${critFails.length} critical moments (HOOK/HARD_EVIDENCE) ke paas exact clip/hint nahi hai — production export rok raha hoon. ` +
-        `Inpar research chahiye (CHECKPACK/NEEDS_RESEARCH.txt dekho), ya inki criticality NORMAL karo agar ye sach mein critical nahi hain.`);
-    }
+    U.log('     (ye candidate timeline hai — aapka DATA folder wala media abhi lagega, phir final gate chalega)');
   }
   st.meta.criticality_failures = critFails;
   if (borrowLog.length) {
@@ -500,7 +509,7 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   const drift = +(total - sum).toFixed(3);
   if (Math.abs(drift) > 0.05 && slots.length) { const L = slots[slots.length - 1]; L.end = +(L.end + drift).toFixed(3); L.dur = +(L.end - L.start).toFixed(3); }
 
-  fs.writeFileSync(U.p(id, 'timeline.json'), JSON.stringify({ total, slots }, null, 2));
+  fs.writeFileSync(U.p(id, 'timeline.json'), JSON.stringify({ total, slots, criticality_failures: critFails }, null, 2));
 
   // ---- HONEST metrics: media-backed vs GENERIC full-screen text alag ----
   const secAsset = a => slots.filter(s => (s.asset || '') === a).reduce((x, s) => x + s.dur, 0);

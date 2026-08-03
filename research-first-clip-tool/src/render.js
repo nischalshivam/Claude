@@ -115,6 +115,28 @@ module.exports = function render(spec, cfg, st, tl) {
     const seg = path.join(segDir, `seg_${String(s.i).padStart(4, '0')}.mp4`);
     const dur = Math.max(0.3, s.dur);
     let r;
+    // ---- DRAFT: gate ka faisla hi aakhri hai ----
+    // Effective gate (src/effectivegate.js) pehle hi tay kar chuka hai ki kis
+    // slot par sach mein koi media nahi hai, aur usne har aise slot par uska
+    // DATA request ka label chipka diya hai. Render apna alag andaza nahi
+    // lagata — warna wahi purana bug lautta hai: video par "MISSING 002" aur
+    // folder kahin aur. Ek hi faisla, ek hi number.
+    if (mode === 'draft' && s.missing_label) {
+      missingNo++;
+      const ph = renderPlaceholder(cfg, seg, dur, s.missing_label, s, font, drawtextOK, W, H, FPS);
+      if (!ph.ok || !fs.existsSync(seg)) throw new Error(`seg ${s.i} placeholder nahi ban paya`);
+      manifest.push({ i: s.i, start: s.start, end: s.end, dur, kind: s.kind, asset: 'MISSING_PLACEHOLDER',
+        asset_note: 'is jagah koi asli media nahi mila — DATA folder mein media daalo',
+        moment_id: s.moment_id || null, pack_id: s.pack_id || null,
+        criticality: s.criticality || 'NORMAL', cue: s.cue || null,
+        missing_label: s.missing_label, manual: false });
+      missingSlots.push({ tag: s.missing_label, request_label: s.missing_label, i: s.i,
+        start: s.start, end: s.end, moment_id: s.moment_id || null, pack_id: s.pack_id || null,
+        cue: s.cue || null, why: 'gate: koi asli media nahi' });
+      listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
+      n++; failed++;
+      continue;
+    }
     // ---- P0: har planned asset PEHLE ek absolute path par resolve hota hai ----
     // Pehle har branch ki condition mein fs.existsSync tha. File na mile to
     // execution agli branch mein chala jata tha aur aakhir mein generic TEXT CARD
@@ -302,12 +324,15 @@ module.exports = function render(spec, cfg, st, tl) {
           `Production export rok raha hoon (pehle ye chupchap text card ban jata tha aur report media-backed bolti thi). NEEDS_SOURCE.csv dekho.`);
         // DRAFT: rukna nahi — ek saaf-saaf gina hua placeholder lagao aur aage badho.
         // Ye placeholder chhupata nahi, chillata hai: number, waqt, aur narration.
+        // Label gap planner se aata hai (timeline stage mein tay hua). Isse
+        // video par likha number aur DATA folder ka number HAMESHA ek jaisa
+        // rehta hai. Label na ho to hi apni ginti (purana behaviour).
         missingNo++;
-        const tag = `MISSING ${String(missingNo).padStart(3, '0')}`;
+        const tag = s.missing_label || `MISSING ${String(missingNo).padStart(3, '0')}`;
         const fb = renderPlaceholder(cfg, seg, dur, tag, s, font, drawtextOK, W, H, FPS);
         if (!fb.ok || !fs.existsSync(seg)) throw new Error(`seg ${s.i} placeholder bhi fail`);
         assetUsed = 'MISSING_PLACEHOLDER'; assetNote = why;
-        missingSlots.push({ tag, i: s.i, start: s.start, end: s.end, moment_id: s.moment_id || null,
+        missingSlots.push({ tag, request_label: s.missing_label || null, i: s.i, start: s.start, end: s.end, moment_id: s.moment_id || null,
           pack_id: s.pack_id || null, cue: s.cue || null, why });
       }
       failed++;
@@ -323,7 +348,11 @@ module.exports = function render(spec, cfg, st, tl) {
       hint_times: s.hint_times || null, hint_deltas: s.hint_deltas || null,
       must_show: s.must_show || [], must_not_show: s.must_not_show || [], cue: s.cue || null,
       video: s.video || null, media_file: s.media_file || null, media_start: s.media_start != null ? s.media_start : null,
-      why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused });
+      why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused,
+      // manual provenance — kaunsi file, kis request se, kis hash ki
+      manual: !!s.manual, manual_request_id: s.manual_request_id || null,
+      manual_sha256: s.manual_sha256 || null, manual_file: s.manual_file || null,
+      missing_label: s.missing_label || null });
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
     n++;
   }

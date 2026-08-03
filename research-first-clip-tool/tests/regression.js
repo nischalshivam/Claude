@@ -1466,6 +1466,130 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   })();
 })();
 
+// ---------- T-M41: the real 897s run's failures ----------
+//  M4 ke 95/0 tests ke bawajood asli project timeline par mara — kyunki har
+//  hybrid fixture mein missing beats NORMAL the. Ye fixture jaan-boojh kar
+//  HOOK + HARD_EVIDENCE + NORMAL, teeno rakhta hai.
+(() => {
+  const manual = require(path.join(ROOT, 'src', 'manual.js'));
+  const gapplan = require(path.join(ROOT, 'src', 'gapplan.js'));
+  const DL = require(path.join(ROOT, 'src', 'download.js'));
+
+  const d = path.join(FX, 'm41crit');
+  makeNarr(d, [
+    { start: 0, end: 6, text: 'The alarm rings across the base.' },
+    { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    { start: 12, end: 18, text: 'They meet on the rooftop at night.' },
+    { start: 18, end: 24, text: 'The final shot fades to black.' },
+  ]);
+  writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'C41', packs: [
+    { pack_id: 'C1', scope: { kind: 'SERIES', title: 'Show C', year: 2011, season: 1, episode_number: 1 },
+      sources: [{ source_id: 'CS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [{ moment_id: 'C_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+        locators: [{ source_id: 'CS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+    // koi source nahi — aur beats CRITICAL hain. M4 yahin marta tha.
+    { pack_id: 'C2', scope: { kind: 'FILM', title: 'Film With No Upload', year: 2020 }, sources: [],
+      moments: [
+        { moment_id: 'C_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'HARD_EVIDENCE',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'C_M3', script_cue_exact: 'They meet on the rooftop at night.', criticality: 'HOOK',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+        { moment_id: 'C_M4', script_cue_exact: 'The final shot fades to black.', criticality: 'NORMAL',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+  ] });
+  const dataDir = path.join(ROOT, 'tests', 'tmp', 'data_c41_' + process.pid);
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  const env = { ...process.env, RFC_DATA_DIR: dataDir, RFC_JOBS_DIR: JOBS };
+  const runJob = (extra) => spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m41c', '--diagnostic-override', ...extra],
+    { cwd: ROOT, encoding: 'utf8', timeout: 900000, env });
+  const jdir = path.join(JOBS, 'reg_m41c');
+
+  // --- (1) draft CRITICAL beats par bhi poora chalta hai ---
+  const draft = runJob(['--draft', '--redo']);
+  let man = null, gp = null;
+  try { man = JSON.parse(fs.readFileSync(path.join(jdir, 'render-manifest.json'), 'utf8')); } catch {}
+  try { gp = JSON.parse(fs.readFileSync(path.join(jdir, 'gap-plan.json'), 'utf8')); } catch {}
+  const ph = ((man && man.shots) || []).filter(s => s.asset === 'MISSING_PLACEHOLDER');
+  check('T-M411A draft finishes even when HOOK/HARD_EVIDENCE beats have no evidence (the real 897s bug)',
+    draft.status === 0 && fs.existsSync(path.join(jdir, 'draft.mp4'))
+      && ph.length > 0 && gp && gp.requests.length > 0 && Math.abs((man.total || 0) - 24) < 1.5,
+    `exit=${draft.status} placeholders=${ph.length} requests=${gp ? gp.requests.length : 0} total=${man && man.total}`);
+
+  // --- (2) har placeholder ka theek ek DATA request, aur ulta bhi ---
+  const labels = new Set(ph.map(s => s.missing_label).filter(Boolean));
+  const reqLabels = new Set((gp ? gp.requests : []).map(r => r.label));
+  const folders = fs.existsSync(dataDir) ? fs.readdirSync(dataDir).filter(n => /^MISSING_/.test(n)) : [];
+  check('T-M411B every placeholder label has exactly one DATA request and vice versa',
+    labels.size > 0 && labels.size === reqLabels.size
+      && [...labels].every(l => reqLabels.has(l)) && folders.length === reqLabels.size,
+    `placeholderLabels=${[...labels].join()} requests=${[...reqLabels].join()} folders=${folders.length}`);
+
+  // --- (3) critical gap: sirf file daal dene se READY nahi ---
+  for (const f of folders) {
+    const m = path.join(dataDir, f, 'media');
+    ff(['-f', 'lavfi', '-i', 'color=c=0x1E90FF:s=640x360:d=1', '-frames:v', '1', path.join(m, '01_a.jpg')]);
+    ff(['-f', 'lavfi', '-i', 'color=c=0xFF8C00:s=640x360:d=1', '-frames:v', '1', path.join(m, '02_b.jpg')]);
+    ff(['-f', 'lavfi', '-i', 'color=c=0x228B22:s=640x360:r=25:d=8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(m, '03_c.mp4')]);
+  }
+  const cfgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  const approvedBefore = manual.approvedRequestIds(dataDir, cfgJson);
+  const finalNoApprove = runJob([]);
+  check('T-M411C copying files is not enough for a critical beat — explicit approval is required',
+    approvedBefore.size === 0 && finalNoApprove.status !== 0,
+    `approved=${approvedBefore.size} finalExit=${finalNoApprove.status}`);
+
+  // --- (4) approve karne par critical gap bhar jata hai aur final ban jati hai ---
+  for (const f of folders) fs.writeFileSync(path.join(dataDir, f, 'APPROVE_MEDIA.txt'), 'haan, ye media is jagah ke liye theek hai\n');
+  const approvedAfter = manual.approvedRequestIds(dataDir, cfgJson);
+  const fin = runJob([]);
+  let fman = null; try { fman = JSON.parse(fs.readFileSync(path.join(jdir, 'render-manifest.json'), 'utf8')); } catch {}
+  const shots = (fman && fman.shots) || [];
+  const userShots = shots.filter(s => ['USER_VIDEO', 'USER_IMAGE', 'USER_MONTAGE'].includes(s.asset));
+  const leftover = shots.filter(s => ['GENERIC_TEXT_GRAPHIC', 'DIAGNOSTIC_CARD', 'RENDER_FAILURE_FALLBACK', 'MISSING_PLACEHOLDER'].includes(s.asset));
+  check('T-M411D approved user media resolves a HARD_EVIDENCE gap and the final render succeeds',
+    approvedAfter.size === folders.length && fin.status === 0
+      && fs.existsSync(path.join(jdir, 'final.mp4')) && userShots.length > 0 && leftover.length === 0,
+    `approved=${approvedAfter.size} exit=${fin.status} userShots=${userShots.length} leftover=${leftover.length}`);
+
+  // --- (5) manual provenance manifest mein bacha rehna chahiye ---
+  check('T-M411E the manifest keeps which file, from which request, with which hash',
+    userShots.every(s => s.manual === true && s.manual_request_id && s.manual_sha256 && s.manual_file)
+      && userShots.every(s => s.scope_relation === 'USER_APPROVED'),
+    `sample=${JSON.stringify(userShots[0] ? { r: userShots[0].manual_request_id, f: userShots[0].manual_file, h: !!userShots[0].manual_sha256 } : {})}`);
+
+  // --- (6) draft -> final ne dobara download nahi kiya ---
+  const fullLog = (fin.stdout || '') + (fin.stderr || '');
+  check('T-M411F going from draft to final does not wipe the job or re-download anything',
+    !/input change detected/.test(fullLog) && !/downloading\.\.\./.test(fullLog),
+    `wipe=${/input change detected/.test(fullLog)} downloaded=${/downloading\.\.\./.test(fullLog)}`);
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+
+  // --- (7) 30s se lamba gap hamesha tut'ta hai ---
+  (() => {
+    const cues = [];
+    for (let i = 0; i < 20; i++) cues.push({ start: i * 5, end: i * 5 + 5, text: `narration line number ${i} goes here` });
+    const shots = [];
+    for (let i = 0; i < 8; i++) shots.push({ i, start: i * 5, end: i * 5 + 5, asset: 'GENERIC_TEXT_GRAPHIC',
+      moment_id: `G${i}`, pack_id: 'P1', cue: cues[i].text });   // 40s lagataar
+    const p = gapplan.plan({ manifest: { preview_offset: 0, shots }, resolved: [], cues,
+      packIndex: { P1: { scope: { kind: 'SERIES', title: 'Show S' } } },
+      fingerprint: {}, projectId: 'p', cfg: {} });
+    const longest = Math.max(...p.requests.map(r => r.range.duration_sec));
+    const covered = p.requests.reduce((a, r) => a + r.range.duration_sec, 0);
+    check('T-M411G a 40-second run of missing shots is split into requests of at most 30 seconds',
+      p.requests.length >= 2 && longest <= 30.5 && Math.abs(covered - 40) < 0.5,
+      `requests=${p.requests.length} longest=${longest} covered=${covered}`);
+  })();
+
+  // --- (8) fatal source pehchana jaye (do baar 165s barbaad na ho) ---
+  check('T-M411H a zero-video-stream failure is recognised as fatal to the source, not a bad timestamp',
+    DL.isFatalSourceError('invalid media: ffprobe: zero video streams (quarantined, retry/alternate)') === true
+      && DL.isFatalSourceError('Video unavailable') === true
+      && DL.isFatalSourceError('range short: got 1.20s, need 6.00s') === false,
+    'fatal-classifier');
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });

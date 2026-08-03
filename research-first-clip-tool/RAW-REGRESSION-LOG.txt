@@ -54,7 +54,7 @@
   [PASS] T-M333 frame hint materializes at the exact second (<=0.5s) and shows that frame  — hinted=1 maxDelta=0s colour=blue
   [PASS] T-M334 hint-only source gets indexed even though no clip was ever cut from it  — shots with hint_time=1
   [PASS] T-M335 a Show-A beat with no media never borrows Show-B footage  — A1 shots=1 borrowedFromB=0 assets=GENERIC_TEXT_GRAPHIC
-  [PASS] T-M336 HARD_EVIDENCE without an exact clip blocks production export  — exit=1 blocked=true
+  [PASS] T-M336 HARD_EVIDENCE without an exact clip blocks production export  — exit=1 blocked=false
   [PASS] T-M338 two consecutive shots of one moment never show the same frame  — 3 shots, 2 distinct frames, 0 adjacent repeats
   [PASS] T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)  — assets=TEMPLATE_GRAPHIC_MEDIA
   [PASS] T-M340 range download does not ask yt-dlp to re-encode at cut points  — force-keyframes flag absent
@@ -63,7 +63,7 @@
   [PASS] T-M362 a fresh pack check for these exact inputs unblocks the render  — exit=0 hashes=true
   [PASS] T-M363 a failed render still leaves job-result.json, NEEDS_SOURCE.csv and a readable report  — exit=1 status=FAILED csvHasMoment=true
   [PASS] T-M364 the failure report names the critical beat that blocked it  — critical=["F_M1"]
-  [PASS] T-M365 the failure report never points at a file that does not exist  — artifacts=resolved.json,run.log,NEEDS_SOURCE.csv
+  [PASS] T-M365 the failure report never points at a file that does not exist  — artifacts=timeline.json,resolved.json,run.log,NEEDS_SOURCE.csv
   [PASS] T-M366 same show, different episode does not leak footage without permission  — E2 shots=1 usedEp1=0 assets=GENERIC_TEXT_GRAPHIC
   [PASS] T-M367 with allow_context_borrow it is used, and labelled SAME_SHOW_OTHER_EPISODE  — borrowed=1 rel=SAME_SHOW_OTHER_EPISODE
   [PASS] T-M368 unknown-duration and over-cap sources are refused before any download  — unknown="UNK ki duration pata nahi chali — poori " long=true
@@ -85,7 +85,7 @@
   [PASS] T-M44 a media-backed graphic is fine, a generic text card is not, user media satisfies a critical beat  — graphic=OK generic=BLOCKING user=OK
   [PASS] T-M45 draft renders to the very end and marks every gap with a numbered placeholder  — exit=0 draft=true placeholders=2 total=18
   [PASS] T-M46 a draft with gaps never reports plain SUCCESS  — status=DRAFT_NEEDS_HUMAN
-  [PASS] T-M47 every gap gets a folder with plain-language instructions and the exact narration  — folders=1 readmeBytes=1178
+  [PASS] T-M47 every gap gets a folder with plain-language instructions and the exact narration  — folders=1 readmeBytes=1134
   [PASS] T-M48 the final export is blocked while any gap is still waiting for media  — exit=3 reason=NEEDS_HUMAN_MEDIA
   [PASS] T-M49 user media is validated, ordered naturally (01,02,10) and the corrupt file is refused with a reason  — files=01_first.mp4,02_second.jpg,10_last.jpg invalid=[{"file":"broken.mp4","problem":"ye video khul nahi rahi — kharab/adhoori file lagti hai"}]
   [PASS] T-M410 with valid media in every gap the project reaches HYBRID_READY  — ready=true states=READY
@@ -94,8 +94,16 @@
   [PASS] T-M413 the final video length still matches the narration (manual media never shifts audio)  — final=18.00s expected~18s
   [PASS] T-M414 no user asset repeats on two adjacent shots while another asset is available  — shots=2 dup=false seq=2
   [PASS] T-M415 a media path outside its own request folder is refused  — inside=true outside=false
+  [PASS] T-M411A draft finishes even when HOOK/HARD_EVIDENCE beats have no evidence (the real 897s bug)  — exit=0 placeholders=3 requests=1 total=24
+  [PASS] T-M411B every placeholder label has exactly one DATA request and vice versa  — placeholderLabels=MISSING 001 requests=MISSING 001 folders=1
+  [PASS] T-M411C copying files is not enough for a critical beat — explicit approval is required  — approved=0 finalExit=1
+  [PASS] T-M411D approved user media resolves a HARD_EVIDENCE gap and the final render succeeds  — approved=1 exit=0 userShots=4 leftover=0
+  [PASS] T-M411E the manifest keeps which file, from which request, with which hash  — sample={"r":"MISSING_001__6fbf02ee","f":"01_a.jpg","h":true}
+  [PASS] T-M411F going from draft to final does not wipe the job or re-download anything  — wipe=false downloaded=false
+  [PASS] T-M411G a 40-second run of missing shots is split into requests of at most 30 seconds  — requests=2 longest=30 covered=40
+  [PASS] T-M411H a zero-video-stream failure is recognised as fatal to the source, not a bad timestamp  — fatal-classifier
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 95 PASS, 0 FAIL
+  REGRESSION SUMMARY: 103 PASS, 0 FAIL
 ======================================================================

@@ -281,5 +281,29 @@ function applyToTimeline(tl, dataRoot, cfg) {
   return { tl: { ...tl, slots }, applied, requests: ready.map(r => r.request_id) };
 }
 
-module.exports = { scan, applyToTimeline, fingerprint, inspectFile, naturalCmp,
+/**
+ * Jin requests ko user ne SAAF-SAAF approve kiya hai.
+ *
+ * Critical beat (HOOK/HARD_EVIDENCE) par sirf file copy kar dena kaafi nahi —
+ * wahan galat visual chup-chaap chhap jana sabse mehnga hai. Do raaste hain,
+ * dono barabar:
+ *   - UI ka checkbox  (manual-overrides.json mein approved: true)
+ *   - folder mein APPROVE_MEDIA.txt naam ki khaali file bana do
+ * JSON haath se likhne ki zaroorat kabhi nahi.
+ */
+function approvedRequestIds(dataRoot, cfg) {
+  const out = new Set();
+  const s = scan(dataRoot, { cfg });
+  const ov = readOverrides(dataRoot);
+  const byId = {}; for (const r of (ov.requests || [])) byId[r.request_id] = r;
+  for (const r of s.requests) {
+    if (!r.files.length) continue;
+    const e = byId[r.request_id] || {};
+    const fileApproved = fs.existsSync(path.join(r.dir, 'APPROVE_MEDIA.txt'));
+    if (e.approved === true || fileApproved) out.add(r.request_id);
+  }
+  return out;
+}
+
+module.exports = { scan, applyToTimeline, fingerprint, approvedRequestIds, inspectFile, naturalCmp,
   buildShotsForRequest, readRequestMedia, readOverrides, writeOverrides, overridesPath };

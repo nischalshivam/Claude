@@ -128,24 +128,33 @@ function groupGaps(bad, cues, maxSec = 30, mergeGap = 1.0) {
         moment_ids: new Set(s.moment_id ? [s.moment_id] : []), pack_ids: new Set(s.pack_id ? [s.pack_id] : []) });
     }
   }
-  // lambe groups ko SRT boundary par todo — beech se kaatna narration ko cheer deta hai
+  // Lambe groups ko todo. Pehle ye sirf TAB todta tha jab koi shot theek SRT
+  // boundary par shuru ho — isliye 40-second ka request ban jata tha jabki cap
+  // 30 tha. Ab cap ki GUARANTEE hai: pehle SRT boundary dhoondho, na mile to
+  // shot boundary par hi tod do. Insaan ko 40s ka kaam ek saath dena galat hai.
   const out = [];
+  const push = c => { if (c.shots.length) out.push(c); };
   for (const g of groups) {
     if (g.end - g.start <= maxSec) { out.push(g); continue; }
-    let cur = { ...g, shots: [], codes: new Set(), moment_ids: new Set(), pack_ids: new Set(), start: g.start, end: g.start };
+    const fresh = at => ({ shots: [], codes: new Set(), moment_ids: new Set(), pack_ids: new Set(), start: at, end: at });
+    let cur = fresh(g.start);
     for (const s of g.shots) {
       const wouldBe = Math.max(cur.end, s.end) - cur.start;
-      const atBoundary = cues.some(c => Math.abs(c.start - s.start) < 0.35);
-      if (cur.shots.length && wouldBe > maxSec && atBoundary) {
-        out.push(cur);
-        cur = { shots: [], codes: new Set(), moment_ids: new Set(), pack_ids: new Set(), start: s.start, end: s.end };
+      if (cur.shots.length && wouldBe > maxSec) {
+        // is shot se pehle todo. Agar shot khud SRT cue par shuru hota hai to
+        // cut wahin sabse saaf hai; warna bhi shot boundary hamesha safe hai
+        // (koi shot beech se nahi kata jata).
+        push(cur);
+        cur = fresh(s.start);
       }
       cur.shots.push(s); cur.end = Math.max(cur.end, s.end);
       for (const c of s.codes) cur.codes.add(c);
       if (s.moment_id) cur.moment_ids.add(s.moment_id);
       if (s.pack_id) cur.pack_ids.add(s.pack_id);
+      // ek akela shot hi cap se lamba ho to use apna request bana do
+      if (cur.end - cur.start > maxSec && cur.shots.length === 1) { push(cur); cur = fresh(cur.end); }
     }
-    if (cur.shots.length) out.push(cur);
+    push(cur);
   }
   return out;
 }
@@ -169,7 +178,7 @@ function narrationFor(cues, a, b) {
  * Poora gap plan banao.
  * @returns { requests, blocking, optional, covered_seconds, missing_seconds }
  */
-function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg }) {
+function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg, gate }) {
   const resolvedById = {};
   for (const e of (resolved || [])) resolvedById[e.moment_id] = e;
   // preview timeline 0 se shuru hoti hai — POORE audio ke waqt par wapas laao
@@ -178,11 +187,23 @@ function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg
     ...s, start: +(s.start + off).toFixed(3), end: +(s.end + off).toFixed(3),
   }));
 
+  // M4.1: agar effective gate chal chuka hai to WAHI faisla mano.
+  // Pehle gap planner asset ke naam se apna alag hisaab lagata tha — do alag
+  // jawab, aur draft mein "MISSING 002" dikhta tha jiska koi folder hi nahi hota.
+  const gateByIdx = {};
+  for (const b of ((gate && gate.blockers) || [])) (gateByIdx[b.i] = gateByIdx[b.i] || []).push(b.code);
+
   const bad = [], optional = [];
   let okSec = 0, badSec = 0;
   for (const s of shots) {
-    const c = classifyShot(s, resolvedById);
     const dur = s.end - s.start;
+    if (gate) {
+      const codes = gateByIdx[s.i];
+      if (codes) { bad.push({ ...s, codes: [...new Set(codes)] }); badSec += dur; }
+      else okSec += dur;
+      continue;
+    }
+    const c = classifyShot(s, resolvedById);
     if (c.level === 'BLOCKING') { bad.push({ ...s, codes: c.codes }); badSec += dur; }
     else { okSec += dur; if (c.level === 'OPTIONAL') optional.push({ ...s, codes: c.codes }); }
   }
@@ -211,12 +232,23 @@ function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg
     return {
       schema: 'manual-gap-request-v1',
       request_id: `MISSING_${num}__${rid}`,
+      // Yehi label video ke placeholder par likha jayega AUR folder ke naam mein
+      // bhi hai. Pehle renderer apni alag ginti karta tha, isliye draft mein
+      // "MISSING 002" dikh jata tha jiska koi folder hota hi nahi tha.
+      label: `MISSING ${num}`,
       folder: `MISSING_${num}__${mmss(g.start)}-${mmss(g.end)}__${firstMoment}`,
       project_id: projectId,
       input_fingerprint: fingerprint,
       range: { start_sec: +g.start.toFixed(3), end_sec: +g.end.toFixed(3), duration_sec: dur },
       moment_ids: momentIds, pack_ids: packIds,
       severity: 'BLOCKING',
+      // critical beat par media daalna kaafi nahi — approval bhi chahiye
+      criticality: (() => {
+        let top = 'NORMAL';
+        for (const s2 of g.shots) { const c = String(s2.criticality || 'NORMAL').toUpperCase();
+          if (c === 'HARD_EVIDENCE') top = 'HARD_EVIDENCE'; else if (c === 'HOOK' && top !== 'HARD_EVIDENCE') top = 'HOOK'; }
+        return top;
+      })(),
       reason_codes: codes,
       reason_text: codes.map(c => REASON_TEXT[c]).filter(Boolean),
       narration_exact: nar.exact, context_before: nar.before, context_after: nar.after,
@@ -281,7 +313,16 @@ function readableRequest(r) {
   P('  1. Is folder ke andar "media" folder kholo');
   P('  2. Apni images/videos usme daal do');
   P('  3. Kis order mein lagani hain, wo naam se batao: 01_pehli.jpg, 02_doosri.mp4, 03_...');
-  P('  4. Phir tool mein "Missing media complete karo" chalao');
+  if (r.criticality && r.criticality !== 'NORMAL') {
+    P(`  4. YE BEAT ZAROORI HAI (${r.criticality}). Yahan galat visual chhap jana sabse mehnga hai,`);
+    P('     isliye tool aapse ek saaf HAAN maangta hai. Do mein se koi bhi tarika:');
+    P('       - is folder mein "APPROVE_MEDIA.txt" naam ki khaali file bana do, YA');
+    P('       - dashboard (START_UI.bat) mein is card par approve wala tick laga do');
+    P('     Bina iske final video nahi banegi — draft phir bhi ban jayegi.');
+    P('  5. Phir tool mein "Missing media complete karo" chalao');
+  } else {
+    P('  4. Phir tool mein "Missing media complete karo" chalao');
+  }
   P('');
   P('Audio kabhi nahi badlega — aapki narration jaisi hai waisi hi rahegi.');
   P('Video ka sound apne aap mute ho jayega.');

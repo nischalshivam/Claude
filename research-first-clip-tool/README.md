@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M4
+# Research-First Clip Tool — M4.1
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -334,6 +334,40 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M4.1 — asli 897-second run se: draft timeline par hi mar gaya**
+
+M4 mein `--draft` set to hota tha, par `timeline.js` sirf `review` ko diagnostic
+maanta tha. Isliye draft bhi production hi tha aur 13 HOOK/HARD_EVIDENCE beats
+par timeline THROW kar gayi — render, gap plan aur DATA folders bane hi nahi.
+95/0 tests pass the kyunki har hybrid fixture mein missing beats `NORMAL` the.
+
+Aur uske peeche ek doosra, bada bug tha: **user ka media timeline ke BAAD lagta
+tha.** Yaani critical beat ke liye aap file de bhi dete, wo kabhi lagti hi nahi —
+timeline pehle hi mar chuki hoti.
+
+| Kya toota tha | Ab |
+|---|---|
+| draft ko production mana jata tha | draft aur review, dono diagnostic |
+| criticality gate timeline ke andar throw karta tha | `src/effectivegate.js` — EK gate, manual media ke BAAD, CLI/UI/tests sab wahi use karte hain |
+| user media gate ke baad lagta tha | ab pehle: candidate timeline → manual media → gate → render |
+| video par "MISSING 002", folder kahin nahi | gap plan render se PEHLE; label video, folder aur request.json teeno par ek |
+| draft hamesha `--redo` — downloads dobara | `D` ab `--redo` nahi karta; `R` alag option hai saaf shuruat ke liye |
+| draft↔final mode badalne se poora job wipe | `output.mode` config fingerprint se bahar; sirf timeline/render/report dobara |
+| media badalne par timeline reuse ho jati thi | manual fingerprint badle to timeline/render/report invalidate (downloads safe) |
+| ek hi kharab source par 2×165s barbaad | "zero video streams" jaisi galti = source ki kharabi; ek baar mein hi band |
+| 30s cap ke bawajood 40s ka request | split ki guarantee — har request ≤30s |
+| critical gap par file copy = READY | critical par saaf approval chahiye: `APPROVE_MEDIA.txt` ya dashboard ka tick |
+
+**Aur wo cheez jisne aapke 19 locators khaye:** "purana folder replace kar do".
+Ab do naye tools:
+
+- `tools/merge-pack.js` — teen-tarfa merge. Abhi wale pack ke theek kiye hue cues
+  aur criticality **jaise ke waise**; purane repaired pack se sirf wo locators/
+  hints/source-health jo abhi missing hain, aur har ek validate hokar. Har
+  accept/reject `output/pack-merge-report.json` mein likha jata hai.
+- `UPDATE_TOOL.bat` — sirf CODE badalta hai. `input\`, `DATA\`, `jobs\` ko
+  kabhi haath nahi lagata. Purane code ka backup bhi rakhta hai.
 
 **M4 — jab footage internet par hai hi nahi (human-assisted completion)**
 

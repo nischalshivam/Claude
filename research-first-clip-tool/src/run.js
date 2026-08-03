@@ -33,6 +33,7 @@ const SUB = require('./subtitles.js');
 const jobResult = require('./jobresult.js');
 const gapplan = require('./gapplan.js');
 const manual = require('./manual.js');
+const effectivegate = require('./effectivegate.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -82,17 +83,23 @@ function loadSpec() {
 function audioSig(f) { try { const s = fs.statSync(f); return `${s.size}:${Math.round(s.mtimeMs)}`; } catch { return 'na'; } }
 function fingerprint(spec, cfg, chk) {
   const toolSig = (chk.results || []).map(r => `${r.bin}=${r.version || (r.ok ? 'ok' : 'no')}`).join(',');
+  // M4.1: `output.mode` (draft/production/review) config hash se BAHAR hai.
+  // Warna draft chalane par mode badal jata tha, fingerprint badal jata tha,
+  // aur poora job wipe hokar saare downloads dobara hote the. Draft se final
+  // jaana ek switch hai, naya project nahi.
+  const cfgForHash = { ...cfg, output: { ...(cfg.output || {}) } };
+  delete cfgForHash.output.mode;
   return {
     pack: U.hashFile(spec.packFile),
     srt: U.hashFile(spec.srt),
     audio: spec.audio ? audioSig(spec.audio) : 'none',
-    config: U.hashStr(JSON.stringify(cfg)),
+    config: U.hashStr(JSON.stringify(cfgForHash)),
     tool: U.hashStr(toolSig + '|node=' + process.version),
   };
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.1'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -248,6 +255,23 @@ async function main() {
     }
   }
   st.fingerprint = fp;
+
+  // ---- MANUAL / MODE INVALIDATION (M4.1) ----
+  //  Downloads aur cuts ghanton ka kaam hain — unhe chhedna nahi. Par jab
+  //  aapka apna media badalta hai (nayi file, order, trim, approval), ya draft
+  //  se final par jaate ho, to timeline/render/report DOBARA banne chahiye.
+  //  Warna wahi purani timeline reuse ho jati hai aur aapka daala hua media
+  //  kabhi lagta hi nahi — asli test mein yahi hua tha.
+  const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production'].join('|'));
+  if (!flag('redo') && st.render_sig && st.render_sig !== renderSig) {
+    U.log('   aapka media ya mode badla hai — timeline/render dobara banega (downloads waise ke waise rahenge)');
+    for (const k of ['timeline', 'render', 'report']) delete (st.done || {})[k];
+    for (const f of ['timeline.json', 'render-manifest.json', 'gap-plan.json', 'final.mp4', 'draft.mp4', 'video_master.mp4', 'shot-review.html']) {
+      const pp = U.p(spec.id, f); try { if (fs.existsSync(pp)) fs.rmSync(pp, { force: true }); } catch {}
+    }
+    const segs = U.p(spec.id, 'segments'); try { if (fs.existsSync(segs)) fs.rmSync(segs, { recursive: true, force: true }); } catch {}
+  }
+  st.render_sig = renderSig;
   ST.save(spec.id, st);
 
   U.log(`\n  job: ${spec.id}  ->  ${path.relative(U.ROOT, U.jobDir(spec.id))}/`);
@@ -324,18 +348,46 @@ async function main() {
       else if (key === 'qa') await runStage(key, () => { resolved = resolved || jf('resolved.json'); resolved = localqa(spec, cfg, st, resolved); saveResolved(spec.id, resolved); });
       else if (key === 'timeline') await runStage(key, () => {
         resolved = resolved || jf('resolved.json'); aligned = aligned || jf('aligned.json');
+        // 1. CANDIDATE timeline — ab ye critical beats par throw nahi karti
         tl = timeline(spec, cfg, st, resolved, aligned && aligned.total);
-        // ---- USER KA APNA MEDIA (M4) ----
-        // Jo footage internet par hai hi nahi, uske liye user ne DATA folder mein
-        // apni files daali hain. Wo yahan timeline mein lagti hain — SIRF apni
-        // range ke andar, aur saaf-saaf USER_APPROVED label ke saath. Inhe kabhi
-        // "automatically researched exact clip" nahi bola jata.
         tl.preview_offset = spec.previewOffset || 0;
+
+        // 2. USER KA APNA MEDIA — gate se PEHLE.
+        //    M4 mein ye gate ke BAAD lagta tha, isliye critical beat ke liye user
+        //    file de bhi de to wo kabhi lagti hi nahi thi. Asli run yahin mara.
         const applied = manual.applyToTimeline(tl, DATA_ROOT, cfg);
         if (applied.applied) {
           tl = applied.tl;
-          fs.writeFileSync(U.p(spec.id, 'timeline.json'), JSON.stringify(tl, null, 2));
           U.ok(`aapka apna media ${applied.applied} jagah laga diya (${applied.requests.join(', ')})`);
+        }
+
+        // 3. EK EFFECTIVE GATE — final slots par ek hi faisla
+        const mode = (cfg.output && cfg.output.mode) || 'production';
+        const approvedRequests = manual.approvedRequestIds(DATA_ROOT, cfg);
+        const gate = effectivegate.evaluate(tl, resolved, { mode, approvedRequests });
+        tl.gate = { mode, ok: gate.ok, blockers: gate.blockers.length, critical: gate.critical, counts: gate.counts };
+
+        // 4. DRAFT: har blocker ko ek NUMBERED request ka naam do — wahi naam
+        //    video ke placeholder par bhi likha jayega aur DATA folder par bhi.
+        //    (M4 mein renderer apna alag numbering karta tha, isliye "MISSING 002"
+        //     dikh jata tha jiska koi folder hota hi nahi.)
+        if (!gate.ok) {
+          const gp = buildGapPlan(spec, cfg, resolved, tl, gate);
+          const labelBySlot = {};
+          for (const r of gp.requests) for (const sub of (r.sub_slots || [])) labelBySlot[sub.i] = r.label;
+          for (const sl of tl.slots) if (labelBySlot[sl.i]) sl.missing_label = labelBySlot[sl.i];
+          fs.writeFileSync(U.p(spec.id, 'gap-plan.json'), JSON.stringify(gp, null, 2));
+          spec.gapPlan = gp;
+        }
+        fs.writeFileSync(U.p(spec.id, 'timeline.json'), JSON.stringify(tl, null, 2));
+
+        // 5. PRODUCTION mein ek bhi khaali slot = export nahi. Draft mein aage badho.
+        if (gate.blocks_render) {
+          const crit = gate.critical.length ? ` (${gate.critical.length} CRITICAL: ${gate.critical.slice(0, 5).join(', ')})` : '';
+          throw new Error(`${gate.blockers.length} slots par koi asli media nahi hai${crit} — final export rok raha hoon.\n` +
+            `   Draft banao (START_HERE -> D). Wo poori video bana dega aur har khaali jagah ke liye\n` +
+            `   DATA folder mein saaf-saaf likh dega ki kya chahiye. Wahan apni image/video daal kar\n` +
+            `   dobara final chalana.`);
         }
       });
       else if (key === 'render') await runStage(key, () => { tl = tl || jf('timeline.json'); render(spec, cfg, st, tl); });
@@ -344,10 +396,10 @@ async function main() {
         report(spec, cfg, st, resolved, tl);
         // shot-level contact sheet: percentages ke bharose mat raho, har shot dekho
         try { shotReview(spec, cfg, st); } catch (e) { U.warn('shot-review fail: ' + e.message.slice(0, 90)); }
-        // ---- GAP PLAN (M4) ----
-        // Jo bana hi nahi, uske liye insaan ke laayak folders — asli video-time,
-        // narration ke shabd, aur search keywords ke saath.
-        try { writeGapPlan(spec, cfg, resolved); } catch (e) { U.warn('gap plan fail: ' + e.message.slice(0, 90)); }
+        // ---- DATA FOLDERS (M4.1) ----
+        // Gap plan timeline stage mein hi ban chuka hai (taaki placeholder ke
+        // number aur folder ke number ek jaise hon). Yahan sirf folders likhte hain.
+        try { writeDataFolders(spec); } catch (e) { U.warn('DATA folder fail: ' + e.message.slice(0, 90)); }
       });
     } catch (e) {
       U.bad(`stage ${key} fail: ${e.message}`);
@@ -444,22 +496,33 @@ function hybridState(spec, cfg) {
   return out;
 }
 
-// Gap plan + DATA folders. Ye render ke BAAD chalta hai kyunki tabhi pata hota
-// hai ki screen par sach mein kya laga (plan mein kya tha, wo nahi).
-function writeGapPlan(spec, cfg, resolved) {
-  const man = JSON.parse(fs.readFileSync(U.p(spec.id, 'render-manifest.json'), 'utf8'));
+// Gap plan RENDER SE PEHLE banta hai — timeline aur manual media ke baad.
+// Isse do faayde: (1) video ke placeholder par wahi number aata hai jo DATA
+// folder par hai, (2) draft ke fail hone par bhi requests bani rehti hain.
+function buildGapPlan(spec, cfg, resolved, tl, gate) {
   const cues = SUB.parseFile(spec.origSrt || spec.srt);
   const packIndex = {};
   for (const pk of spec.pack.packs) packIndex[pk.pack_id] = pk;
   const gp = gapplan.plan({
-    manifest: man, resolved, cues, packIndex,
-    fingerprint: { pack_sha256: U.hashFile(spec.packFile), srt_sha256: U.hashFile(spec.origSrt || spec.srt) },
-    projectId: spec.id, cfg,
+    manifest: { preview_offset: tl.preview_offset || 0, shots: tl.slots },
+    resolved, cues, packIndex,
+    fingerprint: {
+      pack_sha256: U.hashFile(spec.packFile),
+      srt_sha256: U.hashFile(spec.origSrt || spec.srt),
+      // audio bhi fingerprint mein: wahi SRT par naya voiceover = purani manzoori
+      // ab valid nahi (timing badal chuki hai).
+      audio_signature: spec.audio ? audioSig(spec.audio) : 'none',
+    },
+    projectId: spec.id, cfg, gate,
   });
-  fs.writeFileSync(U.p(spec.id, 'gap-plan.json'), JSON.stringify(gp, null, 2));
-  if (!gp.requests.length) {
-    U.ok(`har shot ke paas asli media hai — DATA folder ki zaroorat nahi (coverage ${gp.coverage_percent}%)`);
-    return gp;
+  return gp;
+}
+
+function writeDataFolders(spec) {
+  const gp = spec.gapPlan;
+  if (!gp || !gp.requests.length) {
+    U.ok('har shot ke paas asli media hai — DATA folder ki zaroorat nahi');
+    return null;
   }
   const w = gapplan.writeDataFolders(DATA_ROOT, gp);
   U.log('');
@@ -468,6 +531,7 @@ function writeGapPlan(spec, cfg, resolved) {
   if (w.made.length > 8) U.log(`     ...aur ${w.made.length - 8}`);
   if (w.orphaned.length) U.log(`     (${w.orphaned.length} purane folder DATA\\_ORPHANED mein chale gaye — files surakshit hain)`);
   U.log('  Har folder mein WHAT_IS_MISSING.txt padho — usme narration aur search words likhe hain.');
+  U.log('  Ya dashboard se: START_UI.bat');
   return gp;
 }
 
