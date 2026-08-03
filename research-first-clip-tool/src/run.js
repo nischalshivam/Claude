@@ -28,6 +28,8 @@ const localqa = require('./localqa.js');
 const timeline = require('./timeline.js');
 const render = require('./render.js');
 const report = require('./report.js');
+const shotReview = require('./shotreview.js');
+const SUB = require('./subtitles.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -87,9 +89,13 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M2 (zero-card visual engine)'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M3.3'); U.log('='.repeat(60));
 
   const cfg = U.config();
+  // --review: diagnostic mode. Production gates (criticality, render-failure
+  // abort) yahan warning ban jaate hain, taaki toota hua pack bhi INSPECT kiya
+  // ja sake. Final export ke liye ye kabhi use mat karo.
+  if (flag('review')) { cfg.output = { ...(cfg.output || {}), mode: 'review' }; U.warn('--review: production gates OFF (sirf inspection ke liye)'); }
   const only = arg('only');
 
   if (only === 'check') { const r = check(); process.exit(r.ok ? 0 : 1); }
@@ -177,6 +183,23 @@ async function main() {
           for (const m of aligned.moments) { m.beat_start = +(m.beat_start - t0).toFixed(3); m.beat_end = +(m.beat_end - t0).toFixed(3); }
           aligned.total = +(t1 - t0).toFixed(3);
           spec.previewOffset = t0;
+          // ---- SRT bhi USI offset se rebase ----
+          // Moments to 0 se shuru ho gaye, par timeline.js shot boundaries ke
+          // liye ASLI SRT padhta raha — yaani 300s se shuru hone wala preview
+          // apne cuts SRT ki shuruat ke hisaab se lagata tha. Ab preview ke liye
+          // ek rebased SRT likhte hain aur wahi aage jata hai.
+          try {
+            const cues = SUB.parseFile(spec.srt)
+              .map(c => ({ start: +(c.start - t0).toFixed(3), end: +(c.end - t0).toFixed(3), text: c.text }))
+              .filter(c => c.end > 0 && c.start < aligned.total)
+              .map(c => ({ start: Math.max(0, c.start), end: Math.min(aligned.total, c.end), text: c.text }));
+            const ts = s => { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = Math.floor(s % 60), ms = Math.round((s % 1) * 1000);
+              return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')},${String(ms).padStart(3, '0')}`; };
+            const pf = U.p(spec.id, 'preview.srt');
+            fs.writeFileSync(pf, cues.map((c, i) => `${i + 1}\n${ts(c.start)} --> ${ts(c.end)}\n${c.text}\n`).join('\n'));
+            spec.srt = pf;
+            U.log(`   preview SRT rebased: ${cues.length} cues, offset -${t0.toFixed(1)}s`);
+          } catch (e) { U.warn('preview SRT rebase fail: ' + e.message.slice(0, 80)); }
           U.warn(`PREVIEW MODE: ${aligned.moments.length}/${before} moments (${aligned.total.toFixed(1)}s). Sirf inke sources download honge.`);
           fs.writeFileSync(U.p(spec.id, 'aligned.json'), JSON.stringify(aligned, null, 2));
         }
@@ -187,7 +210,12 @@ async function main() {
       else if (key === 'qa') await runStage(key, () => { resolved = resolved || jf('resolved.json'); resolved = localqa(spec, cfg, st, resolved); saveResolved(spec.id, resolved); });
       else if (key === 'timeline') await runStage(key, () => { resolved = resolved || jf('resolved.json'); aligned = aligned || jf('aligned.json'); tl = timeline(spec, cfg, st, resolved, aligned && aligned.total); });
       else if (key === 'render') await runStage(key, () => { tl = tl || jf('timeline.json'); render(spec, cfg, st, tl); });
-      else if (key === 'report') await runStage(key, () => { resolved = resolved || jf('resolved.json'); tl = tl || jf('timeline.json'); report(spec, cfg, st, resolved, tl); });
+      else if (key === 'report') await runStage(key, () => {
+        resolved = resolved || jf('resolved.json'); tl = tl || jf('timeline.json');
+        report(spec, cfg, st, resolved, tl);
+        // shot-level contact sheet: percentages ke bharose mat raho, har shot dekho
+        try { shotReview(spec, cfg, st); } catch (e) { U.warn('shot-review fail: ' + e.message.slice(0, 90)); }
+      });
     } catch (e) {
       U.bad(`stage ${key} fail: ${e.message}`);
       ST.save(spec.id, st); flushLog(spec.id);
@@ -199,7 +227,7 @@ async function main() {
 
   U.log('\n' + '='.repeat(60));
   U.log(`  DONE — ${path.relative(U.ROOT, U.jobDir(spec.id))}/`);
-  U.log('   final.mp4, timeline.json, quality-report.html, NEEDS_SOURCE.csv, run.log, clips/');
+  U.log('   final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/');
   U.log('='.repeat(60));
   flushLog(spec.id);
 }
@@ -218,8 +246,12 @@ function cleanJob(id, inputDir) {
   const dir = U.jobDir(id);
   U.assertInside(U.jobsRoot(), dir, 'job dir');
   if (path.resolve(dir) === path.resolve(inputDir || '')) { U.warn('--redo skip: job dir == input dir (inputs safe)'); return; }
+  // render-manifest.json bhi hatana ZAROORI hai: report isi se banti hai, aur
+  // purana manifest reh gaya to naye render ke baad bhi PURANE percentages
+  // dikhte rehte hain.
   const items = ['clips', 'segments', 'cache', 'thumbs', 'resolved.json', 'aligned.json', 'timeline.json',
-    'state.json', 'final.mp4', 'video_master.mp4', 'quality-report.html', 'NEEDS_SOURCE.csv', 'run.log'];
+    'render-manifest.json', 'shot-review.html', 'state.json', 'final.mp4', 'video_master.mp4',
+    'quality-report.html', 'NEEDS_SOURCE.csv', 'run.log'];
   for (const it of items) { const pp = path.join(dir, it); if (fs.existsSync(pp) && U.isInside(dir, pp)) fs.rmSync(pp, { recursive: true, force: true }); }
 }
 

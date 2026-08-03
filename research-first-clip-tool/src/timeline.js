@@ -121,14 +121,26 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // kyunki wo usi section ka show hota hai. Poore project ka bank kabhi nahi.
   const anchorList = resolved.filter(e => e.beat_start != null).sort((a, b) => a.beat_start - b.beat_start);
   const hasFrames = ids => ids.some(sid => bank[sid] && bank[sid].frames.length);
+  // SCOPE-STRICT: neighbour se udhaar sirf tab jab uska scope BILKUL wahi ho.
+  // Pehle koi bhi nazdeeki neighbour chal jata tha — cross-show essay mein isse
+  // Show B ka frame Show A ke beat par lag sakta tha. Ab scope_key match zaroori
+  // hai; na mile to honest khaali (jo report mein dikhega), galat show kabhi nahi.
+  // locate.js har entry par scope_key likhta hai (kind::title::year::version).
+  // Wahi single source of truth hai — timeline apna alag hisaab nahi lagata.
+  const scopeKeyOf = (e) => e.scope_key || `pack::${e.pack_id || ''}`;
   const contextAllowedFor = (e) => {
     const own = allowedOf(e);
     if (hasFrames(own)) return own;
+    const mine = scopeKeyOf(e);
     const idx = anchorList.findIndex(x => x.moment_id === e.moment_id);
     for (let d = 1; d < anchorList.length; d++) {           // sabse nazdeeki neighbour pehle
       for (const j of [idx - d, idx + d]) {
         if (j < 0 || j >= anchorList.length) continue;
-        const cand = allowedOf(anchorList[j]);
+        const nb = anchorList[j];
+        // explicit reuse (research ne khud kaha) ya BILKUL same scope — aur kuch nahi
+        const explicit = (e.allowed_pack_ids || []).includes(nb.pack_id);
+        if (!explicit && scopeKeyOf(nb) !== mine) continue;
+        const cand = allowedOf(nb);
         if (hasFrames(cand)) return cand;
       }
     }
@@ -208,7 +220,34 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
         continue;
       }
 
-      // 2) CONTEXT VIDEO — usi approved source se CHALTA HUA clip (still se behtar).
+      // 2) HINT-BACKED VISUAL PEHLE.
+      //    Stage 2 ki poori mehnat frame_hints mein hoti hai — "us source ke is
+      //    second par ye dikhta hai". Pehle generic context video pehle chun
+      //    liya jata tha, isliye researched frame kabhi screen par aata hi nahi
+      //    tha. Ab hint-backed still/montage generic context se PEHLE aata hai.
+      const hintsHere = (e.frame_hints || []).filter(h => h && allowed.includes(h.source_id));
+      if (hintsHere.length) {
+        const wantM = (e.template === 'COMPARISON' || (s1 - s0) >= (S.montageMinSeconds || 6)) && hintsHere.length >= 2 && (cfg.fallback || {}).montageImages > 1;
+        const hp = KF.pickFrames(bank, allowed, usedFrames, wantM ? Math.min(3, hintsHere.length) : 1, nearSec, hintsHere);
+        const hinted = hp.filter(p => p.hint_time != null);
+        if (hinted.length >= 2 && wantM) {
+          hinted.forEach(p => usedFrames.add(p.file));
+          push({ kind: 'montage', start: s0, end: s1, ...common, images: hinted.map(p => p.file),
+                 image_sources: hinted.map(p => p.source_id), image_times: hinted.map(p => p.t),
+                 hint_times: hinted.map(p => p.hint_time), hint_deltas: hinted.map(p => p.hint_delta),
+                 why: hinted.map(p => p.why).join(' | '), asset: 'MONTAGE' });
+          statAssets.montage = (statAssets.montage || 0) + 1; continue;
+        }
+        if (hinted.length) {
+          usedFrames.add(hinted[0].file);
+          push({ kind: 'still', start: s0, end: s1, ...common, image: hinted[0].file, image_source: hinted[0].source_id,
+                 image_time: hinted[0].t, hint_time: hinted[0].hint_time, hint_delta: hinted[0].hint_delta,
+                 why: hinted[0].why, asset: 'VERIFIED_SOURCE_STILL' });
+          statAssets.still++; lastVisualKey = 'kf:' + hinted[0].file; continue;
+        }
+      }
+
+      // 3) CONTEXT VIDEO — usi approved source se CHALTA HUA clip (still se behtar).
       //    Poori source pehle hi download hai, isliye ye free hai aur video essay
       //    slideshow jaisa nahi lagta. Ye exact scene ka daawa nahi karta (asset
       //    CONTEXT_VIDEO), aur report mein alag dikhta hai.
@@ -339,6 +378,36 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
     U.warn(`shot ${s.dur.toFixed(1)}s > ${HARD}s cap — ${parts} tukdon mein toda (koi visual ${HARD}s se zyada screen par nahi rahega)`);
   }
   slots.length = 0; slots.push(...capped);
+
+  // ---- CRITICALITY GATE ----
+  // Ab tak `criticality` sirf metadata thi: HOOK/HARD_EVIDENCE beat ko bhi
+  // chupchap random context mil jata tha. Ye wahi beats hain jinpe video ka
+  // pehla impression aur uska sabse bada claim tikta hai — inhe pass hona
+  // ZAROORI hai, warna production export rukna chahiye.
+  const critFails = [];
+  const byMoment = {};
+  for (const s of slots) { if (!s.moment_id) continue; (byMoment[s.moment_id] = byMoment[s.moment_id] || []).push(s); }
+  for (const e of resolved) {
+    const c = (e.criticality || 'NORMAL').toUpperCase();
+    if (c !== 'HOOK' && c !== 'HARD_EVIDENCE') continue;
+    const mine = byMoment[e.moment_id] || [];
+    const exact = mine.some(s => s.asset === 'EXACT_VIDEO');
+    const hinted = mine.some(s => s.hint_time != null || (Array.isArray(s.hint_times) && s.hint_times.length));
+    // HARD_EVIDENCE: exact clip chahiye. HOOK: exact clip ya materialized hint.
+    const ok = c === 'HARD_EVIDENCE' ? exact : (exact || hinted);
+    if (!ok) critFails.push({ moment_id: e.moment_id, pack_id: e.pack_id, criticality: c,
+      got: mine.map(s => s.asset).filter((v, i, a) => a.indexOf(v) === i).join('/') || 'nothing',
+      cue: String(e.script_cue_exact || '').slice(0, 60) });
+  }
+  if (critFails.length) {
+    U.warn(`${critFails.length} HOOK/HARD_EVIDENCE moments ke paas exact evidence nahi hai:`);
+    critFails.slice(0, 10).forEach(f => U.log(`     ${f.criticality.padEnd(14)} ${f.moment_id.padEnd(12)} mila: ${f.got}  "${f.cue}..."`));
+    if (production) {
+      throw new Error(`${critFails.length} critical moments (HOOK/HARD_EVIDENCE) ke paas exact clip/hint nahi hai — production export rok raha hoon. ` +
+        `Inpar research chahiye (CHECKPACK/NEEDS_RESEARCH.txt dekho), ya inki criticality NORMAL karo agar ye sach mein critical nahi hain.`);
+    }
+  }
+  st.meta.criticality_failures = critFails;
   slots.sort((a, b) => a.start - b.start);
   slots.forEach((s, i) => { s.i = i; });
 

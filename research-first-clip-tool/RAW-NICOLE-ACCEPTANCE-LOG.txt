@@ -1,0 +1,59 @@
+============================================================
+  RESEARCH-FIRST CLIP TOOL — M1.3
+============================================================
+
+>>> 0. setup check
+  [OK]   node     v22.22.2
+  [OK]   ffmpeg   ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 200
+  [WARN] ffprobe  nahi mila — optional (ffmpeg fallback hai)
+  [WARN] ffmpeg:drawtext nahi mila — missing -> text cards solid-color (full ffmpeg build lo)
+  [OK]   yt-dlp   2026.07.04
+  [OK]   js-runtime(bun) 1.3.11  (yt-dlp YouTube EJS)
+
+>>> 1. research pack validation
+  [WARN] [P09_M01] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M02] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M03] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M04] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M05] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M06] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M07] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M08] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M09] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P09_M43] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M01] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M02] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M03] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M04] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M05] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M06] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M07] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M08] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M09] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M10] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M11] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M12] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M13] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M14] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M15] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M16] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M17] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M18] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] [P10_M19] koi locator nahi — UNRESOLVED treat hoga (NEEDS_SOURCE)
+  [WARN] RESEARCH_INCOMPLETE: sirf 65% moments EXACT_TIME/DIALOGUE hain (target >=70%). Baaki NEEDS_SOURCE/fallback ho sakte hain.
+  [OK]   pack valid — 10 packs, 82 moments, 65% EXACT/DIALOGUE
+  [WARN] coverage_check.entire_script_covered=false (10 uncovered cues) — un beats par NEEDS_SOURCE aayega
+
+  job: nicole_json1_accept  ->  tests/tmp/accept/nicole_json1_accept/
+
+>>> 2. align
+  [OK]   aligned 82 moments — 82 clean, 0 review/ambiguous
+   narration length 837.1s | moment-coverage ~99%
+
+>>> 3. locate
+  [OK]   located: 0 RESOLVED, 0 NEEDS_REVIEW, 19 graphic/text, 63 NEEDS_SOURCE
+
+============================================================
+  DONE — tests/tmp/accept/nicole_json1_accept/
+   final.mp4, timeline.json, quality-report.html, NEEDS_SOURCE.csv, run.log, clips/
+============================================================

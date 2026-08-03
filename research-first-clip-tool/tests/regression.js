@@ -696,6 +696,151 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     `applied900=${fm1 ? fm1.locators.some(l => l.start_sec === 900) : 'n/a'}`);
 })();
 
+// ---------- T-M33: M3.3 reliability contract (decoded pixels, not labels) ----------
+// Ye group sabse zaroori hai. Pehle manifest ka label PLAN se aata tha, isliye
+// missing media chupchap text card ban jata tha aur report "CONTEXT_VIDEO"
+// bolti thi. Isliye har check yahan DECODE karke dekhta hai ki screen par kya
+// hai — label par bharosa nahi.
+(() => {
+  const d = path.join(FX, 'm33');
+  makeNarr(d, [
+    { start: 0, end: 6, text: 'The alarm rings across the base.' },
+    { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    { start: 12, end: 18, text: 'They meet on the rooftop at night.' },
+  ]);
+  const CARD = [26, 32, 46];   // generic gradient card ka rang (0x141a2e..0x0a0d18)
+  const isCard = rgb => Math.hypot(rgb[0] - 12, rgb[1] - 15, rgb[2] - 28) < 26 || Math.hypot(rgb[0] - CARD[0], rgb[1] - CARD[1], rgb[2] - CARD[2]) < 26;
+
+  // --- (1) local_file context video: pixels asli video ke hone chahiye ---
+  // Ye wahi bug tha: sourceMediaPath ROOT-relative path deta tha, render use
+  // job-relative maanta tha, file "missing" lagti thi -> card, label CONTEXT_VIDEO.
+  const ctxPack = { schema_version: 'scene-research-pack-v1', project_title: 'Ctx', packs: [{
+    pack_id: 'P', scope: { kind: 'SERIES', title: 'Show C' },
+    sources: [{ source_id: 'S', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+    moments: [
+      { moment_id: 'C1', script_cue_exact: 'The alarm rings across the base.',
+        locators: [{ source_id: 'S', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } },
+      { moment_id: 'C2', script_cue_exact: 'She opens the sealed hatch slowly.', locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+      { moment_id: 'C3', script_cue_exact: 'They meet on the rooftop at night.', locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+    ] }] };
+  writePack(d, ctxPack);
+  runRFC([`--input=${d}`, '--job=reg_m33ctx', '--redo']);
+  const man = () => { try { return JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m33ctx', 'render-manifest.json'), 'utf8')); } catch { return null; } };
+  const M = man();
+  const fin = path.join(JOBS, 'reg_m33ctx', 'final.mp4');
+  let ctxOk = false, ctxDetail = 'no manifest';
+  if (M && fs.existsSync(fin)) {
+    const media = M.shots.filter(s => ['CONTEXT_VIDEO', 'EXACT_VIDEO', 'VERIFIED_SOURCE_STILL', 'MONTAGE'].includes(s.asset));
+    const bad = media.filter(s => isCard(colorAt(fin, s.start + Math.min(1, s.dur / 2))));
+    ctxOk = media.length > 0 && bad.length === 0;
+    ctxDetail = `${media.length} media shots, ${bad.length} actually a card`;
+  }
+  check('T-M331 every shot labelled media really decodes to media (no card wearing a media label)', ctxOk, ctxDetail);
+
+  // --- (2) missing planned asset kabhi media-backed report nahi hota ---
+  // Clip ko jaan-boojh kar uda dete hain, phir sirf render dobara chalate hain.
+  (() => {
+    const job = path.join(JOBS, 'reg_m33ctx');
+    const clip = path.join(job, 'clips');
+    if (fs.existsSync(clip)) for (const f of fs.readdirSync(clip)) if (f.endsWith('.mp4')) fs.writeFileSync(path.join(clip, f), 'x');
+    fs.rmSync(path.join(job, 'render-manifest.json'), { force: true });
+    fs.rmSync(path.join(job, 'segments'), { recursive: true, force: true });
+    try { const stj = JSON.parse(fs.readFileSync(path.join(job, 'state.json'), 'utf8'));
+      delete stj.done.render; delete stj.done.report; fs.writeFileSync(path.join(job, 'state.json'), JSON.stringify(stj)); } catch {}
+    const r = runRFC([`--input=${d}`, '--job=reg_m33ctx', '--from=render']);
+    const M2 = man();
+    const fin2 = path.join(job, 'final.mp4');
+    let ok = false, detail = `exit=${r.status}`;
+    if (M2 && fs.existsSync(fin2)) {
+      const claimedVideo = M2.shots.filter(s => s.asset === 'EXACT_VIDEO');
+      const lying = claimedVideo.filter(s => isCard(colorAt(fin2, s.start + Math.min(1, s.dur / 2))));
+      ok = lying.length === 0;
+      detail = `${claimedVideo.length} EXACT_VIDEO claims, ${lying.length} were cards`;
+    } else if (r.status !== 0) { ok = true; detail = 'production aborted instead of shipping a mislabelled card'; }
+    check('T-M332 corrupt clip: either recovers with real media or aborts — never a card labelled EXACT_VIDEO', ok, detail);
+  })();
+
+  // --- (3) frame hint EXACT second par materialize ho ---
+  (() => {
+    const long = makeEp(path.join(FX, 'ep'), 'longsrc', [
+      { color: 'red' }, { color: 'green' }, { color: 'blue' }, { color: 'yellow' },
+      { color: 'red' }, { color: 'green' }, { color: 'blue' }, { color: 'yellow' },
+    ]);   // 160s — uniform sampling se hint 1-2s tak off ho sakta hai
+    const hd = path.join(FX, 'm33hint');
+    makeNarr(hd, [{ start: 0, end: 8, text: 'The alarm rings across the base.' }]);
+    // 130s = 7th segment (blue). Uniform bank kabhi-kabhi green/yellow de deta.
+    writePack(hd, { schema_version: 'scene-research-pack-v1', project_title: 'Hint', packs: [{
+      pack_id: 'H', scope: { kind: 'SERIES', title: 'Show H' },
+      sources: [{ source_id: 'HS', local_file: long.video, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [{ moment_id: 'H1', script_cue_exact: 'The alarm rings across the base.', locators: [],
+        fallback_plan: { allowed_pack_ids: ['H'], allowed_source_ids: ['HS'], frame_hints: [{ source_id: 'HS', time_sec: 130, reason: 'blue segment' }] },
+        fallback: { type: 'NEEDS_SOURCE' } }] }] });
+    runRFC([`--input=${hd}`, '--job=reg_m33hint', '--redo']);
+    let HM = null; try { HM = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m33hint', 'render-manifest.json'), 'utf8')); } catch {}
+    const hinted = HM ? HM.shots.filter(s => s.hint_time != null) : [];
+    const delta = hinted.length ? Math.max(...hinted.map(s => Math.abs(s.hint_delta || 0))) : null;
+    const hfin = path.join(JOBS, 'reg_m33hint', 'final.mp4');
+    const col = hinted.length && fs.existsSync(hfin) ? nearest(colorAt(hfin, hinted[0].start + Math.min(1, hinted[0].dur / 2))) : null;
+    check('T-M333 frame hint materializes at the exact second (<=0.5s) and shows that frame',
+      hinted.length > 0 && delta <= 0.5 && col && col.k === 'blue',
+      `hinted=${hinted.length} maxDelta=${delta}s colour=${col ? col.k : 'n/a'}`);
+    check('T-M334 hint-only source gets indexed even though no clip was ever cut from it',
+      hinted.length > 0, `shots with hint_time=${hinted.length}`);
+  })();
+
+  // --- (4) cross-show neighbour borrow band ---
+  (() => {
+    const other = makeEp(path.join(FX, 'ep'), 'showb', [{ color: 'yellow', dialogue: 'a completely different series entirely' }]);
+    const xd = path.join(FX, 'm33scope');
+    makeNarr(xd, [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+    ]);
+    writePack(xd, { schema_version: 'scene-research-pack-v1', project_title: 'Scope', packs: [
+      { pack_id: 'PA', scope: { kind: 'SERIES', title: 'Show A' }, sources: [],
+        moments: [{ moment_id: 'A1', script_cue_exact: 'The alarm rings across the base.', locators: [], fallback: { type: 'TEXT_CARD', text: 'no show A media' } }] },
+      { pack_id: 'PB', scope: { kind: 'SERIES', title: 'Show B' },
+        sources: [{ source_id: 'BS', local_file: other.video, local_subs: other.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'B1', script_cue_exact: 'She opens the sealed hatch slowly.',
+          locators: [{ source_id: 'BS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 7, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+    ] }, );
+    runRFC([`--input=${xd}`, '--job=reg_m33scope', '--redo', '--review']);
+    let SM = null; try { SM = JSON.parse(fs.readFileSync(path.join(JOBS, 'reg_m33scope', 'render-manifest.json'), 'utf8')); } catch {}
+    const aShots = SM ? SM.shots.filter(s => s.moment_id === 'A1') : [];
+    const borrowed = aShots.filter(s => s.source_id === 'BS' || s.image_source === 'BS');
+    check('T-M335 a Show-A beat with no media never borrows Show-B footage',
+      aShots.length > 0 && borrowed.length === 0,
+      `A1 shots=${aShots.length} borrowedFromB=${borrowed.length} assets=${[...new Set(aShots.map(s => s.asset))].join('/')}`);
+  })();
+
+  // --- (5) HARD_EVIDENCE bina exact clip ke production block kare ---
+  (() => {
+    const cd = path.join(FX, 'm33crit');
+    makeNarr(cd, [{ start: 0, end: 6, text: 'The alarm rings across the base.' }]);
+    writePack(cd, { schema_version: 'scene-research-pack-v1', project_title: 'Crit', packs: [{
+      pack_id: 'K', scope: { kind: 'SERIES', title: 'Show K' },
+      sources: [{ source_id: 'KS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+      moments: [{ moment_id: 'K1', script_cue_exact: 'The alarm rings across the base.', criticality: 'HARD_EVIDENCE',
+        locators: [], fallback_plan: { allowed_pack_ids: ['K'], allowed_source_ids: ['KS'] }, fallback: { type: 'NEEDS_SOURCE' } }] }] });
+    const r = runRFC([`--input=${cd}`, '--job=reg_m33crit', '--redo']);
+    const out = (r.stdout || '') + (r.stderr || '');
+    check('T-M336 HARD_EVIDENCE without an exact clip blocks production export',
+      r.status !== 0 && /HARD_EVIDENCE|critical moments/i.test(out) && !fs.existsSync(path.join(JOBS, 'reg_m33crit', 'final.mp4')),
+      `exit=${r.status} blocked=${/critical moments/i.test(out)}`);
+  })();
+
+  // --- (6) --redo purana render-manifest.json chhode nahi ---
+  (() => {
+    const stale = path.join(JOBS, 'reg_m33ctx', 'render-manifest.json');
+    fs.writeFileSync(stale, JSON.stringify({ total: 999, shots: [{ i: 0, asset: 'STALE_MARKER', dur: 999 }] }));
+    runRFC([`--input=${d}`, '--job=reg_m33ctx', '--redo']);
+    let after = null; try { after = JSON.parse(fs.readFileSync(stale, 'utf8')); } catch {}
+    check('T-M337 --redo removes the stale render manifest (report cannot show old numbers)',
+      after && !JSON.stringify(after).includes('STALE_MARKER'),
+      `stalePresent=${after ? JSON.stringify(after).includes('STALE_MARKER') : 'no file'}`);
+  })();
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });

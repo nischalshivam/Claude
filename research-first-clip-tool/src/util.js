@@ -56,7 +56,13 @@ function tool(name) {
 // ek external command chalao. spawnSync => stdout AUR stderr dono hamesha milte
 // hain (SUCCESS par bhi) — blackdetect/freezedetect stderr par likhte hain.
 function run(bin, args, { timeout = 600000, input = null, throwOnFail = false, maxBuffer = 1 << 27 } = {}) {
-  const r = spawnSync(bin, args, { timeout, maxBuffer, encoding: 'utf8', input: input || undefined });
+  // Windows par .cmd/.bat seedha spawn nahi hote (EINVAL/ENOENT) — unhe shell
+  // chahiye. yt-dlp aksar .cmd wrapper ke roop mein install hota hai, aur
+  // RFC_YTDLP bhi wrapper par point kar sakta hai. Sirf usi case mein shell.
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(bin));
+  const opts = { timeout, maxBuffer, encoding: 'utf8', input: input || undefined };
+  if (needsShell) { opts.shell = true; args = args.map(a => (/[\s"^&|<>]/.test(String(a)) ? `"${String(a).replace(/"/g, '""')}"` : a)); }
+  const r = spawnSync(bin, args, opts);
   const res = {
     ok: !r.error && r.status === 0,
     stdout: r.stdout || '',

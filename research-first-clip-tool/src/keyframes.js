@@ -67,9 +67,14 @@ function buildBank(spec, cfg, id, resolved) {
   const sources = SRC.indexSources(spec.pack);
   const built = {};
   const wanted = new Set();
+  // Pehle sirf `kind === 'video'` wale moments ke sources index hote the. Iska
+  // matlab: analysis beat ke frame_hints jis source par the, agar us source se
+  // koi clip nahi kati, to wo source bank mein aata hi nahi tha — aur hint
+  // chupchap bekaar chala jata tha. Ab hint/allow-list wale sources bhi lete hain.
   for (const e of resolved) {
-    if (e.kind !== 'video') continue;
     for (const c of (e.candidates && e.candidates.length ? e.candidates : [e])) if (c.source_id) wanted.add(c.source_id);
+    for (const sid of (e.allowed_source_ids || [])) wanted.add(sid);
+    for (const h of (e.frame_hints || [])) if (h && h.source_id) wanted.add(h.source_id);
   }
   for (const sid of wanted) {
     const s = sources[sid];
@@ -83,7 +88,10 @@ function buildBank(spec, cfg, id, resolved) {
     }
     if (!media) continue;   // is source ki poori file nahi hai (sirf ranges) -> skip
     const idx = buildForSource(id, cfg, sid, media);
-    if (idx.frames && idx.frames.length) built[sid] = idx;
+    // frames khaali hon tab bhi rakho: exact hints ab bhi nikaale ja sakte hain
+    idx._exactHint = (t) => materializeHint(id, sid, media, t, cfg);
+    idx._media = media;
+    built[sid] = idx;
   }
   return built;
 }
@@ -103,6 +111,21 @@ function stillFromClip(id, cfg, clipRel, atFraction = 0.5) {
   return path.relative(U.jobDir(id), out);
 }
 
+// HINT ko EXACT second par nikalo (±0.5s se behtar). Ek chhota ffmpeg seek —
+// poore source ko dobara sample karne ki zaroorat nahi.
+function materializeHint(id, sourceId, mediaAbs, timeSec, cfg) {
+  const dir = U.ensureDir(path.join(bankDir(id), sourceId));
+  const file = path.join(dir, `hint_${Math.round(timeSec * 100)}.jpg`);
+  const rel = path.relative(U.jobDir(id), file);
+  if (fs.existsSync(file) && fs.statSync(file).size > 1000) return { t: timeSec, file: rel, score: Math.round(fs.statSync(file).size / 1024), exact: true };
+  const W = (cfg && cfg.canvas && cfg.canvas.width) || 1920;
+  // -ss input se pehle = tez seek; -accurate_seek default hai to frame sahi milta hai
+  const r = U.ffmpeg(['-ss', String(Math.max(0, timeSec)), '-i', mediaAbs, '-frames:v', '1',
+    '-vf', `scale=${W}:-2:flags=lanczos`, '-q:v', '3', file], { timeout: 120000 });
+  if (!r.ok || !fs.existsSync(file) || fs.statSync(file).size < 1000) { try { fs.rmSync(file, { force: true }); } catch {} return null; }
+  return { t: timeSec, file: rel, score: Math.round(fs.statSync(file).size / 1024), exact: true };
+}
+
 // ek beat ke liye best frames chuno — STRICT SCOPE LOCK.
 //  allowedSources: SIRF ye source IDs (research/scope se aaye). Khaali list =
 //    koi frame nahi (poore project ke bank se uthana STRICTLY forbidden hai —
@@ -117,15 +140,28 @@ function pickFrames(bank, allowedSources, used, n = 1, nearSec = null, hints = [
   const allowSet = new Set(allow);
   const out = [];
 
-  // 1) explicit frame_hints (sirf allowed sources ke)
+  // 1) explicit frame_hints — EXACT second par, sampled bank se nahi.
+  //  Purana tareeka: bank ke uniformly-sampled frames mein se nazdeeki chun lo.
+  //  Uniform interval = duration/60, to 1351s episode par 22.5s aur 4052s
+  //  compilation par 67.5s spacing — yaani hint 11-34 second tak GALAT frame
+  //  par land kar sakta tha. Stage 2 ki poori mehnat wahin bekaar ho jati thi.
+  //  Ab hint ke exact time par apna frame nikalte hain (materializeHint), aur
+  //  wo fail ho tabhi nazdeeki sampled frame par girte hain — us case mein
+  //  delta manifest mein saaf likha jata hai.
   for (const h of (hints || [])) {
     if (out.length >= n) break;
-    if (!h || !allowSet.has(h.source_id)) continue;
+    if (!h || !allowSet.has(h.source_id) || typeof h.time_sec !== 'number') continue;
     const idx = bank[h.source_id];
-    if (!idx || !idx.frames.length) continue;
+    if (!idx) continue;
+    if (idx.duration && h.time_sec >= idx.duration) continue;      // source ke bahar
+    const exact = idx._exactHint && idx._exactHint(h.time_sec);
+    if (exact) { out.push({ ...exact, source_id: h.source_id, hint_time: h.time_sec, hint_delta: 0,
+      why: `frame_hint ${h.time_sec}s (exact)${h.reason ? ' — ' + h.reason : ''}` }); continue; }
+    if (!idx.frames.length) continue;
     let best = null;
     for (const f of idx.frames) { const d = Math.abs(f.t - h.time_sec); if (!best || d < best.d) best = { f, d }; }
-    if (best) out.push({ ...best.f, source_id: h.source_id, why: `frame_hint ${h.time_sec}s${h.reason ? ' — ' + h.reason : ''}` });
+    if (best) out.push({ ...best.f, source_id: h.source_id, hint_time: h.time_sec, hint_delta: +best.d.toFixed(2),
+      why: `frame_hint ${h.time_sec}s (nearest sampled, ${best.d.toFixed(1)}s off)${h.reason ? ' — ' + h.reason : ''}` });
   }
 
   const pool = [];

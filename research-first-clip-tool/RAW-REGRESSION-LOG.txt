@@ -1,0 +1,64 @@
+=== REGRESSION Mon Aug  3 09:14:47 UTC 2026 ===
+== M1.1 REGRESSION SUITE ==
+  [PASS] T1 path-traversal --job rejected & nothing created outside jobs/  — exit=1
+  [PASS] T1b unsafe moment_id rejected by validator  — exit=1
+  [PASS] T2 raw_file persisted after download  — 2/2
+  [PASS] T2 fresh-process resume cut produces clips (not 0)  — resume=2 oneshot=2
+  [PASS] T2 resumed timeline has video slots  — video=2
+  [PASS] T3 timestamp change red->blue reflects in resolved.json + CLIP + FINAL (no stale media)  — resolved 2->42 | clip red->blue | final red->blue
+  [PASS] T3b source local_file change (same id/range) -> clip content changes red->blue  — red->blue
+  [PASS] T5 repeated dialogue WITH anchor -> ACCEPT correct occurrence (blue)  — RA=RESOLVED
+  [PASS] T5 repeated dialogue WITHOUT context -> NEEDS_REVIEW (ambiguous)  — RB=NEEDS_REVIEW
+  [PASS] T4 NEEDS_REVIEW clip not used in production final, and no diagnostic card either  — slot kinds=context_video
+  [PASS] T6 range-cache keys distinct for 10.1-20.1 vs 10.9-20.9  — S__10100_20100__h480.mp4 vs S__10900_20900__h480.mp4
+  [PASS] T6 exact match reuses cache; shifted range does NOT reuse  — A=cache B=no-reuse
+  [PASS] T7/T12 QA rejects BLACK, recovers via alternate (green)  — RESOLVED/GOOD/green
+  [PASS] T12 download-time DEAD source -> alternate (RESOLVED via GOOD)  — RESOLVED/GOOD
+  [PASS] T7 low-res source rejected -> NEEDS_SOURCE  — NEEDS_SOURCE
+  [PASS] T8 corrupt clip -> scope-correct still recovery OR loud production failure (never a silent card)  — recovered, final=12.00s total=12s
+  [PASS] T9 final.mp4 duration == timeline total (±0.4s)  — final=18.00 total=18
+  [PASS] T10 final sampled at every beat matches slot kind  — all beats ok
+  [PASS] T11 URL project + missing yt-dlp -> preflight STOP (exit 2, no misleading DONE)  — exit=2
+  [PASS] T-A dense SRT: overlapping sliding windows are NOT independent runner-ups (stays OK)  — flag=OK score=1 runnerUp=0.357
+  [PASS] T-B genuine disjoint repetition IS still caught (AMBIGUOUS, held out of final)  — flag=AMBIGUOUS status=NEEDS_REVIEW best=1 ru=1
+  [PASS] T-JS meta+subs+download calls all carry official --js-runtimes  — meta=true subs=true dl=true
+  [PASS] T-PACK1 check-pack catches dialogue that is not in the real captions  — not_found=["M_FAKEDLG"]
+  [PASS] T-PACK2 check-pack catches EXACT_TIME beyond episode duration  — bad_time=["M_OOB"]
+  [PASS] T-PACK3 check-pack catches dead source (and does not blame its timestamp)  — dead=["S_DEAD"]
+  [PASS] T-PACK4 check-pack catches near-duplicate scope titles (same show, 2 spellings)  — mismatch=1
+  [PASS] T-PACK5 weak pack -> exit 2 + work order names the weak moments  — exit=2 workOrderBytes=5737
+  [PASS] T-PACK8 unopened (METADATA_ONLY) sources are named, not taken on trust  — unopened=["S_GUESS"]
+  [PASS] T-PACK9 oversized GRAPHIC pack is flagged (beats parked as "analysis")  — graphic=75%
+  [PASS] T-PACK6 healthy pack -> exit 0, no false alarms  — exit=0 exact=100% failed=[]
+  [PASS] T-PACK7 --no-probe offline mode works and weights by narration seconds  — exit=0 narr=30s
+  [PASS] T-MERGE1 colliding IDs from two accounts are prefixed, merged pack stays valid  — exit=0 valid=true packs=["P01","X2_P01"]
+  [PASS] T-MERGE2 renaming rewrites every reference (locators, allowed_*, frame_hints)  — refsOk=true
+  [PASS] T-MERGE3 near-duplicate show titles are reported, not silently merged  — titles=["The Amazing World of X","The Wonderfully Amazing World of X"]
+  [PASS] T-MERGE4 --unify-titles collapses them only when explicitly asked  — titles=["The Amazing World of X"]
+  [PASS] T-MERGE5 invalid part stops the merge loudly (no half-broken pack)  — exit=1
+  [PASS] T-S21 stage-2 prompt lists only the moments still missing evidence  — exit=0 bytes=8069 hasSolved=false
+  [PASS] T-S22 analysis moments are asked for frame_hints, not invented scenes  — ANALYSIS marker present
+  [PASS] T-S23 valid locators applied, DIALOGUE ordered first (survives upload offset)  — exit=0 m1locs=2
+  [PASS] T-S24 cross-scope source, past-duration time, unknown moment and 2-word dialogue all rejected  — crossShow=0 rejectsShown=true
+  [PASS] T-S25 broken sources surfaced, applied pack still validates  — brokenShown=true
+  [PASS] T-S26 in-place apply writes a .bak before touching the pack  — exit=0 bak=true
+  [PASS] T-S210 --apply-probe writes MEASURED duration/captions into the pack  — dur=80 caps=true status=TRANSCRIPT_CHECKED
+  [PASS] T-S211 stage-2 prompt marks the confirmed-dead source and the confirmed-working one  — dead=true live=true
+  [PASS] T-S212 dialogue proven absent from real captions is named for replacement  — listed=true reportBad=1
+  [PASS] T-S27 stage 2 can replace a dead stage-1 source and correct its duration  — exit=0 p2url==REALFIXED01 p1dur=1300
+  [PASS] T-S28 junk replacement URL and unknown source_id are refused  — p1src=tests/fixtures/reg/ep/good
+  [PASS] T-S213 near-miss enum values are mapped, unknown ones left alone (schema stays valid)  — kind=LICENSED_UPLOAD status=VERIFIED_WATCHED untouched=undefined
+  [PASS] T-S29 timestamps are validated against the CORRECTED duration, not the stale one  — applied900=true
+  [PASS] T-M331 every shot labelled media really decodes to media (no card wearing a media label)  — 4 media shots, 0 actually a card
+  [PASS] T-M332 corrupt clip: either recovers with real media or aborts — never a card labelled EXACT_VIDEO  — 0 EXACT_VIDEO claims, 0 were cards
+  [PASS] T-M333 frame hint materializes at the exact second (<=0.5s) and shows that frame  — hinted=2 maxDelta=0s colour=blue
+  [PASS] T-M334 hint-only source gets indexed even though no clip was ever cut from it  — shots with hint_time=2
+  [PASS] T-M335 a Show-A beat with no media never borrows Show-B footage  — A1 shots=1 borrowedFromB=0 assets=GENERIC_TEXT_GRAPHIC
+  [PASS] T-M336 HARD_EVIDENCE without an exact clip blocks production export  — exit=1 blocked=true
+  [PASS] T-M337 --redo removes the stale render manifest (report cannot show old numbers)  — stalePresent=false
+  [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
+
+======================================================================
+  REGRESSION SUMMARY: 57 PASS, 0 FAIL
+======================================================================
+REG_EXIT=0

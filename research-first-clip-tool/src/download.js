@@ -37,8 +37,21 @@ function acquireFullSource(id, cfg, cand, meta) {
     if (pr.ok) return { ok: true, file: bank, duration: pr.duration, width: pr.width, height: pr.height, via: 'bank-cache' };
     try { fs.rmSync(bank, { force: true }); fs.rmSync(man, { force: true }); } catch {}
   }
-  const maxH = (cfg.acquire && cfg.acquire.maxHeight) || 720;
-  const fmt = `bv*[height<=${maxH}][ext=mp4]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/bv*[height<=${maxH}]/b`;
+  // HARD CAP: fallback/variety ke liye ek 67-minute compilation poori download
+  // karna ghanton ka kaam hai. Cap sirf planAcquisition mein tha, par lazy aur
+  // context-variety paths seedha yahan aate the — isliye cap ab YAHIN hai.
+  const acq = cfg.acquire || {};
+  const capSec = acq.fullDownloadMaxSeconds || 900;
+  const dur0 = (meta && meta.duration) || 0;
+  if (!cand.allowLong && dur0 > capSec) {
+    return { ok: false, tooLong: true,
+      error: `source ${Math.round(dur0)}s lamba hai (cap ${capSec}s) — poori download nahi karunga. Range/hint se kaam chalega.` };
+  }
+  const maxH = acq.maxHeight || 720;
+  // VIDEO-ONLY: final video mein source audio hamesha mute hota hai (sirf
+  // voiceover chalta hai), isliye audio stream laana bandwidth/time ki barbaadi
+  // hai. Muxed-only sources ke liye fallback chain phir bhi rakhi hai.
+  const fmt = `bv*[height<=${maxH}][ext=mp4]/bv*[height<=${maxH}]/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/b`;
   const r = U.ytdlp(['-f', fmt, '--merge-output-format', 'mp4', ...U.ytRuntimeArgs(cfg),
     '-o', bank, '--no-playlist', '--no-warnings', cand.url],
     { timeout: (cfg.acquire && cfg.acquire.timeoutMs) || 900000 });
@@ -215,7 +228,13 @@ module.exports = function download(spec, cfg, st, resolved) {
   // se bharna padta hai. Ek hi source se bharenge to wahi episode baar-baar
   // dikhega. Isliye USI SCOPE ke kuch aur approved sources bhi laate hain
   // (ek source ~10-20s mein aa jata hai) — sirf variety ke liye.
-  const noClipCount = resolved.filter(e => e.kind !== 'video' || e.status === 'NEEDS_SOURCE' || !e.clip).length;
+  // BUG THA: `!e.clip` yahan hamesha true hota hai kyunki cut abhi CHALA HI NAHI
+  // hai (clips agle stage mein bante hain). Isliye har fresh project mein ye
+  // block trigger ho jata tha aur bina zaroorat ke poore episodes download hote
+  // the. Ab sirf wo beats ginte hain jinke paas koi viable video candidate hai
+  // hi nahi — yaani jinhe sach mein context/fallback chahiye hoga.
+  const noClipCount = resolved.filter(e => e.kind !== 'video' || e.status === 'NEEDS_SOURCE'
+    || !(e.candidates && e.candidates.length)).length;
   const maxCtx = (cfg.acquire && cfg.acquire.maxContextSources) || 4;
   if (noClipCount >= ((cfg.acquire && cfg.acquire.contextVarietyMinBeats) || 3)) {
     // kaunse sources allowed scope mein hain aur abhi tak nahi aaye?

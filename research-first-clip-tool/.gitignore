@@ -14,8 +14,5 @@ tests/tmp/
 !tests/**/*.expected.mp4
 *.rgb
 *.gray
-RAW-TEST-LOG.txt
-RAW-REGRESSION-LOG.txt
 *.log
-RAW-NICOLE-ACCEPTANCE-LOG.txt
-RAW-*-LOG.txt
+# RAW-*-LOG.txt release evidence hain — ye ZIP mein jaate hain (ignore NAHI)

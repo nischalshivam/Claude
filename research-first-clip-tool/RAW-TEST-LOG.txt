@@ -1,0 +1,116 @@
+=== CONTENT Mon Aug  3 09:17:26 UTC 2026 ===
+== building fixtures ==
+
+== run pipeline: akatsuki ==
+  [OK]   node     v22.22.2
+  [OK]   ffmpeg   ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 200
+  [WARN] ffprobe  nahi mila — optional (ffmpeg fallback hai)
+  [WARN] ffmpeg:drawtext nahi mila — missing -> text cards solid-color (full ffmpeg build lo)
+  [OK]   yt-dlp   2026.07.04
+  [OK]   js-runtime(bun) 1.3.11  (yt-dlp YouTube EJS)
+  [OK]   pack valid — 1 packs, 6 moments, 83% EXACT/DIALOGUE
+  [OK]   aligned 6 moments — 6 clean, 0 review/ambiguous
+  [OK]   located: 5 RESOLVED, 0 NEEDS_REVIEW, 0 graphic/text, 1 NEEDS_SOURCE
+  [OK]   download: 5 ready (5 local, 0 via alternate, 0 resume-cache), 0 failed -> NEEDS_SOURCE
+  [OK]   cut: 5 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
+  [OK]   local QA: 5 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
+>>> 7. timeline
+  [OK]   timeline: 11 shots (sum 46.00s vs total 46.00s)
+>>> 8. render
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (11 segments, 46.0s, 1920x1080)
+>>> 9. report
+  [OK]   report: quality-report.html (5 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
+  [OK]   shot-review.html — 11 shots ka contact sheet (har shot ka asli frame + evidence)
+  DONE — tests/tmp/mini_final/akatsuki/
+   final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
+
+== run pipeline: crossshow ==
+  [OK]   node     v22.22.2
+  [OK]   ffmpeg   ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 200
+  [WARN] ffprobe  nahi mila — optional (ffmpeg fallback hai)
+  [WARN] ffmpeg:drawtext nahi mila — missing -> text cards solid-color (full ffmpeg build lo)
+  [OK]   yt-dlp   2026.07.04
+  [OK]   js-runtime(bun) 1.3.11  (yt-dlp YouTube EJS)
+  [OK]   pack valid — 2 packs, 4 moments, 75% EXACT/DIALOGUE
+  [OK]   aligned 4 moments — 4 clean, 0 review/ambiguous
+  [OK]   located: 3 RESOLVED, 0 NEEDS_REVIEW, 0 graphic/text, 1 NEEDS_SOURCE
+  [OK]   download: 3 ready (3 local, 0 via alternate, 0 resume-cache), 0 failed -> NEEDS_SOURCE
+  [OK]   cut: 3 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
+  [OK]   local QA: 3 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
+>>> 7. timeline
+  [OK]   timeline: 9 shots (sum 41.00s vs total 41.00s)
+>>> 8. render
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (9 segments, 41.0s, 1920x1080)
+>>> 9. report
+  [OK]   report: quality-report.html (3 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
+  [OK]   shot-review.html — 9 shots ka contact sheet (har shot ka asli frame + evidence)
+  DONE — tests/tmp/mini_final/crossshow/
+   final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
+
+== run pipeline: edgecases ==
+  [OK]   node     v22.22.2
+  [OK]   ffmpeg   ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 200
+  [WARN] ffprobe  nahi mila — optional (ffmpeg fallback hai)
+  [WARN] ffmpeg:drawtext nahi mila — missing -> text cards solid-color (full ffmpeg build lo)
+  [OK]   yt-dlp   2026.07.04
+  [OK]   js-runtime(bun) 1.3.11  (yt-dlp YouTube EJS)
+  [OK]   pack valid — 1 packs, 3 moments, 100% EXACT/DIALOGUE
+  [OK]   aligned 3 moments — 3 clean, 0 review/ambiguous
+  [OK]   located: 1 RESOLVED, 1 NEEDS_REVIEW, 0 graphic/text, 1 NEEDS_SOURCE
+  [OK]   download: 2 ready (2 local, 0 via alternate, 0 resume-cache), 0 failed -> NEEDS_SOURCE
+  [OK]   cut: 2 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
+  [OK]   local QA: 2 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
+>>> 7. timeline
+  [OK]   timeline: 6 shots (sum 24.00s vs total 24.00s)
+>>> 8. render
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (6 segments, 24.0s, 1920x1080)
+>>> 9. report
+  [OK]   report: quality-report.html (1 resolved, 1 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
+  [OK]   shot-review.html — 6 shots ka contact sheet (har shot ka asli frame + evidence)
+  DONE — tests/tmp/mini_final/edgecases/
+   final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/
+
+==============================================================================
+  PER-MOMENT TEST RESULTS
+==============================================================================
+  [PASS] akatsuki  AK_M01  RESOLVED      red      EXACT_TIME  |  color red ok; dec=ACCEPT
+  [PASS] akatsuki  AK_M02  RESOLVED      green    DIALOGUE  |  color green ok; dec=ACCEPT s=0.898
+  [PASS] akatsuki  AK_M03  RESOLVED      blue     DIALOGUE  |  color blue ok; dec=ACCEPT s=0.9461
+  [PASS] akatsuki  AK_M04  RESOLVED      yellow   EXACT_TIME  |  color yellow ok; dec=ACCEPT
+  [PASS] akatsuki  AK_M05  RESOLVED      magenta  EXACT_TIME  |  color magenta ok; dec=ACCEPT
+  [PASS] akatsuki  AK_M06  NEEDS_SOURCE  -        -  |  
+  [PASS] crossshow CS_M01  RESOLVED      red      DIALOGUE  |  color red ok; dec=ACCEPT s=0.9167
+  [PASS] crossshow CS_M02  RESOLVED      red      EXACT_TIME  |  color red ok; dec=ACCEPT
+  [PASS] crossshow CS_M03  RESOLVED      blue     DIALOGUE  |  color blue ok; dec=ACCEPT s=0.8962
+  [PASS] crossshow CS_M04  NEEDS_SOURCE  -        -  |  
+  [PASS] edgecases EC_M01  RESOLVED      blue     DIALOGUE  |  color blue ok; dec=ACCEPT s=1
+  [PASS] edgecases EC_M02  NEEDS_SOURCE  -        -  |  
+  [PASS] edgecases EC_M03  NEEDS_REVIEW  -        DIALOGUE  |  dec=REVIEW s=1
+
+  -- deliverables --
+  [OK] akatsuki/final.mp4 (628396 bytes)
+  [OK] akatsuki/timeline.json (9478 bytes)
+  [OK] akatsuki/quality-report.html (10650 bytes)
+  [OK] akatsuki/NEEDS_SOURCE.csv (256 bytes)
+       akatsuki/final.mp4 duration 46.0s
+  [OK] crossshow/final.mp4 (674320 bytes)
+  [OK] crossshow/timeline.json (7386 bytes)
+  [OK] crossshow/quality-report.html (7914 bytes)
+  [OK] crossshow/NEEDS_SOURCE.csv (248 bytes)
+       crossshow/final.mp4 duration 41.0s
+  [OK] edgecases/final.mp4 (338161 bytes)
+  [OK] edgecases/timeline.json (5235 bytes)
+  [OK] edgecases/quality-report.html (6578 bytes)
+  [OK] edgecases/NEEDS_SOURCE.csv (418 bytes)
+       edgecases/final.mp4 duration 24.0s
+  [OK] akatsuki/NEEDS_SOURCE.csv contains AK_M06
+  [OK] crossshow/NEEDS_SOURCE.csv contains CS_M04
+  [OK] edgecases/NEEDS_SOURCE.csv contains EC_M02
+
+==============================================================================
+  SUMMARY: 13 PASS, 0 FAIL
+==============================================================================
+MINI_EXIT=0

@@ -30,7 +30,9 @@ module.exports = function locate(spec, cfg, st, aligned) {
   // scope key = show/film identity (same-show inference ke liye). Isse P09 jaise
   // "0 sources" wale pack bhi USI show ke doosre packs ke frames use kar sakte hain —
   // par kisi DOOSRE show ke nahi (cross-show bleed band).
-  const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}` : '';
+  // Scope identity mein year/version bhi — warna same-title remake (jaise 2 alag
+  // saal ki same-naam film) ek doosre ke frames use kar lete.
+  const scopeKey = sc => sc ? `${sc.kind || ''}::${String(sc.title || '').trim().toLowerCase()}::${sc.year || ''}::${String(sc.version || '').trim().toLowerCase()}` : '';
   const packsByScope = {};
   for (const pk of spec.pack.packs) {
     const k = scopeKey(pk.scope);

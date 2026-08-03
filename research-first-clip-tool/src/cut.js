@@ -65,18 +65,40 @@ function cutClip(id, cfg, e) {
 
 module.exports = function cut(spec, cfg, st, resolved) {
   const id = spec.id;
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0, recovered = 0;
   for (const e of resolved) {
     if (e.kind !== 'video' || (e.status !== 'RESOLVED' && e.status !== 'NEEDS_REVIEW')) continue;
     const outRel = `clips/clip_${e.moment_id}.mp4`;
     // resume: reuse SIRF tab jab clip probeable ho AUR manifest (source/range/canvas) match kare
     if (fs.existsSync(U.p(id, outRel)) && U.probe(U.p(id, outRel)).ok && manifestMatches(id, cfg, e)) { e.clip = outRel; ok++; continue; }
-    const res = cutClip(id, cfg, e);
-    if (res.ok) { e.clip = res.clip; ok++; }
+    let res = cutClip(id, cfg, e);
+    // ALTERNATE RETRY: pehle ek cut fail = seedha NEEDS_SOURCE, chahe research ne
+    // doosra verified candidate diya ho. Ab har viable candidate try hota hai —
+    // download aur QA stage pehle se aisa karte the, cut nahi karta tha.
+    const attempts = [{ source_id: e.source_id, error: res.ok ? null : res.error }];
+    if (!res.ok && Array.isArray(e.candidates) && e.candidates.length > 1) {
+      for (const c of e.candidates) {
+        if (c.source_id === e.source_id && c.locator_type === e.locator_type) continue;
+        const alt = { ...e, source_id: c.source_id, source_kind: c.source_kind, url: c.url,
+          local_file: c.local_file, locator_type: c.locator_type, decision: c.decision,
+          score: c.score, recall: c.recall, reason: c.reason, matched: c.matched, cut: c.cut };
+        const r2 = cutClip(id, cfg, alt);
+        attempts.push({ source_id: c.source_id, error: r2.ok ? null : r2.error });
+        if (r2.ok) {
+          U.log(`   cut retry OK: ${e.moment_id} -> alternate ${c.source_id} (${c.locator_type})`);
+          Object.assign(e, { source_id: c.source_id, source_kind: c.source_kind, url: c.url,
+            local_file: c.local_file, locator_type: c.locator_type, decision: c.decision,
+            score: c.score, recall: c.recall, reason: c.reason, matched: c.matched, cut: c.cut });
+          res = r2; break;
+        }
+      }
+    }
+    e.cut_attempts = attempts;
+    if (res.ok) { e.clip = res.clip; ok++; if (attempts.length > 1) recovered++; }
     else { e.clip = null; e.status = 'NEEDS_SOURCE'; e.reason = res.error; fail++; }
   }
-  U.ok(`cut: ${ok} clips (preferred length, muted), ${fail} failed -> NEEDS_SOURCE`);
-  st.meta.cut = { ok, fail };
+  U.ok(`cut: ${ok} clips (preferred length, muted)${recovered ? `, ${recovered} alternate se bache` : ''}, ${fail} failed -> NEEDS_SOURCE`);
+  st.meta.cut = { ok, fail, recovered };
   return resolved;
 };
 

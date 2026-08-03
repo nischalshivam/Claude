@@ -47,6 +47,17 @@ const escFont = p => p.replace(/\\/g, '/').replace(/:/g, '\\:');
 
 const CARD_BG = { text: '0x1a1a1a', graphic: '0x102a43', needs_source: '0x4a1010', needs_review: '0x3a2b08' };
 
+// Slot ka asset path job-relative bhi ho sakta hai (clips/, cache/) aur
+// ROOT-relative ya absolute bhi (local_file wale sources). Ek hi jagah resolve
+// karo, warna ek valid local source "missing" lagta hai aur shot chupchap card
+// ban jata hai. Milta nahi to null — caller ko pata chalna chahiye.
+function resolveAsset(id, p) {
+  if (!p) return null;
+  const tries = path.isAbsolute(p) ? [p] : [U.p(id, p), path.join(U.ROOT, p), path.resolve(p)];
+  for (const t of tries) { try { if (fs.existsSync(t) && fs.statSync(t).size > 0) return t; } catch {} }
+  return null;
+}
+
 // solid card (fail-safe) — exact duration, taaki timeline drift na ho
 function renderSolid(cfg, seg, dur, bg) {
   const W = cfg.canvas.width, H = cfg.canvas.height, FPS = cfg.canvas.fps;
@@ -72,27 +83,47 @@ module.exports = function render(spec, cfg, st, tl) {
     const seg = path.join(segDir, `seg_${String(s.i).padStart(4, '0')}.mp4`);
     const dur = Math.max(0.3, s.dur);
     let r;
-    if (s.kind === 'video' && s.video && fs.existsSync(U.p(id, s.video))) {
+    // ---- P0: har planned asset PEHLE ek absolute path par resolve hota hai ----
+    // Pehle har branch ki condition mein fs.existsSync tha. File na mile to
+    // execution agli branch mein chala jata tha aur aakhir mein generic TEXT CARD
+    // ban jata tha — par manifest wahi purana label (EXACT_VIDEO/CONTEXT_VIDEO)
+    // rakhta tha. Yaani screen par card, report mein "media-backed". Ab kind par
+    // switch hota hai; media na mile to verified-fallback state machine chalti
+    // hai, doosra semantic renderer kabhi nahi.
+    const videoAbs = resolveAsset(id, s.video);
+    const mediaAbs = resolveAsset(id, s.media_file);
+    const imageAbs = resolveAsset(id, s.image);
+    const imagesAbs = (Array.isArray(s.images) ? s.images : []).map(f => resolveAsset(id, f)).filter(Boolean);
+    let missingReason = null;
+    const PLANNED_MEDIA = { video: 'video', context_video: 'media_file', still: 'image', montage: 'images', graphic: 'image' };
+    if (PLANNED_MEDIA[s.kind]) {
+      const have = s.kind === 'video' ? videoAbs : s.kind === 'context_video' ? mediaAbs
+        : s.kind === 'montage' ? (imagesAbs.length >= 2 ? imagesAbs : null) : imageAbs;
+      if (!have) missingReason = `planned ${s.kind} asset (${PLANNED_MEDIA[s.kind]}) nahi mila: ${s.video || s.media_file || s.image || (s.images || []).join(',') || '(none)'}`;
+    }
+    if (missingReason) {
+      r = null;                                  // fallback state machine neeche chalegi
+    } else if (s.kind === 'video') {
       // M2: shot planner guarantee karta hai ki video slot clip se lamba na ho,
       // isliye ab koi infinite `tpad` clone (= 7-14s frozen frame) nahi chahiye.
       // Bas bahut chhota shortfall ho to bounded hold (<= maxFreezeSeconds).
-      const clipDur = (s.clip_dur || U.probe(U.p(id, s.video)).duration) || dur;
+      const clipDur = (s.clip_dur || U.probe(videoAbs).duration) || dur;
       const maxFreeze = (cfg.shots && cfg.shots.maxFreezeSeconds != null) ? cfg.shots.maxFreezeSeconds : 0.5;
       let vf = `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`;
       const shortfall = dur - clipDur;
       if (shortfall > 0.02) vf += `,tpad=stop_mode=clone:stop_duration=${Math.min(maxFreeze, shortfall).toFixed(2)}`;
-      r = U.ffmpeg(['-i', U.p(id, s.video), '-vf', vf, '-t', dur.toFixed(3),
+      r = U.ffmpeg(['-i', videoAbs, '-vf', vf, '-t', dur.toFixed(3),
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 300000 });
-    } else if (s.kind === 'context_video' && s.media_file && fs.existsSync(U.p(id, s.media_file))) {
+    } else if (s.kind === 'context_video') {
       // CONTEXT VIDEO: already-downloaded approved source se chalta hua tukda
       // (exact scene ka daawa nahi — report mein CONTEXT_VIDEO). Still se behtar,
       // aur koi naya download nahi.
-      r = U.ffmpeg(['-ss', String(s.media_start || 0), '-i', U.p(id, s.media_file), '-t', dur.toFixed(3), '-an',
+      r = U.ffmpeg(['-ss', String(s.media_start || 0), '-i', mediaAbs, '-t', dur.toFixed(3), '-an',
         '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), seg], { timeout: 300000 });
-    } else if (s.kind === 'still' && s.image && fs.existsSync(U.p(id, s.image))) {
+    } else if (s.kind === 'still') {
       // STILL: Ken Burns (slow zoom/pan) + blurred background fill — dead card nahi
       // Ken Burns = fixed-size crop jo upscaled image par PAN karta hai.
       // (zoompan bahut mehnga tha: ~12s/still; ye ~3s/still deta hai aur dims
@@ -109,22 +140,22 @@ module.exports = function render(spec, cfg, st, tl) {
       ];
       const mv = moves[s.i % moves.length];
       const vf = `scale=${SW}:${SH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H}:${mv},fps=${FPS},setsar=1`;
-      r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', U.p(id, s.image), '-t', dur.toFixed(3), '-vf', vf,
+      r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imageAbs, '-t', dur.toFixed(3), '-vf', vf,
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
       if (!r.ok) {   // zoompan fail -> simple static fit (still better than card)
-        r = U.ffmpeg(['-loop', '1', '-i', U.p(id, s.image), '-t', dur.toFixed(3),
+        r = U.ffmpeg(['-loop', '1', '-i', imageAbs, '-t', dur.toFixed(3),
           '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
       }
     } else {
       // ---- MONTAGE: 2-3 verified frames ek shot mein (crossfade) ----
-      if (s.kind === 'montage' && Array.isArray(s.images) && s.images.length >= 2) {
-        const imgs = s.images.filter(f => fs.existsSync(U.p(id, f))).slice(0, 3);
+      if (s.kind === 'montage') {
+        const imgs = imagesAbs.slice(0, 3);
         if (imgs.length >= 2) {
           const per = dur / imgs.length;
           const args = [];
-          imgs.forEach(f => args.push('-loop', '1', '-framerate', String(FPS), '-t', (per + 0.6).toFixed(3), '-i', U.p(id, f)));
+          imgs.forEach(f => args.push('-loop', '1', '-framerate', String(FPS), '-t', (per + 0.6).toFixed(3), '-i', f));
           const parts = imgs.map((_, k) => `[${k}:v]scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},fps=${FPS},setsar=1[v${k}]`);
           let chain = parts.join(';') + ';';
           if (imgs.length === 2) chain += `[v0][v1]xfade=transition=fade:duration=0.5:offset=${(per - 0.25).toFixed(3)}[vo]`;
@@ -135,11 +166,11 @@ module.exports = function render(spec, cfg, st, tl) {
           r = U.ffmpeg(args, { timeout: 180000 });
         }
         if (!r || !r.ok) {   // montage fail -> pehli image ka simple still (still real media)
-          r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', U.p(id, s.images[0]), '-t', dur.toFixed(3),
+          r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imgs[0] || imagesAbs[0], '-t', dur.toFixed(3),
             '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},fps=${FPS},setsar=1`,
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
         }
-      } else if (s.kind === 'graphic' && s.image && fs.existsSync(U.p(id, s.image))) {
+      } else if (s.kind === 'graphic') {
         // ---- MEDIA-BACKED GRAPHIC: asli frame + dim + accent + text ----
         const filters = [
           `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`,
@@ -153,7 +184,7 @@ module.exports = function render(spec, cfg, st, tl) {
           filters.push(`drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=0xffffff:fontsize=56:line_spacing=22:shadowcolor=0x000000@0.8:shadowx=2:shadowy=2:x=190:y=(h-text_h)/2`);
         }
         filters.push(`fps=${FPS}`, 'setsar=1');
-        r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', U.p(id, s.image), '-t', dur.toFixed(3),
+        r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imageAbs, '-t', dur.toFixed(3),
           '-vf', filters.join(','), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
           '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
       } else {
@@ -196,38 +227,56 @@ module.exports = function render(spec, cfg, st, tl) {
       }
       }
     }
-    let assetUsed = s.asset || s.kind;
-    if (!r || !r.ok || !fs.existsSync(seg)) {
-      // RETRY: pehle usi shot ka simpler form (media rakhte hue), phir hi haar mano.
-      U.warn(`seg ${s.i} (${s.kind}) render fail — retry: ${((r && r.stderr) || '').slice(0, 90)}`);
+    // ---- label WAHI jo sach mein bana ----
+    // Planned label sirf tab chalta hai jab us kind ka planned media sach mein
+    // render hua. Generic text graphic sirf usi slot par jo GENERIC plan hua tha.
+    const PLANNED_ASSET = { video: 'EXACT_VIDEO', context_video: 'CONTEXT_VIDEO', still: 'VERIFIED_SOURCE_STILL',
+      montage: 'MONTAGE', graphic: 'TEMPLATE_GRAPHIC_MEDIA' };
+    let assetUsed = PLANNED_MEDIA[s.kind] ? PLANNED_ASSET[s.kind]
+      : (['needs_source', 'needs_review'].includes(s.kind) ? 'DIAGNOSTIC_CARD' : 'GENERIC_TEXT_GRAPHIC');
+    let assetNote = null;
+    if (missingReason || !r || !r.ok || !fs.existsSync(seg)) {
+      // VERIFIED FALLBACK STATE MACHINE — kabhi chupchap doosre renderer mein nahi.
+      const why = missingReason || `ffmpeg fail: ${((r && r.stderr) || '').slice(0, 90)}`;
+      U.warn(`seg ${s.i} (${s.kind}) — ${why}`);
       let retried = null;
-      // scope-correct backup still (timeline ne pehle hi chun rakhi hai) sabse pehle
-      const anyImg = s.image || (Array.isArray(s.images) && s.images[0]) || s.fallback_image;
-      if (anyImg && fs.existsSync(U.p(id, anyImg))) {
-        retried = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', U.p(id, anyImg), '-t', dur.toFixed(3),
+      const stillFrom = imageAbs || imagesAbs[0] || resolveAsset(id, s.fallback_image);
+      if (stillFrom) {
+        retried = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', stillFrom, '-t', dur.toFixed(3),
           '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
-        if (retried.ok) assetUsed = 'VERIFIED_SOURCE_STILL';
-      } else if (s.video && fs.existsSync(U.p(id, s.video))) {
-        retried = U.ffmpeg(['-i', U.p(id, s.video), '-t', dur.toFixed(3),
+        if (retried.ok) { assetUsed = 'VERIFIED_SOURCE_STILL'; assetNote = `fallback still (${why})`; }
+      }
+      if ((!retried || !retried.ok) && videoAbs) {
+        retried = U.ffmpeg(['-i', videoAbs, '-t', dur.toFixed(3),
           '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
           '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
-        if (retried.ok) assetUsed = 'EXACT_VIDEO';
+        if (retried.ok) { assetUsed = 'EXACT_VIDEO'; assetNote = `fallback exact clip (${why})`; }
+      }
+      if ((!retried || !retried.ok) && mediaAbs) {
+        retried = U.ffmpeg(['-ss', String(s.media_start || 0), '-i', mediaAbs, '-t', dur.toFixed(3), '-an',
+          '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
+          '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), seg]);
+        if (retried.ok) { assetUsed = 'CONTEXT_VIDEO'; assetNote = `fallback context (${why})`; }
       }
       if (!retried || !retried.ok || !fs.existsSync(seg)) {
-        // Ab CHHUPANA nahi: production mein fail karo, review mode mein hi placeholder.
-        if (production) throw new Error(`shot ${s.i} (${s.kind}, ${s.start}-${s.end}s) render nahi ho paya aur koi verified alternate nahi mila. ` +
-          `Production export rok raha hoon (pehle chupchap solid card lag jata tha). Report/NEEDS_SOURCE.csv dekho.`);
+        // Production mein CHHUPANA nahi — export rok do.
+        if (production) throw new Error(`shot ${s.i} (${s.kind}, ${s.start}-${s.end}s): ${why}. Koi verified alternate bhi nahi mila. ` +
+          `Production export rok raha hoon (pehle ye chupchap text card ban jata tha aur report media-backed bolti thi). NEEDS_SOURCE.csv dekho.`);
         const fb = renderSolid(cfg, seg, dur, '0x202020');
         if (!fb.ok || !fs.existsSync(seg)) throw new Error(`seg ${s.i} placeholder bhi fail`);
-        assetUsed = 'RENDER_FAILURE_FALLBACK';
+        assetUsed = 'RENDER_FAILURE_FALLBACK'; assetNote = why;
       }
       failed++;
     }
-    manifest.push({ i: s.i, start: s.start, end: s.end, dur, kind: s.kind, asset: assetUsed,
+    manifest.push({ i: s.i, start: s.start, end: s.end, dur, kind: s.kind, asset: assetUsed, asset_note: assetNote,
       moment_id: s.moment_id || null, pack_id: s.pack_id || null,
       source_id: s.source_id || s.image_source || null, url: s.url || null,
       image: s.image || null, images: s.images || null, image_time: s.image_time != null ? s.image_time : null,
+      // hint provenance: kya maanga gaya, kya mila, kitna farq (audit ke liye)
+      hint_time: s.hint_time != null ? s.hint_time : null, hint_delta: s.hint_delta != null ? s.hint_delta : null,
+      hint_times: s.hint_times || null, hint_deltas: s.hint_deltas || null,
+      must_show: s.must_show || [], must_not_show: s.must_not_show || [], cue: s.cue || null,
       video: s.video || null, media_file: s.media_file || null, media_start: s.media_start != null ? s.media_start : null,
       why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused });
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);

@@ -1,6 +1,23 @@
-# Research-First Clip Tool (M2 — zero-card visual engine)
+# Research-First Clip Tool — M3.3 (reliability release)
 
-> **M2.1 mein sabse bada badlav:** jahan exact clip nahi milti, wahan **usi
+> **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
+> karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
+> card ban jata tha, par manifest `EXACT_VIDEO`/`CONTEXT_VIDEO` hi likhta tha —
+> yaani screen par card, report mein "media-backed". Decoded-pixel tests ab isse
+> pakadte hain.
+>
+> **Frame hints ab exact second par** materialize hote hain (±0.5s), sampled bank
+> se nahi — pehle 22-minute source par ~11s aur 67-minute source par ~34s tak
+> galat frame aa sakta tha.
+>
+> **HOOK/HARD_EVIDENCE ab gate hain**, sirf metadata nahi: exact evidence na ho to
+> production export rukta hai.
+>
+> **`shot-review.html`** — final render se har shot ka thumbnail, evidence ke saath.
+> Percentages ye nahi bata sakte ki character sahi hai ya nahi; ye page 2 minute
+> mein visual audit karwa deta hai.
+>
+> **M2.1 ka badlav:** jahan exact clip nahi milti, wahan **usi
 > approved source (usi episode) ke frames** se still/montage lagta hai — sahi
 > show, sahi character, Ken Burns motion ke saath. Analysis/quote beats bhi ab
 > plain card nahi, **asli frame ke upar** text overlay hote hain.
@@ -303,6 +320,45 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M3.3 — reliability release**
+- **P0 renderer honesty.** Har branch ki condition mein `fs.existsSync` tha, isliye
+  missing file par execution agli branch mein gir kar generic text card bana deta
+  tha — par manifest planned label (`EXACT_VIDEO`/`CONTEXT_VIDEO`) hi rakhta tha.
+  Ab asset pehle absolute path par resolve hota hai, `kind` par switch hota hai,
+  aur label wahi likha jata hai jo SACH mein bana. Missing media par verified
+  fallback state machine chalti hai; production mein koi verified alternate na ho
+  to export rukta hai. Fixtures par ye bug live tha (`CONTEXT_VIDEO` label,
+  screen par card) — ab decoded-pixel tests isse pakadte hain.
+- **`sourceMediaPath` path bug.** Local-file sources ROOT-relative path dete the
+  aur render unhe job-relative maanta tha — valid source "missing" lagta tha.
+- **Frame hints exact second par** (`materializeHint`): pehle uniformly-sampled
+  bank se nazdeeki frame milta tha — 1351s source par ~11s aur 4052s par ~34s tak
+  galat. Ab hint par apna frame nikalta hai, aur manifest mein
+  `hint_time`/`hint_delta` likha jata hai.
+- **Hint-backed visual ab generic context se PEHLE** chunta hai.
+- **Hint-only sources bhi index hote hain** — pehle sirf un sources ka bank banta
+  tha jinse clip kati thi, isliye analysis beats ke hints bekaar jaate the.
+- **Scope-strict fallback.** Neighbour se udhaar sirf same `scope_key` par
+  (ab year/version bhi shaamil), warna honest khaali. Cross-show bleed band.
+- **`criticality` ab gate hai.** HARD_EVIDENCE ko exact clip chahiye, HOOK ko
+  exact clip ya materialized hint — warna production export rukta hai.
+- **Cut-failure par alternate candidate retry** (pehle seedha NEEDS_SOURCE).
+- **`--redo` ab `render-manifest.json` bhi hataata hai** (warna purane percentages).
+- **Acquisition:** `noClipCount` cut se PEHLE `!e.clip` dekhta tha, isliye har
+  fresh project mein context-variety downloads trigger ho jaate the. Full-download
+  cap ab `acquireFullSource` ke andar hai (lazy/variety paths bhi cover), aur bank
+  video-only aata hai (final mein source audio waise bhi mute hai).
+- **Preview SRT rebase.** Moments 0 se shuru hote the par timeline asli SRT padhta
+  tha — 300s wala preview apne cuts SRT ki shuruat par snap karta tha.
+- **`shot-review.html`** — final render se har shot ka thumbnail + narration cue +
+  must_show/must_not_show + source/time + hint delta, aur galat shots ki CSV.
+- **CHECKPACK:** DIALOGUE `REVIEW` ab exact nahi gina jata (production usse clip
+  banata hi nahi).
+- **Windows:** `.cmd`/`.bat` tools ab shell ke through chalte hain (T-JS failure).
+- **`START_HERE.bat`** — ek menu jisme har step aur "kab karna hai" likha hai.
+- 7 naye decoded-pixel regressions (T-M331..337). Suite ab **57 PASS / 0 FAIL**.
+
 
 **M2.5**
 - **`CHECKPACK.bat` / `tools/check-pack.js`** — research pack ka report card

@@ -202,7 +202,10 @@ function verifyLocator(L) {
   if (!subs || !subs.count) return { ok: false, code: 'NOSUBS', why: `source ke captions nahi mile (${(subs && subs.via) || 'na'})` };
   const match = SUB.locateDialogue(subs.cues, L.dialogue_exact, { variants: L.dialogue_variants_verified || [], anchors: L.nearby_context_terms || [] });
   const dec = SUB.decide(match, dcfg);
-  if (dec.decision === 'ACCEPT' || dec.decision === 'REVIEW') return { ok: true, code: 'OK', why: `${dec.decision} @ ${Math.round(match.start_sec)}s`, at: match.start_sec };
+  // SIRF ACCEPT. locate.js REVIEW ko NEEDS_REVIEW banata hai aur production usse
+  // clip nahi banata — to use "exact" ginna report ko jhootha bana deta tha.
+  if (dec.decision === 'ACCEPT') return { ok: true, code: 'OK', why: `ACCEPT @ ${Math.round(match.start_sec)}s`, at: match.start_sec };
+  if (dec.decision === 'REVIEW') return { ok: false, code: 'REVIEW', why: `dialogue match kamzor hai — production isse clip nahi banata (${dec.reason})` };
   return { ok: false, code: 'NOMATCH', why: `dialogue captions mein nahi mila (${dec.reason})` };
 }
 
