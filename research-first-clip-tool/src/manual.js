@@ -191,14 +191,20 @@ function scan(dataRoot, opts = {}) {
   const out = { schema: 'manual-scan-v1', generated_at: new Date().toISOString(), requests: [] };
   if (!fs.existsSync(dataRoot)) return out;
   const overrides = readOverrides(dataRoot);
-  const byId = {}; for (const r of (overrides.requests || [])) byId[r.request_id] = r;
+  // sthir key se bhi, purane request_id se bhi — dono chalte hain
+  const byId = {};
+  for (const r of (overrides.requests || [])) {
+    if (r.request_key) byId[r.request_key] = r;
+    if (r.request_id) byId[r.request_id] = r;
+  }
 
   for (const name of fs.readdirSync(dataRoot)) {
     if (!/^MISSING_\d{3}__/.test(name)) continue;
     const dir = path.join(dataRoot, name);
     let req = null;
     try { req = JSON.parse(fs.readFileSync(path.join(dir, 'request.json'), 'utf8')); } catch { continue; }
-    const ov = byId[req.request_id] || {};
+    const key = req.request_key || ('REQ_' + String(req.request_id || '').split('__').pop());
+    const ov = byId[key] || byId[req.request_id] || {};
     const { files, bad } = readRequestMedia(dir, ov);
     const built = buildShotsForRequest(req, files, { cfg: opts.cfg, allow_reuse: !!ov.allow_reuse });
     const enough = files.length > 0 && built.short === 0;
@@ -207,7 +213,7 @@ function scan(dataRoot, opts = {}) {
     // dhoondhne ki zaroorat nahi honi chahiye.
     const approved = ov.approved === false ? false : files.length > 0;
     out.requests.push({
-      request_id: req.request_id, folder: name, dir,
+      request_id: req.request_id, request_key: key, folder: name, dir,
       range: req.range, moment_ids: req.moment_ids, narration_exact: req.narration_exact,
       files: files.map(f => ({ file: f.file, type: f.type, sha256: f.sha256, duration: f.duration || null,
         width: f.width || null, height: f.height || null, warnings: f.warnings })),

@@ -1590,6 +1590,160 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     'fatal-classifier');
 })();
 
+// ---------- T-M42: stability — the bugs the 897s run exposed ----------
+//  Real run: filling some gaps renumbered the rest, so 16 folders with the
+//  user's own media were moved to _ORPHANED. And the dashboard said
+//  "HYBRID READY 23/23" moments before the engine refused 16 CRITICAL slots.
+(() => {
+  const gapplan = require(path.join(ROOT, 'src', 'gapplan.js'));
+  const manual = require(path.join(ROOT, 'src', 'manual.js'));
+  const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
+  const cfgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+
+  const cues = [];
+  for (let i = 0; i < 20; i++) cues.push({ start: i * 5, end: i * 5 + 5, text: `narration line number ${i} here` });
+  const packIndex = { P1: { scope: { kind: 'SERIES', title: 'Show X' } } };
+  const mkPlan = (badIdx, crit = {}) => {
+    const shots = [];
+    for (let i = 0; i < 12; i++) {
+      shots.push({ i, start: i * 5, end: i * 5 + 5, moment_id: `M${i}`, pack_id: 'P1', cue: cues[i].text,
+        criticality: crit[i] || 'NORMAL',
+        asset: badIdx.includes(i) ? 'GENERIC_TEXT_GRAPHIC' : 'EXACT_VIDEO' });
+    }
+    return gapplan.plan({ manifest: { preview_offset: 0, shots }, resolved: [], cues, packIndex,
+      fingerprint: { pack_sha256: 'p', srt_sha256: 's' }, projectId: 'stab', cfg: {} });
+  };
+
+  // --- (1) ek gap bharne par baaki gaps ki PEHCHAAN na badle ---
+  const before = mkPlan([1, 5, 9]);
+  const after = mkPlan([5, 9]);                       // pehla gap bhar gaya
+  const keyOf = (p, t) => (p.requests.find(r => r.range.start_sec === t) || {}).request_key;
+  check('T-M421 filling one gap does not change the identity of the others',
+    before.requests.length === 3 && after.requests.length === 2
+      && keyOf(before, 25) === keyOf(after, 25) && keyOf(before, 45) === keyOf(after, 45)
+      && before.requests.every(r => r.request_key && /^REQ_/.test(r.request_key)),
+    `before=${before.requests.map(r => r.label + ':' + r.request_key).join()} after=${after.requests.map(r => r.label + ':' + r.request_key).join()}`);
+
+  // --- (2) renumber hone par folder RENAME ho, _ORPHANED nahi ---
+  const dd = path.join(ROOT, 'tests', 'tmp', 'data_stab_' + process.pid);
+  fs.rmSync(dd, { recursive: true, force: true });
+  gapplan.writeDataFolders(dd, before);
+  const dirBefore = fs.readdirSync(dd).filter(n => /^MISSING_/.test(n)).sort();
+  // user ne teesre gap (45s) mein apni file daali
+  const third = dirBefore.find(n => /__00m45s/.test(n));
+  ff(['-f', 'lavfi', '-i', 'color=c=0x1E90FF:s=640x360:d=1', '-frames:v', '1', path.join(dd, third, 'media', '01_a.jpg')]);
+  const w = gapplan.writeDataFolders(dd, after);     // ab pehla gap bhar gaya -> renumber
+  const dirAfter = fs.readdirSync(dd).filter(n => /^MISSING_/.test(n));
+  const orphanRoot = path.join(dd, '_ORPHANED');
+  const stillHasMedia = dirAfter.some(n => {
+    try { return fs.readdirSync(path.join(dd, n, 'media')).includes('01_a.jpg'); } catch { return false; }
+  });
+  // jo folder khaali tha wo ja sakta hai; jisme media tha wo KABHI nahi.
+  let orphanWithMedia = 0;
+  if (fs.existsSync(orphanRoot)) {
+    for (const stamp of fs.readdirSync(orphanRoot)) {
+      for (const n of fs.readdirSync(path.join(orphanRoot, stamp))) {
+        try { if (fs.readdirSync(path.join(orphanRoot, stamp, n, 'media')).some(f => !f.startsWith('.'))) orphanWithMedia++; } catch {}
+      }
+    }
+  }
+  check('T-M422 renumbering renames the folder in place and never orphans a folder holding media',
+    dirAfter.length === 2 && orphanWithMedia === 0 && stillHasMedia && w.renamed.length >= 1,
+    `after=${dirAfter.join()} orphansWithMedia=${orphanWithMedia} keptMedia=${stillHasMedia} renamed=${JSON.stringify(w.renamed)}`);
+
+  // --- (2b) jis request ko user ne bhar diya, uska folder KABHI na jaye ---
+  //  Asli run ka sabse mehnga bug: media daalne se wo jagah gap nahi rehti,
+  //  agla plan usse hata deta tha, folder _ORPHANED chala jata tha aur media
+  //  ke saath gap wapas khul jata tha — user wahi kaam dobara karta tha.
+  (() => {
+    const dd2 = path.join(ROOT, 'tests', 'tmp', 'data_sat_' + process.pid);
+    fs.rmSync(dd2, { recursive: true, force: true });
+    const p1 = mkPlan([2, 6]);
+    gapplan.writeDataFolders(dd2, p1);
+    const filled = fs.readdirSync(dd2).find(n => /__00m10s/.test(n));
+    ff(['-f', 'lavfi', '-i', 'color=c=0x228B22:s=640x360:d=1', '-frames:v', '1', path.join(dd2, filled, 'media', '01_x.jpg')]);
+    const p2 = mkPlan([6]);                       // wo jagah ab bhar chuki hai
+    const w3 = gapplan.writeDataFolders(dd2, p2);
+    const stillThere = fs.existsSync(path.join(dd2, filled, 'media', '01_x.jpg'));
+    const orph = fs.existsSync(path.join(dd2, '_ORPHANED')) ? fs.readdirSync(path.join(dd2, '_ORPHANED')).length : 0;
+    check('T-M422b a request the user already filled keeps its folder and media forever',
+      stillThere && orph === 0 && (w3.satisfied || []).length === 1,
+      `mediaKept=${stillThere} orphans=${orph} satisfied=${JSON.stringify(w3.satisfied)}`);
+    fs.rmSync(dd2, { recursive: true, force: true });
+  })();
+
+  // --- (3) dobara wahi plan likhne par kuch na badle (idempotent) ---
+  const w2 = gapplan.writeDataFolders(dd, after);
+  const orphan2 = w2.orphaned.length;
+  check('T-M423 re-running the same plan creates no new folders and no new orphans',
+    orphan2 === 0 && w2.renamed.length === 0
+      && fs.readdirSync(dd).filter(n => /^MISSING_/.test(n)).length === 2,
+    `orphans=${orphan2} renamed=${JSON.stringify(w2.renamed)}`);
+
+  // --- (4) CRITICAL par media hone se hi READY na bane ---
+  fs.rmSync(dd, { recursive: true, force: true });
+  const critPlan = mkPlan([3, 7], { 3: 'HARD_EVIDENCE' });
+  gapplan.writeDataFolders(dd, critPlan);
+  for (const n of fs.readdirSync(dd).filter(x => /^MISSING_/.test(x))) {
+    const m = path.join(dd, n, 'media');
+    ff(['-f', 'lavfi', '-i', 'color=c=0x228B22:s=640x360:d=1', '-frames:v', '1', path.join(m, '01_a.jpg')]);
+    ff(['-f', 'lavfi', '-i', 'color=c=0xFF8C00:s=640x360:d=1', '-frames:v', '1', path.join(m, '02_b.jpg')]);
+  }
+  const ev1 = readiness.evaluate(dd, manual, cfgJson);
+  check('T-M424 a critical gap with media still says NEEDS_CRITICAL_APPROVAL, never ready',
+    ev1.state === 'NEEDS_CRITICAL_APPROVAL' && ev1.can_export === false
+      && ev1.requests.some(r => r.approval_required && r.approval_status === 'PENDING'),
+    `state=${ev1.state} canExport=${ev1.can_export}`);
+
+  // --- (5) approve karne par hi ready ---
+  for (const n of fs.readdirSync(dd).filter(x => /^MISSING_/.test(x))) {
+    let req = null; try { req = JSON.parse(fs.readFileSync(path.join(dd, n, 'request.json'), 'utf8')); } catch {}
+    if (req && req.criticality !== 'NORMAL') fs.writeFileSync(path.join(dd, n, 'APPROVE_MEDIA.txt'), 'haan\n');
+  }
+  const ev2 = readiness.evaluate(dd, manual, cfgJson);
+  check('T-M425 explicit approval flips the same evaluator to ready — UI and gate agree',
+    ev2.state === 'READY_FOR_CONTENT_REVIEW' && ev2.can_export === true
+      && readiness.approvedKeys(dd, manual, cfgJson).size >= 1,
+    `state=${ev2.state} canExport=${ev2.can_export}`);
+
+  // --- (6) NORMAL gap ko bewajah approval na maange ---
+  const normalOnly = ev2.requests.filter(r => r.criticality === 'NORMAL');
+  check('T-M426 a normal gap never demands critical approval',
+    normalOnly.length > 0 && normalOnly.every(r => r.approval_required === false && r.approval_status === 'NOT_REQUIRED'),
+    `normal=${normalOnly.length}`);
+  fs.rmSync(dd, { recursive: true, force: true });
+
+  // --- (7) draft ke baad message sirf wahi file bole jo bani hai ---
+  (() => {
+    const d = path.join(FX, 'm42msg');
+    makeNarr(d, [{ start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' }]);
+    writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'G42', packs: [
+      { pack_id: 'G1', scope: { kind: 'SERIES', title: 'Show G', year: 2011, season: 1, episode_number: 1 },
+        sources: [{ source_id: 'GS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'G_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'GS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'G2', scope: { kind: 'FILM', title: 'Nothing Online', year: 2020 }, sources: [],
+        moments: [{ moment_id: 'G_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL',
+          locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+    ] });
+    const dataDir = path.join(ROOT, 'tests', 'tmp', 'data_msg_' + process.pid);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    const env = { ...process.env, RFC_DATA_DIR: dataDir, RFC_JOBS_DIR: JOBS };
+    spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m42msg', '--redo', '--diagnostic-override', '--draft'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 900000, env });
+    const pr = spawnSync('node', ['tools/print-job-result.js', '--expect=draft', '--job=reg_m42msg'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 60000, env });
+    const out = (pr.stdout || '') + (pr.stderr || '');
+    const jdir = path.join(JOBS, 'reg_m42msg');
+    check('T-M427 after a draft the tool never points at final.mp4 or shot-review.html',
+      /draft\.mp4/.test(out) && !/final\.mp4/.test(out) && !/shot-review\.html/.test(out)
+        && !fs.existsSync(path.join(jdir, 'final.mp4')) && pr.status === 2,
+      `exit=${pr.status} mentionsFinal=${/final\.mp4/.test(out)}`);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  })();
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });

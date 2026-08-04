@@ -1,30 +1,50 @@
-YE FOLDER KYA HAI
-=================
+KHOYE HUE LOCATORS WAPAS KAISE LAAYE
+====================================
 
-Isme M3.6.1 wala REPAIRED pack ki copy hai (68 locators, 192 frame hints).
+PEHLE EK GALTI SUDHAR LOON:
+Pichhle ZIP mein maine yahan ek "M3.6.1 repaired pack" rakha tha aur kaha tha
+ki usse 49 -> 68 locators ho jayenge. Wo file GALAT thi — usme bhi 49 hi
+locators the. Us file se wo merge ho hi nahi sakta tha. Isliye wo file hata di.
 
-Ye JAAN-BOOJH kar input\ mein nahi rakha gaya.
+ASLI 68-locator wala pack AAPKI apni machine par hai. Wo M3.6.1 wale folder ka
+input hai — jo aapne us waqt repair kiya tha. Aam taur par yahan:
 
-Kyun? Aapke input\scene-research.json mein abhi jo pack hai wo zyada NAYA hai:
-usme 31 cue theek ho chuke hain aur 109 moments par criticality likhi ja chuki
-hai. Us file ko replace karna aapka kaam mita dega.
+    C:\Users\Dell\Downloads\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json
 
-Aur ye reference pack usme se wo cheezein rakhta hai jo folder replace karte
-waqt kho gayi thi: 19 locators aur 19 frame hints.
+(Folder ka naam alag ho sakta hai — jahan bhi M3.6.1 wala purana folder pada
+ hai, uske andar input\scene-research.json.)
 
-DONO CHAHIYE. Isliye replace mat karo - MERGE karo:
 
-    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json
+KYA KARNA HAI
+-------------
+Apne CHALTE HUE project folder mein cmd kholo aur pehle DEKHO (kuch badlega nahi):
 
-    ^ ye sirf DIKHAYEGA ki kya-kya wapas aayega. Pack abhi nahi badlega.
-      Theek lage to yahi command dobara, aage --apply laga kar:
+    node tools\merge-pack.js input\scene-research.json "C:\Users\Dell\Downloads\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json"
 
-    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json --apply
+Screen par aisa dikhna chahiye:
 
-Isse:
-  - aapke theek kiye hue cues       -> waise ke waise
-  - aapki criticality               -> waisi ki waisi
-  - khoye hue locators aur hints    -> wapas (har ek check hokar)
+    locators : 49 -> 68   (+19)
+    hints    : 173 -> 192  (+19)
 
-Poori list kya aaya kya nahi: output\pack-merge-report.json
-Backup apne aap banta hai: input\scene-research.json.bak
+Agar aisa dikhe to wahi command dobara, aage --apply laga kar:
+
+    node tools\merge-pack.js input\scene-research.json "C:\...\M3.6.1\...\input\scene-research.json" --apply
+
+
+KYA SURAKSHIT RAHEGA
+--------------------
+  - aapke theek kiye hue 31 cue        -> waise ke waise
+  - 109 moments ki criticality          -> waisi ki waisi
+  - source health (WORKING/DEAD)        -> waisi ki waisi
+
+Sirf wo locators aur frame hints aayenge jo abhi pack mein hain hi nahi, aur
+har ek pehle check hoga (source maujood hai? timestamp source ki length ke
+andar hai?).
+
+Kya aaya aur kya chhoda: output\pack-merge-report.json
+Backup apne aap: input\scene-research.json.bak
+
+AGAR WO PURANA FOLDER AB NAHI HAI
+---------------------------------
+To ye step chhod dijiye. Tool phir bhi chalega — coverage thodi kam rahegi
+(~66% ki jagah ~78%), yaani kuch aur jagah aapko media daalna padega.

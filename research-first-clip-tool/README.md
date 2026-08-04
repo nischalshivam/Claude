@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M4.1
+# Research-First Clip Tool — M4.2
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -334,6 +334,27 @@ lamba narration 4-6 second ke shots mein tootta hai (7-14 second ka frozen frame
 khatam).
 
 ## 6. Changelog
+
+**M4.2 — stability: wo bugs jo 897-second run ne pakde**
+
+Draft ban gayi (896s, 87% covered) — par teen cheezein aisi thi jo har baar
+aapka kaam wapas mangwa deti:
+
+| Kya toota tha | Ab |
+|---|---|
+| ek gap bharte hi baaki gaps ka **number** badal jata tha, aur folder match nahi hota tha — **16 folders** (aapke dhoondhe hue media ke saath) `_ORPHANED` chale gaye | `request_key` sthir hai (project + range + moments). Number sirf dikhane ke liye. Number badle to folder **rename** hota hai, media wahin rehta hai |
+| jo request aap **bhar chuke ho** wo agli baar gap nahi rehti, isliye purana code use "ab zaroorat nahi" samajh kar orphan kar deta tha — media chala jata tha aur gap **wapas khul jata tha** | jis folder mein media hai wo kabhi orphan nahi hota. Jaata sirf tab jab script/SRT/pack hi badal jaye |
+| dashboard `HYBRID READY 23/23` bolta tha, engine turant `16 CRITICAL` par ruk jata tha | `src/readiness.js` — **ek hi evaluator**. UI, CLI, gate aur job-result sab wahi poochte hain. Zaroori beat par media + saaf approval, dono chahiye |
+| UI par approve ka checkbox tha hi nahi (jabki tool usi ka intezaar kar raha tha) | har critical card par laal badge + "maine ye visual dekh liya hai" checkbox. Ya folder mein `APPROVE_MEDIA.txt` |
+| draft ke baad likhta tha "final.mp4 aur shot-review.html dekho" — dono thi hi nahi | `tools/print-job-result.js` — natija `job-result.json` aur disk se, exit code ke andaze se nahi. Sirf wahi files jo sach mein hain |
+| audio 894.7s, timeline 896.1s — aakhir mein 1.4s ka khaali silence | audio hi aakhri sach hai; timeline usi par kat jati hai |
+
+**Aur ek galti jo maine ki thi:** pichhle ZIP ka `reference-pack` galat file thi
+(49 locators, 68 nahi) — us se wo merge ho hi nahi sakta tha jo maine kaha tha.
+Wo file hata di. Ab `reference-pack/PADHO.txt` aapko **aapke apne M3.6.1 folder**
+se merge karna batata hai, jahan asli 68-locator pack hai.
+
+Aage ka poora plan (editor, timeline, templates): `docs/M5_EDITOR_PLAN.md`
 
 **M4.1 — asli 897-second run se: draft timeline par hi mar gaya**
 

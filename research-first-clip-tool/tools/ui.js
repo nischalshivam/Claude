@@ -17,6 +17,7 @@ const { spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const U = require(path.join(ROOT, 'src', 'util.js'));
 const manual = require(path.join(ROOT, 'src', 'manual.js'));
+const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
 
 const DATA = path.join(ROOT, 'DATA');
 const PORT = Number((process.argv.find(a => a.startsWith('--port=')) || '').slice(7)) || 7801;
@@ -48,7 +49,8 @@ function requestDir(rid) {
     if (!/^MISSING_\d{3}__/.test(n)) continue;
     try {
       const r = JSON.parse(fs.readFileSync(path.join(DATA, n, 'request.json'), 'utf8'));
-      if (r.request_id === rid) return path.join(DATA, n);
+      const key = r.request_key || ('REQ_' + String(r.request_id || '').split('__').pop());
+      if (r.request_id === rid || key === rid) return path.join(DATA, n);
     } catch {}
   }
   return null;
@@ -70,38 +72,56 @@ function readBody(req, limit = 400 * 1024 * 1024) {
 }
 
 function setOverride(rid, patch) {
+  // STHIR key se store karo. Pehle ye request_id (jisme display number tha) se
+  // hota tha — ek gap bharte hi baaki gaps ke number badal jate the aur unki
+  // manzoori/settings "kisi aur" ki ban jati thi.
+  const dir = requestDir(rid);
+  let key = rid;
+  if (dir) {
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(dir, 'request.json'), 'utf8'));
+      key = r.request_key || ('REQ_' + String(r.request_id || rid).split('__').pop());
+    } catch {}
+  }
   const ov = manual.readOverrides(DATA);
-  ov.schema = 'manual-overrides-v1';
+  ov.schema = 'manual-overrides-v2';
   ov.requests = ov.requests || [];
-  let e = ov.requests.find(r => r.request_id === rid);
-  if (!e) { e = { request_id: rid }; ov.requests.push(e); }
+  let e = ov.requests.find(r => (r.request_key || r.request_id) === key);
+  if (!e) { e = { request_key: key }; ov.requests.push(e); }
+  e.request_key = key;
   Object.assign(e, patch);
   manual.writeOverrides(DATA, ov);
 }
 
 // ---------------- page ----------------
 function page() {
-  const s = manual.scan(DATA, { cfg });
-  const done = s.requests.filter(r => r.status === 'READY').length;
-  const ready = s.requests.length > 0 && done === s.requests.length;
-  const state = !s.requests.length ? 'AUTO_READY' : (ready ? 'HYBRID_READY' : 'NEEDS_HUMAN_MEDIA');
-  const STATE_TEXT = {
-    AUTO_READY: 'Koi khaali jagah nahi — video automatic hi poori ban sakti hai.',
-    NEEDS_HUMAN_MEDIA: `${s.requests.length - done} jagah abhi aapke media ka intezaar hai. Neeche har jagah ke liye likha hai kya chahiye.`,
-    HYBRID_READY: 'Sab jagah bhar chuki. Ab final video bana sakte ho.',
-  };
+  // EK HI SACH — wahi evaluator jo CLI aur production gate use karta hai.
+  // Pehle UI "HYBRID READY 23/23" bol deti thi aur engine turant 16 CRITICAL
+  // par ruk jata tha. Ab Final button wahi kehta hai jo gate karega.
+  const ev = readiness.evaluate(DATA, manual, cfg);
+  const ready = ev.can_export;
+  const state = ev.state;
+  const STATE_TEXT = { ...readiness.HUMAN };
 
-  const cards = s.requests.map(r => {
+  const cards = ev.requests.map(r => {
     const q = (() => { try { return JSON.parse(fs.readFileSync(path.join(r.dir, 'request.json'), 'utf8')); } catch { return {}; } })();
     const files = r.files.map(f => `<li><b>${esc(f.file)}</b> <span class="t">${esc(f.type)}${f.duration ? ' · ' + f.duration.toFixed(1) + 's' : ''}${f.width ? ' · ' + f.width + 'x' + f.height : ''}</span>
       ${f.warnings.map(w => `<div class="warn">${esc(w)}</div>`).join('')}</li>`).join('');
+    const critBadge = r.approval_required
+      ? `<span class="crit">${esc(String(r.criticality).replace('_', ' '))}</span>` : '';
+    const approveBox = r.approval_required ? `
+  <label class="approve ${r.approval_status === 'APPROVED' ? 'done' : ''}">
+    <input type="checkbox" class="approve-cb" ${r.approval_status === 'APPROVED' ? 'checked' : ''}>
+    <span>Maine ye visual dekh liya hai aur is narration ke liye ise approve karta hoon</span>
+  </label>
+  ${r.approval_status === 'PENDING' ? '<p class="why">Ye zaroori beat hai — bina aapke haan ke final video nahi banegi. (Chahein to folder mein APPROVE_MEDIA.txt bhi bana sakte ho.)</p>' : ''}` : '';
     const bad = r.invalid.map(b => `<li class="bad"><b>${esc(b.file)}</b> — ${esc(b.problem)}</li>`).join('');
     const searches = (q.search_queries || []).map(x =>
       `<a target="_blank" href="https://www.youtube.com/results?search_query=${encodeURIComponent(x)}">YouTube</a>
        <a target="_blank" href="https://duckduckgo.com/?iax=images&ia=images&q=${encodeURIComponent(x)}">Images</a>
        <code>${esc(x)}</code>`).join('<br>');
-    return `<div class="card ${esc(r.status)}" data-rid="${esc(r.request_id)}">
-  <h3>${esc(r.folder.split('__')[0].replace('_', ' '))} <span class="badge">${esc(r.status.replace(/_/g, ' ').toLowerCase())}</span></h3>
+    return `<div class="card ${r.blocking ? 'BLOCK' : 'READY'}" data-rid="${esc(r.request_key || r.request_id)}">
+  <h3>${esc(r.folder.split('__')[0].replace('_', ' '))} <span class="badge">${esc(String(r.media_status).toLowerCase())}</span>${critBadge}</h3>
   <div class="rng">${clock(r.range.start_sec)} – ${clock(r.range.end_sec)} &nbsp;·&nbsp; ${r.range.duration_sec.toFixed(1)}s${r.short_seconds > 0 ? ` &nbsp;·&nbsp; <span class="need">${r.short_seconds}s aur chahiye</span>` : ''}</div>
   <p class="cue">"${esc(r.narration_exact)}"</p>
   ${(q.reason_text || []).length ? `<p class="why">Kyun nahi mila: ${esc(q.reason_text.join('; '))}</p>` : ''}
@@ -112,6 +132,8 @@ function page() {
     <input type="file" multiple hidden></div>
   ${files || bad ? `<ul class="files">${files}${bad}</ul>` : '<p class="t">abhi koi file nahi</p>'}
   <label><input type="checkbox" class="reuse" ${r.allow_reuse ? 'checked' : ''}> media kam pade to files dobara istemal kar lo</label>
+  ${approveBox}
+  ${r.reasons.length ? `<p class="why">${esc(r.reasons.join(' · '))}</p>` : ''}
   <p class="t">order badalna ho to file ke naam ke aage 01_, 02_, 03_ laga do</p>
 </div>`;
   }).join('\n');
@@ -122,14 +144,18 @@ function page() {
 body{font:14px/1.6 system-ui,Segoe UI,sans-serif;background:#0f1115;color:#e6e9ef;margin:0;padding:20px;max-width:1000px}
 h1{font-size:21px;margin:0 0 6px}h3{font-size:15px;margin:0 0 6px}
 .state{padding:13px 16px;border-radius:9px;margin:14px 0;font-weight:600}
-.HYBRID_READY,.AUTO_READY{background:#12351d;color:#8ce99a;border:1px solid #2f9e44}
-.NEEDS_HUMAN_MEDIA{background:#33280f;color:#ffd8a8;border:1px solid #e8590c}
+.READY_FOR_CONTENT_REVIEW,.AUTO_READY{background:#12351d;color:#8ce99a;border:1px solid #2f9e44}
+.NEEDS_MEDIA,.NEEDS_MORE_MEDIA{background:#33280f;color:#ffd8a8;border:1px solid #e8590c}
+.NEEDS_CRITICAL_APPROVAL{background:#33161a;color:#ffc9c9;border:1px solid #c92a2a}
 .bar{display:flex;gap:9px;margin:14px 0;flex-wrap:wrap}
 button{background:#2b6cb0;color:#fff;border:0;padding:9px 15px;border-radius:7px;cursor:pointer;font-size:13.5px}
 button:disabled{background:#39414f;color:#8b95a5;cursor:not-allowed}
 button.go{background:#2f9e44}
 .card{background:#161b24;border:1px solid #232b39;border-radius:10px;padding:14px 16px;margin:12px 0}
-.card.READY{border-color:#2f9e44}.card.WAITING_FOR_MEDIA{border-color:#e8590c}.card.NEEDS_MORE_MEDIA{border-color:#e8590c}
+.card.READY{border-color:#2f9e44}.card.BLOCK{border-color:#e8590c}
+.crit{background:#c92a2a;color:#fff;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:5px;margin-left:6px;vertical-align:2px}
+.approve{display:flex;gap:8px;align-items:flex-start;background:#2a1416;border:1px solid #c92a2a;border-radius:8px;padding:9px 11px;margin:9px 0;color:#ffc9c9}
+.approve.done{background:#12351d;border-color:#2f9e44;color:#8ce99a}
 .badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:5px;background:#39414f;vertical-align:2px}
 .card.READY .badge{background:#2f9e44}
 .rng{color:#8b95a5;font-size:12.5px}.need{color:#ffd43b}
@@ -165,6 +191,10 @@ document.getElementById('refresh').onclick=()=>location.reload();
 document.querySelectorAll('.reuse').forEach(c=>c.onchange=e=>{
   const rid=e.target.closest('.card').dataset.rid;
   post('/api/override',{request_id:rid,allow_reuse:e.target.checked}).then(()=>location.reload());
+});
+document.querySelectorAll('.approve-cb').forEach(c=>c.onchange=e=>{
+  const rid=e.target.closest('.card').dataset.rid;
+  post('/api/override',{request_id:rid,approved:e.target.checked}).then(()=>location.reload());
 });
 document.querySelectorAll('.drop').forEach(d=>{
   const input=d.querySelector('input');

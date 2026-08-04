@@ -13,7 +13,7 @@ cd /d "%~dp0"
 :menu
 cls
 echo ==============================================================
-echo   RESEARCH-FIRST CLIP TOOL  -  M4.1
+echo   RESEARCH-FIRST CLIP TOOL  -  M4.2
 echo ==============================================================
 if exist "input\scene-research.json" (echo   pack       : input\scene-research.json  [mila]) else (echo   pack       : NAHI MILA  -^> Genspark ka JSON input\ mein daalo)
 if exist "input\voiceover.srt" (echo   voiceover  : input\voiceover.srt  [mila]) else (echo   voiceover  : NAHI MILA  -^> preview/render nahi chalega)
@@ -56,10 +56,10 @@ if "%c%"=="4" (
 if "%c%"=="5" ( node src\run.js --job=preview_hook --redo --preview-start=0   --preview-duration=120 & call :job preview_hook & goto menu )
 if "%c%"=="6" ( node src\run.js --job=preview_mid  --redo --preview-start=300 --preview-duration=120 & call :job preview_mid  & goto menu )
 if "%c%"=="7" ( node src\run.js --job=preview_weak --redo --preview-start=600 --preview-duration=120 & call :job preview_weak & goto menu )
-if "%c%"=="8" ( node src\run.js & call :job "" & goto menu )
+if "%c%"=="8" ( node src\run.js & call :after final & goto menu )
 if "%c%"=="9" ( node tools\review-dashboard.js & call :done "review dashboard" & goto menu )
-if /i "%c%"=="D" ( node src\run.js --draft & call :job "" & goto menu )
-if /i "%c%"=="R" ( node src\run.js --draft --redo & call :job "" & goto menu )
+if /i "%c%"=="D" ( node src\run.js --draft & call :after draft & goto menu )
+if /i "%c%"=="R" ( node src\run.js --draft --redo & call :after draft & goto menu )
 if /i "%c%"=="M" ( node tools\ui.js & goto menu )
 if /i "%c%"=="L" goto local
 if "%c%"=="0" exit /b 0
@@ -112,6 +112,26 @@ echo.
 if "%RC%"=="0" ( echo   [OK] %~1 pura hua. ) else (
   if "%RC%"=="2" ( echo   [ACTION] %~1 - kaam baaki hai, upar ka message padho. ) else ( echo   [FAILED] %~1 - exit code %RC%. Upar ka message padho. )
 )
+pause
+exit /b 0
+
+REM ---- draft/final ka natija: SIRF wahi batao jo sach mein bana ----
+REM  Pehle yahan exit code se andaza lagta tha aur draft ke baad bhi
+REM  "final.mp4 aur shot-review.html dekho" chhap jata tha — dono files
+REM  hoti hi nahi thi. Ab tools/print-job-result.js job-result.json aur
+REM  disk dono dekh kar bolta hai.
+:after
+set RC=%ERRORLEVEL%
+echo.
+if "%RC%"=="3" (
+  echo   ============================================================
+  echo   [BLOCKED] Ye run production gate par ruka - engine chala hi nahi.
+  echo   ============================================================
+  echo    Upar likha hai ki kya chahiye.
+  pause
+  exit /b 0
+)
+node tools\print-job-result.js --expect=%~1
 pause
 exit /b 0
 

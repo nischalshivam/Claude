@@ -34,6 +34,7 @@ const jobResult = require('./jobresult.js');
 const gapplan = require('./gapplan.js');
 const manual = require('./manual.js');
 const effectivegate = require('./effectivegate.js');
+const readiness = require('./readiness.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -99,7 +100,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.1'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.2'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -175,7 +176,7 @@ async function main() {
   //  beech mein crash hone ke bajaye YAHIN saaf-saaf rukta hai.
   const hybridPre = hybridState(spec, cfg);
   if (isFullExport && hybridPre.total && hybridPre.state === 'NEEDS_HUMAN_MEDIA') {
-    blockAndExit('NEEDS_HUMAN_MEDIA', `${hybridPre.total - hybridPre.ready} jagah abhi aapke media ka intezaar hai.`, [
+    blockAndExit('NEEDS_HUMAN_MEDIA', `${hybridPre.total - hybridPre.ready} jagah abhi taiyaar nahi — ${readiness.HUMAN[hybridPre.readiness] || ''}`, [
       ...hybridPre.pending.slice(0, 8).map(p => `- DATA\\${p.folder}  (${p.status === 'WAITING_FOR_MEDIA' ? 'abhi koi file nahi' : 'aur media chahiye'})`),
       '',
       'Har folder mein WHAT_IS_MISSING.txt hai — usme narration aur search words likhe hain.',
@@ -363,7 +364,7 @@ async function main() {
 
         // 3. EK EFFECTIVE GATE — final slots par ek hi faisla
         const mode = (cfg.output && cfg.output.mode) || 'production';
-        const approvedRequests = manual.approvedRequestIds(DATA_ROOT, cfg);
+        const approvedRequests = readiness.approvedKeys(DATA_ROOT, manual, cfg);
         const gate = effectivegate.evaluate(tl, resolved, { mode, approvedRequests });
         tl.gate = { mode, ok: gate.ok, blockers: gate.blockers.length, critical: gate.critical, counts: gate.counts };
 
@@ -425,15 +426,16 @@ async function main() {
   }
 
   // SUCCESS bhi tabhi jab final.mp4 SACH mein bani ho
+  const draftMode = (cfg.output && cfg.output.mode) === 'draft';
+  let gaps = 0;
   try {
     resolved = resolved || jf('resolved.json'); tl = tl || jf('timeline.json');
-    const draftMode = (cfg.output && cfg.output.mode) === 'draft';
     const outName = draftMode ? 'draft.mp4' : 'final.mp4';
     const okFinal = fs.existsSync(U.p(spec.id, outName)) && U.probe(U.p(spec.id, outName)).ok;
     // DRAFT ka status kabhi plain SUCCESS nahi hota jab usme khaali jagah bachi ho —
     // wahi jhooth tha jisse 45-minute ka render bekaar jata tha.
     let gp = null; try { gp = JSON.parse(fs.readFileSync(U.p(spec.id, 'gap-plan.json'), 'utf8')); } catch {}
-    const gaps = gp ? gp.requests.length : 0;
+    gaps = gp ? gp.requests.length : 0;
     const status = !okFinal ? 'FAILED' : (draftMode && gaps ? 'DRAFT_NEEDS_HUMAN' : 'SUCCESS');
     jobResult(spec, st, { status, stage: okFinal ? null : 'render',
       message: !okFinal ? `saare stages chal gaye par ${outName} valid nahi hai.`
@@ -446,7 +448,14 @@ async function main() {
 
   U.log('\n' + '='.repeat(60));
   U.log(`  DONE — ${path.relative(U.ROOT, U.jobDir(spec.id))}/`);
-  U.log('   final.mp4, shot-review.html (har shot ka frame), quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log, clips/');
+  // SIRF wahi files jo sach mein disk par hain. Pehle yahan har baar
+  // "final.mp4, shot-review.html ..." chhap jata tha — draft ke baad dono
+  // hoti hi nahi thi, aur user unhe dhoondhta reh jata tha.
+  const made = ['draft.mp4', 'final.mp4', 'shot-review.html', 'quality-report.html',
+    'gap-plan.json', 'NEEDS_SOURCE.csv', 'timeline.json', 'run.log']
+    .filter(f => fs.existsSync(U.p(spec.id, f)));
+  U.log('   ' + made.join(', '));
+  if (draftMode && gaps) U.log(`   ye DRAFT hai — ${gaps} jagah aapka media chahiye (DATA folder dekho)`);
   U.log('='.repeat(60));
   flushLog(spec.id);
 }
@@ -467,9 +476,8 @@ const DATA_ROOT = U.dataRoot();
  */
 function hybridState(spec, cfg) {
   const out = { state: 'AUTO_READY', total: 0, ready: 0, pending: [], stale: false };
-  let scan;
-  try { scan = manual.scan(DATA_ROOT, { cfg }); } catch { return out; }
-  const reqs = scan.requests || [];
+  let ev, reqs;
+  try { ev = readiness.evaluate(DATA_ROOT, manual, cfg); reqs = ev.requests; } catch { return out; }
   if (!reqs.length) return out;
 
   // gap plan usi pack/SRT ka hona chahiye jispar ab render ho raha hai
@@ -482,9 +490,15 @@ function hybridState(spec, cfg) {
     if (fp.pack_sha256 && fp.pack_sha256 !== want.pack) anyStale = true;
     if (fp.srt_sha256 && fp.srt_sha256 !== want.srt) anyStale = true;
   }
-  out.total = reqs.length;
-  out.ready = reqs.filter(r => r.status === 'READY').length;
-  out.pending = reqs.filter(r => r.status !== 'READY').map(r => ({ folder: r.folder, status: r.status }));
+  // Yahi wo jagah thi jahan "HYBRID READY 23/23" chhapta tha aur turant baad
+  // engine 16 CRITICAL par ruk jata tha. Ab UI, CLI aur gate teeno ek hi
+  // evaluator (src/readiness.js) poochte hain.
+  out.total = ev.total;
+  out.ready = ev.ready;
+  out.readiness = ev.state;
+  out.pending = ev.blocking.map(r => ({ folder: r.folder,
+    status: r.approval_status === 'PENDING' ? 'aapka "haan" baaki hai'
+      : (r.media_status === 'EMPTY' ? 'abhi koi file nahi' : 'aur media chahiye') }));
   out.stale = anyStale;
   // Purana/doosre project ka gap plan mila to us par bharosa nahi karte —
   // aur na hi uske naam par render rokte hain. Aisa plan hai hi nahi maano.
@@ -492,7 +506,7 @@ function hybridState(spec, cfg) {
     U.warn('DATA folder ka gap plan in inputs ka nahi hai — ise nazarandaz kar raha hoon. Naya draft banao.');
     return { state: 'AUTO_READY', total: 0, ready: 0, pending: [], stale: true };
   }
-  out.state = out.ready === out.total ? 'HYBRID_READY' : 'NEEDS_HUMAN_MEDIA';
+  out.state = ev.can_export ? 'HYBRID_READY' : 'NEEDS_HUMAN_MEDIA';
   return out;
 }
 
@@ -529,7 +543,9 @@ function writeDataFolders(spec) {
   U.log(`  ${gp.requests.length} jagah aapka media chahiye (${gp.missing_seconds}s). Folders bana diye:`);
   w.made.slice(0, 8).forEach(n => U.log(`     DATA\\${n}\\media\\`));
   if (w.made.length > 8) U.log(`     ...aur ${w.made.length - 8}`);
-  if (w.orphaned.length) U.log(`     (${w.orphaned.length} purane folder DATA\\_ORPHANED mein chale gaye — files surakshit hain)`);
+  if (w.renamed.length) U.log(`     (${w.renamed.length} folder ka sirf number badla — media wahin hai)`);
+  if (w.satisfied && w.satisfied.length) U.log(`     (${w.satisfied.length} folder bhar chuke hain — wo waise ke waise rakhe hain)`);
+  if (w.orphaned.length) U.log(`     (${w.orphaned.length} folder DATA\\_ORPHANED mein gaye — unme koi media tha hi nahi)`);
   U.log('  Har folder mein WHAT_IS_MISSING.txt padho — usme narration aur search words likhe hain.');
   U.log('  Ya dashboard se: START_UI.bat');
   return gp;

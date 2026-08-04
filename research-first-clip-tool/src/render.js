@@ -389,15 +389,25 @@ module.exports = function render(spec, cfg, st, tl) {
     const offset = spec.previewOffset || 0;
     const adurRaw = U.probe(audio).duration || 0;
     const audioAvail = Math.max(0, adurRaw - offset);
-    const target = +vdur.toFixed(3);
+    // ---- AUDIO HI AAKHRI SACH HAI (M4.2) ----
+    //  Asli run: audio 894.7s, timeline 896.1s — video ke aakhir mein 1.4s ka
+    //  khaali silence. Narration hi asli video hai; SRT sirf uska naksha hai
+    //  aur usme thoda aage-peeche ho sakta hai. Isliye jab timeline audio se
+    //  thodi lambi nikle, use audio par KAAT dete hain — aakhri shot chhota
+    //  ho jata hai, khaali silence kabhi nahi bachta.
+    let target = +vdur.toFixed(3);
+    const tol = (cfg.render && cfg.render.audioToleranceSeconds) || 0.5;
+    if (!offset && audioAvail > 1 && target > audioAvail + 0.02 && (target - audioAvail) <= 30) {
+      U.log(`   timeline ${target.toFixed(1)}s thi, voiceover ${audioAvail.toFixed(1)}s — video ko audio par kaat diya (${(target - audioAvail).toFixed(1)}s ka silence nahi aayega).`);
+      target = +audioAvail.toFixed(3);
+    } else if (!offset && Math.abs(audioAvail - target) > tol) {
+      U.warn(`voiceover ${audioAvail.toFixed(1)}s aur timeline ${target.toFixed(1)}s mein ${Math.abs(audioAvail - target).toFixed(1)}s ka farak hai — dekh lena.`);
+    }
     // PREVIEW mein audio poori hoti hai par timeline sirf window jitni — ye
     // normal hai, galti nahi. Isliye preview par ye ek saaf INFO line hai;
     // sirf FULL run mein hi ye asli mismatch ka ishara hai.
     if (spec.isPreview) {
       U.log(`   preview: ${vdur.toFixed(1)}s window (${offset.toFixed(1)}s se) — voiceover ${adurRaw.toFixed(1)}s ka hai, usme se utna hi hissa liya gaya.`);
-    } else if (!offset && adurRaw && Math.abs(adurRaw - vdur) > 1.0) {
-      U.warn(`audio ${adurRaw.toFixed(1)}s vs timeline ${vdur.toFixed(1)}s — ${Math.abs(adurRaw - vdur).toFixed(1)}s ka farak. ` +
-        `(SRT aur voiceover mismatch ho sakta hai; video timeline ke hisaab se banega.)`);
     }
     if (audioAvail + 0.05 < target) U.warn(`audio sirf ${audioAvail.toFixed(1)}s hai par timeline ${target.toFixed(1)}s — aakhir mein silence padega.`);
     const aoff = offset ? ['-ss', String(offset)] : [];
@@ -415,6 +425,8 @@ module.exports = function render(spec, cfg, st, tl) {
 
   fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({
     total: tl.total, mode, is_draft: mode === 'draft',
+    // teeno alag-alag likhe hue — taaki baad mein sawal na rahe
+    duration: { timeline: +(tl.total || 0).toFixed(3), rendered: null, audio: null },
     // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
     // waqt chahiye, isliye offset yahin likh dete hain.
     preview_offset: spec.previewOffset || 0,

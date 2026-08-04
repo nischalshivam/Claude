@@ -96,14 +96,22 @@
   [PASS] T-M415 a media path outside its own request folder is refused  — inside=true outside=false
   [PASS] T-M411A draft finishes even when HOOK/HARD_EVIDENCE beats have no evidence (the real 897s bug)  — exit=0 placeholders=3 requests=1 total=24
   [PASS] T-M411B every placeholder label has exactly one DATA request and vice versa  — placeholderLabels=MISSING 001 requests=MISSING 001 folders=1
-  [PASS] T-M411C copying files is not enough for a critical beat — explicit approval is required  — approved=0 finalExit=1
+  [PASS] T-M411C copying files is not enough for a critical beat — explicit approval is required  — approved=0 finalExit=3
   [PASS] T-M411D approved user media resolves a HARD_EVIDENCE gap and the final render succeeds  — approved=1 exit=0 userShots=4 leftover=0
-  [PASS] T-M411E the manifest keeps which file, from which request, with which hash  — sample={"r":"MISSING_001__6fbf02ee","f":"01_a.jpg","h":true}
+  [PASS] T-M411E the manifest keeps which file, from which request, with which hash  — sample={"r":"MISSING_001__2fdaa11d","f":"01_a.jpg","h":true}
   [PASS] T-M411F going from draft to final does not wipe the job or re-download anything  — wipe=false downloaded=false
   [PASS] T-M411G a 40-second run of missing shots is split into requests of at most 30 seconds  — requests=2 longest=30 covered=40
   [PASS] T-M411H a zero-video-stream failure is recognised as fatal to the source, not a bad timestamp  — fatal-classifier
+  [PASS] T-M421 filling one gap does not change the identity of the others  — before=MISSING 001:REQ_4cc5d9c9,MISSING 002:REQ_efeec1d4,MISSING 003:REQ_7a2b61ef after=MISSING 001:REQ_efeec1d4,MISSING 002:REQ_7a2b61ef
+  [PASS] T-M422 renumbering renames the folder in place and never orphans a folder holding media  — after=MISSING_001__00m25s-00m30s__M5,MISSING_002__00m45s-00m50s__M9 orphansWithMedia=0 keptMedia=true renamed=["MISSING_002__00m25s-00m30s__M5 -> MISSING_001__00m25s-00m30s__M5","MISSING_003__00m45s-00m50s__M9 -> MISSING_002__00m45s-00m50s__M9"]
+  [PASS] T-M422b a request the user already filled keeps its folder and media forever  — mediaKept=true orphans=0 satisfied=["MISSING_001__00m10s-00m15s__M2"]
+  [PASS] T-M423 re-running the same plan creates no new folders and no new orphans  — orphans=0 renamed=[]
+  [PASS] T-M424 a critical gap with media still says NEEDS_CRITICAL_APPROVAL, never ready  — state=NEEDS_CRITICAL_APPROVAL canExport=false
+  [PASS] T-M425 explicit approval flips the same evaluator to ready — UI and gate agree  — state=READY_FOR_CONTENT_REVIEW canExport=true
+  [PASS] T-M426 a normal gap never demands critical approval  — normal=1
+  [PASS] T-M427 after a draft the tool never points at final.mp4 or shot-review.html  — exit=2 mentionsFinal=false
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 103 PASS, 0 FAIL
+  REGRESSION SUMMARY: 111 PASS, 0 FAIL
 ======================================================================

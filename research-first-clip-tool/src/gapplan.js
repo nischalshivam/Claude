@@ -216,9 +216,14 @@ function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg
     const scope = (packIndex && packIndex[packIds[0]] && packIndex[packIds[0]].scope) || {};
     const nar = narrationFor(cues || [], g.start, g.end);
     const codes = [...g.codes];
-    // Sthir ID: project + rounded range + moments + reason. Status/filenames
-    // ISME NAHI — warna media daalte hi ID badal jayegi aur folder anaath ho jayega.
-    const rid = sha8([projectId, g.start.toFixed(1), g.end.toFixed(1), momentIds.join(','), codes.sort().join(',')].join('|'));
+    // ---- STHIR PEHCHAAN (M4.2) ----
+    //  Isme SIRF wo cheezein hain jo gap ko GAP banati hain: kaunsi jagah, kaunse
+    //  moments. Number, status, filenames aur REASON isme nahi.
+    //  Asli run mein reason bhi isme tha aur number ID ka hissa tha — isliye ek
+    //  gap bharte hi baaki gaps ka number badal jata tha, folder match nahi hota
+    //  tha, aur 16 folders (jinme user ka dhoondha hua media tha) _ORPHANED mein
+    //  chale gaye. Wo dobara kabhi nahi hoga.
+    const rid = sha8([projectId, g.start.toFixed(1), g.end.toFixed(1), momentIds.join(',')].join('|'));
     const num = String(i + 1).padStart(3, '0');
     const dur = +(g.end - g.start).toFixed(3);
     const firstMoment = momentIds[0] || (packIds[0] || 'GAP');
@@ -230,7 +235,10 @@ function plan({ manifest, resolved, cues, packIndex, fingerprint, projectId, cfg
       if (e && e.purpose && !purpose.includes(e.purpose)) purpose.push(e.purpose);
     }
     return {
-      schema: 'manual-gap-request-v1',
+      schema: 'manual-gap-request-v2',
+      // request_key KABHI nahi badalti — folder, approval aur overrides isse
+      // judte hain. request_id sirf dikhane ke liye hai.
+      request_key: `REQ_${rid}`,
       request_id: `MISSING_${num}__${rid}`,
       // Yehi label video ke placeholder par likha jayega AUR folder ke naam mein
       // bhi hai. Pehle renderer apni alag ginti karta tha, isliye draft mein
@@ -343,17 +351,43 @@ function writeDataFolders(dataRoot, gapPlan) {
     try { return isReqDir(n) && fs.statSync(path.join(dataRoot, n)).isDirectory(); } catch { return false; }
   }) : [];
 
-  // purane folders: request.json se unki ID padho
+  // purane folders: request.json se unki STHIR key padho.
+  // Purane packs mein request_key nahi thi — tab request_id ke hash wale hisse
+  // se kaam chala lete hain (MISSING_015__946878a1 -> 946878a1). Isse purane
+  // folder bhi bina kuch khoye migrate ho jate hain.
+  const keyOf = r => r && (r.request_key || (r.request_id ? 'REQ_' + String(r.request_id).split('__').pop() : null));
   const byId = {};
   for (const n of existing) {
-    let rid = null;
-    try { rid = JSON.parse(fs.readFileSync(path.join(dataRoot, n, 'request.json'), 'utf8')).request_id; } catch {}
-    if (rid) byId[rid] = n;
+    let k = null;
+    try { k = keyOf(JSON.parse(fs.readFileSync(path.join(dataRoot, n, 'request.json'), 'utf8'))); } catch {}
+    if (k) byId[k] = n;
   }
+  const wantByKey = new Map();
+  for (const r of gapPlan.requests) wantByKey.set(r.request_key, r);
 
-  const orphaned = [];
+  const orphaned = [], satisfied = [];
   for (const [rid, dir] of Object.entries(byId)) {
-    if (want.has(rid)) continue;
+    if (wantByKey.has(rid)) continue;
+    // ---- BHARI HUI REQUEST KO KABHI ORPHAN MAT KARO (M4.2) ----
+    //  Jab user media daal deta hai, wo jagah agli baar GAP hi nahi rehti —
+    //  isliye naye plan mein wo request hoti hi nahi. Purana code use "ab
+    //  zaroorat nahi" samajh kar _ORPHANED mein daal deta tha... aur uske
+    //  saath us slot ka media bhi chala jata tha, gap wapas khul jata tha,
+    //  aur user phir se wahi kaam karta tha. Asli run mein 16 folders isi
+    //  tarah orphan hue the.
+    //  Jis folder mein media hai, wo folder rehta hai. Jaana sirf tab jab
+    //  input hi badal jaye (script/SRT/pack) — tab wo media sach mein kisi
+    //  aur jagah ka ho chuka hota hai.
+    let hasMedia = false;
+    try { hasMedia = fs.readdirSync(path.join(dataRoot, dir, 'media')).some(f => !f.startsWith('.')); } catch {}
+    let sameInputs = true;
+    try {
+      const old = JSON.parse(fs.readFileSync(path.join(dataRoot, dir, 'request.json'), 'utf8'));
+      const a = old.input_fingerprint || {}, b = (gapPlan.input_fingerprint || {});
+      if (a.pack_sha256 && b.pack_sha256 && a.pack_sha256 !== b.pack_sha256) sameInputs = false;
+      if (a.srt_sha256 && b.srt_sha256 && a.srt_sha256 !== b.srt_sha256) sameInputs = false;
+    } catch {}
+    if (hasMedia && sameInputs) { satisfied.push(dir); continue; }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = path.join(dataRoot, '_ORPHANED', stamp);
     fs.mkdirSync(dest, { recursive: true });
@@ -366,9 +400,20 @@ function writeDataFolders(dataRoot, gapPlan) {
     orphaned.push(dir);
   }
 
-  const made = [];
+  const made = [], renamed = [];
   for (const r of gapPlan.requests) {
-    const dir = byId[r.request_id] ? path.join(dataRoot, byId[r.request_id]) : path.join(dataRoot, r.folder);
+    let dir;
+    const old = byId[r.request_key];
+    if (old) {
+      // Ye wahi gap hai. Sirf display number badla ho to folder ko RENAME karo —
+      // media, approval aur overrides sab andar hi rehte hain.
+      const want2 = path.join(dataRoot, r.folder);
+      const cur = path.join(dataRoot, old);
+      if (old !== r.folder && !fs.existsSync(want2)) {
+        try { fs.renameSync(cur, want2); dir = want2; renamed.push(`${old} -> ${r.folder}`); }
+        catch { dir = cur; }
+      } else dir = cur;
+    } else dir = path.join(dataRoot, r.folder);
     fs.mkdirSync(path.join(dir, 'media'), { recursive: true });
     U.writeJsonAtomic ? U.writeJsonAtomic(path.join(dir, 'request.json'), r)
       : fs.writeFileSync(path.join(dir, 'request.json'), JSON.stringify(r, null, 2));
@@ -392,7 +437,7 @@ function writeDataFolders(dataRoot, gapPlan) {
     `Abhi ${gapPlan.requests.length} jagah media chahiye ` +
     `(kul ${gapPlan.missing_seconds}s me se ${gapPlan.coverage_percent}% pehle se bana hua hai).\n`);
 
-  return { made, orphaned };
+  return { made, orphaned, renamed, satisfied };
 }
 
 module.exports = { plan, writeDataFolders, classifyShot, groupGaps, keywords, readableRequest, REASON_TEXT };
