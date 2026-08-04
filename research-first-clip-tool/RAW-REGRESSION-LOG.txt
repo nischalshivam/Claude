@@ -110,8 +110,28 @@
   [PASS] T-M425 explicit approval flips the same evaluator to ready — UI and gate agree  — state=READY_FOR_CONTENT_REVIEW canExport=true
   [PASS] T-M426 a normal gap never demands critical approval  — normal=1
   [PASS] T-M427 after a draft the tool never points at final.mp4 or shot-review.html  — exit=2 mentionsFinal=false
+  [PASS] T-M4211 a stable-key override reaches the renderer after renumbering (dashboard and render agree)  — scanReuse=true status=READY short=0 appliedShots=4 firstApplied=zzz.jpg
+  [PASS] T-M4212 every manual shot carries both the stable key and the display id  — sample={"k":"REQ_9e37c0ad","i":"MISSING_002__9e37c0ad"}
+  [PASS] T-M4213 the manual fingerprint ignores display renumbering but never ignores real media changes  — renumber=true mediaChange=true
+  [PASS] T-M4214 a stable-key file order survives renumbering (the user-chosen first file stays first)  — order=zzz.jpg,aaa.jpg
+  [PASS] T-M4215 an APPROVE_MEDIA.txt confirmation is materialised into a fingerprinted approval record  — state=READY_FOR_CONTENT_REVIEW rec=request_key,approved,approved_at,source,media_fingerprint,request_fingerprint,input_fingerprint,sentinel,display_request_id,display_label
+  [PASS] T-M4216 replacing the bytes of an approved file under the same name invalidates the approval  — status=EXPIRED canExport=false sentinelRenamed=true
+  [PASS] T-M4217 an expired approval never silently comes back on the next scan  — status=EXPIRED
+  [PASS] T-M4218 a fresh confirmation after reviewing the new media restores approval  — state=READY_FOR_CONTENT_REVIEW
+  [PASS] T-M4219 adding another file to an approved critical request invalidates the approval  — status=EXPIRED
+  [PASS] T-M42110 renaming only the display folder/label keeps a valid approval alive  — status=APPROVED label=MISSING 001
+  [PASS] T-M42111 changing the pack, SRT or voiceover expires an existing critical approval  — status=EXPIRED
+  [PASS] T-M42112 revoking an approval changes the render signature (no stale success is reused)  — same=false
+  [PASS] T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut  — tail=CLAMPED_SRT_TAIL/true short=SRT_LONGER_THAN_AUDIO/false long=AUDIO_LONGER_THAN_SRT/false
+  [PASS] T-M42114 clamped cues never extend past the real project duration  — lastEnd=20 project=20
+  [PASS] T-M42115 timeline, gap plan, manifest and the rendered file all agree on one audio-derived duration  — exit=0 timeline=18 gapEnd=18 rendered=18.00
+  [PASS] T-M42116 the render manifest records real audio/srt/timeline/rendered durations, never null  — duration={"audio":18,"srt_end_before_clamp":19.4,"timeline":18,"rendered":18,"target":18,"correction":"CLAMPED_SRT_TAIL","difference_sec":1.4,"tolerance_sec":2,"audio_available":18}
+  [PASS] T-M42117 an 11s shorter voiceover blocks the run with an explanation instead of cutting narration  — exit=3
+  [PASS] T-M42118 orphaned media is matched by stable key and copied back, with the original left untouched  — dryRunCopied=false recovered=true originalKept=true report={"recovered_folders":1,"probable_folders":0,"untouched_folders":0,"files_copied":1,"files_already_present":0}
+  [PASS] T-M42119 re-running recovery never duplicates a file that is already there  — files=01_mine.jpg
+  [PASS] T-M42120 "no requests yet" before a draft is NO_DRAFT, never "the automatic video is complete"  — noDraft=NO_DRAFT/false drafted=AUTO_READY project=READY_TO_DRAFT states=15
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 111 PASS, 0 FAIL
+  REGRESSION SUMMARY: 131 PASS, 0 FAIL
 ======================================================================

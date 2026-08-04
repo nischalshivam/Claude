@@ -1,15 +1,15 @@
 {
   "name": "research-first-clip-tool",
-  "version": "4.2.0",
-  "git_commit": "f01b9381f2e9d0fbce922107b0c4b9111ee472e0",
+  "version": "4.2.1",
+  "git_commit": "bec7abe6b3c32f75f034cb89b39266ccbd94e179",
   "git_branch": "claude/automated-clip-sourcing-editing-scv5lf",
-  "git_dirty": false,
-  "built_at": "2026-08-04T10:49:38.844Z",
+  "git_dirty": true,
+  "built_at": "2026-08-04T13:57:05.660Z",
   "schema_version": "scene-research-pack-v1",
   "node": "v22.22.2",
   "test_logs": {
-    "RAW-TEST-LOG.txt": "1C74E1BDDF8EBE9434FFBB1C67E3D6CC86B89E86283D13611FCA8F9F0E639AAC",
-    "RAW-REGRESSION-LOG.txt": "2157BEFD2AFF52EF5EFC78BAA25271407A3BB7A8B09564F2ABF8A58F065970F8"
+    "RAW-TEST-LOG.txt": "A420349389634AC3C4608F8C82E8851D0AE99B1A49AF3CF866D22F977839D86A",
+    "RAW-REGRESSION-LOG.txt": "8079195592E8B3E9525BC8B5F18151AF320869081CCBA08A3AD5FA6813539664"
   },
   "canonical_prompt_sha256": "B14B748CFE03B4AE49E81B81EBC138D402A0916FE4D47A4338DD58520BF12488",
   "oneshot_prompt_sha256": "9E4C26E42DA304BD8D497FE640A912128AA661865B001687D90B5C0B7654324A",
