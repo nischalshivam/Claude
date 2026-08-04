@@ -85,7 +85,7 @@ echo --------------------------------------------------------------
 echo   naya code yahan se : %SRC%
 echo   project yahan par  : %DST%
 echo.
-echo   BADLEGA  : src, tools, lib, prompts, schemas, tests, docs, reference-pack, *.bat
+echo   BADLEGA  : src, server, tools, lib, prompts, schemas, tests, docs, reference-pack, *.bat
 echo   NAHI BADLEGA : input\  DATA\  jobs\  output\  config.json
 echo --------------------------------------------------------------
 echo.
@@ -97,7 +97,7 @@ set BK=%DST%\_backup_code_%RANDOM%
 mkdir "%BK%" 2>nul
 REM  M4.2.1: backup mein bhi wahi folder jo update mein hain - warna rollback
 REM  aadha hota hai (docs\ pichhli baar na copy hota tha, na backup)
-for %%D in (src tools lib prompts schemas tests docs smoke-test reference-pack) do if exist "%DST%\%%D" xcopy /E /I /Q /Y "%DST%\%%D" "%BK%\%%D" >nul
+for %%D in (src server tools lib prompts schemas tests docs smoke-test reference-pack) do if exist "%DST%\%%D" xcopy /E /I /Q /Y "%DST%\%%D" "%BK%\%%D" >nul
 copy /Y "%DST%\*.bat" "%BK%\" >nul 2>nul
 copy /Y "%DST%\package.json" "%BK%\" >nul 2>nul
 copy /Y "%DST%\BUILD_INFO.json" "%BK%\" >nul 2>nul
@@ -105,14 +105,14 @@ echo.
 echo   purane code ka backup: %BK%
 echo.
 
-for %%D in (src tools lib prompts schemas tests docs smoke-test reference-pack) do (
+for %%D in (src server tools lib prompts schemas tests docs smoke-test reference-pack) do (
   if exist "%SRC%\%%D" (
     if exist "%DST%\%%D" rmdir /S /Q "%DST%\%%D" 2>nul
     xcopy /E /I /Q /Y "%SRC%\%%D" "%DST%\%%D" >nul
     echo   updated: %%D\
   )
 )
-for %%F in (START_HERE.bat REPAIR.bat CHECK.bat CHECKPACK.bat PREVIEW.bat START.bat START_UI.bat UPDATE_TOOL.bat package.json README.md PEHLE_YE_PADHO.txt BUILD_INFO.json RAW-TEST-LOG.txt RAW-REGRESSION-LOG.txt) do (
+for %%F in (START_HERE.bat REPAIR.bat CHECK.bat CHECKPACK.bat PREVIEW.bat START.bat START_UI.bat UPDATE_TOOL.bat package.json README.md PEHLE_YE_PADHO.txt KNOWN_LIMITATIONS.md BUILD_INFO.json RAW-TEST-LOG.txt RAW-REGRESSION-LOG.txt RAW-SERVER-LOG.txt) do (
   if exist "%SRC%\%%F" copy /Y "%SRC%\%%F" "%DST%\%%F" >nul & echo   updated: %%F
 )
 REM config.json sirf tab jab wahan hai hi nahi - aapki settings nahi udaani
@@ -139,10 +139,13 @@ echo      2. PEHLE_YE_PADHO.txt kholo ^(8 step likhe hain^)
 echo      3. Phir START_HERE.bat chalao
 echo.
 echo   Rollback chahiye to %BK% se files wapas copy kar lo.
-echo   ^(usme src tools lib prompts schemas tests docs reference-pack sab hai^)
+echo   ^(usme src server tools lib prompts schemas tests docs reference-pack sab hai^)
 echo ==============================================================
 pause
-exit /b 0
+REM M5.0-A fix: verify FAIL hone par bhi exit 0 dena galat tha — automation
+REM aur aane wala UI updater adhoore update ko "green" samajh lete. Ab asli
+REM verify ka exit code aage bhejte hain.
+exit /b %VRC%
 
 :nothing
 echo.

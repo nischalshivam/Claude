@@ -1,0 +1,14 @@
+  [PASS] T-SRV1 health responds without a token  — status=200
+  [PASS] T-SRV2 protected routes reject a missing or wrong token (401)  — no=true wrong=401
+  [PASS] T-SRV3 /state returns a canonical PROJECT_STATE and honest inputs  — state=INPUTS_INVALID jobId=srvtest
+  [PASS] T-SRV4 /missing lists the gap by stable request_key, marked critical  — key=REQ_a9993e36 crit=true
+  [PASS] T-SRV5 /edl builds project-edl-v1 from the draft, tokens only (no raw paths)  — shots=2 token=true noRaw=true
+  [PASS] T-SRV6 a valid media token streams the file; an unknown token is refused  — ok=true bogus=404
+  [PASS] T-SRV7 EDL patch saves transform + bumps revision; a stale revision 409s  — bumped=true savedFit=true stale=409
+  [PASS] T-SRV8 the EDL edit is persisted to disk (survives reload)  — persisted=true
+  [PASS] T-SRV9 upload+approve makes it APPROVED; changing the bytes expires the approval  — approved=APPROVED afterChange=EXPIRED
+  [PASS] T-SRV10 the UI shell is served with the token injected and app.js loads  — html=true appjs=200
+
+================================================================
+  SERVER TEST SUMMARY: 10 PASS, 0 FAIL
+================================================================

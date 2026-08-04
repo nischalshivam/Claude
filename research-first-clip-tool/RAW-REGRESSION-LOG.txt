@@ -122,6 +122,8 @@
   [PASS] T-M42110 renaming only the display folder/label keeps a valid approval alive  — status=APPROVED label=MISSING 001
   [PASS] T-M42111 changing the pack, SRT or voiceover expires an existing critical approval  — status=EXPIRED
   [PASS] T-M42112 revoking an approval changes the render signature (no stale success is reused)  — same=false
+  [PASS] T-M50A1 approvedKeys: NORMAL in, pending/expired critical out, approved critical in  — pendingOut=true normalIn=true approvedIn=true expired=true expiredOut=true
+  [PASS] T-M50A2 verify-update exits non-zero on a broken update, zero on a good one  — broken=2 good=0
   [PASS] T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut  — tail=CLAMPED_SRT_TAIL/true short=SRT_LONGER_THAN_AUDIO/false long=AUDIO_LONGER_THAN_SRT/false
   [PASS] T-M42114 clamped cues never extend past the real project duration  — lastEnd=20 project=20
   [PASS] T-M42115 timeline, gap plan, manifest and the rendered file all agree on one audio-derived duration  — exit=0 timeline=18 gapEnd=18 rendered=18.00
@@ -133,5 +135,5 @@
   [PASS] T-SENT production ROOT/jobs untouched by both suites (isolated job root)  — mini exit=0 sentinel survived=true
 
 ======================================================================
-  REGRESSION SUMMARY: 131 PASS, 0 FAIL
+  REGRESSION SUMMARY: 133 PASS, 0 FAIL
 ======================================================================

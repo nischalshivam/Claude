@@ -1953,6 +1953,64 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     fs.rmSync(dd, { recursive: true, force: true });
   })();
 
+  // ---------------- M5.0-A fix 1: EXPIRED never enters approvedKeys ----------------
+  //  Dashboard "manzoori expire" bolta tha par approvedKeys() usi request ko
+  //  gate ko "approved" bhej deta tha. Final pre-check phir bhi rok deta, par
+  //  do jagah do sach galat hai. Ab: NORMAL ko approval chahiye hi nahi;
+  //  critical ko SIRF APPROVED — PENDING aur EXPIRED dono bahar.
+  (() => {
+    const dd = tmpData('data_apk');
+    // ek HARD_EVIDENCE (critical) aur ek NORMAL gap
+    const plan = mkPlan([3, 7], { 3: 'HARD_EVIDENCE' });
+    gapplan.writeDataFolders(dd, plan);
+    const critDir = path.join(dd, folderAt(dd, '00m15s'));   // idx 3
+    const critKey = manual.requestKey(reqAt(dd, '00m15s'));
+    const normKey = manual.requestKey(reqAt(dd, '00m35s'));  // idx 7, NORMAL
+    for (const n of fs.readdirSync(dd).filter(x => /^MISSING_/.test(x))) {
+      img(path.join(dd, n, 'media', '01_a.jpg'), '0x228B22');
+      img(path.join(dd, n, 'media', '02_b.jpg'), '0xFF8C00');
+    }
+
+    // pehले: critical PENDING -> approvedKeys mein nahi; NORMAL -> hai
+    let keys = readiness.approvedKeys(dd, manual, cfgJson);
+    const pendingOut = !keys.has(critKey);
+    const normalIn = keys.has(normKey);
+
+    // approve -> ab critical bhi andar
+    fs.writeFileSync(path.join(critDir, 'APPROVE_MEDIA.txt'), 'haan\n');
+    readiness.evaluate(dd, manual, cfgJson, { draftExists: true });   // record materialize
+    keys = readiness.approvedKeys(dd, manual, cfgJson);
+    const approvedIn = keys.has(critKey) && keys.has(reqAt(dd, '00m15s').request_id);
+
+    // media badlo -> EXPIRED -> ab DONO forms (stable + legacy id) bahar
+    img(path.join(critDir, 'media', '01_a.jpg'), '0xC81E1E');
+    const ev = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const isExpired = (ev.requests.find(r => r.request_key === critKey) || {}).approval_status === 'EXPIRED';
+    keys = readiness.approvedKeys(dd, manual, cfgJson);
+    const expiredOut = !keys.has(critKey) && !keys.has(reqAt(dd, '00m15s').request_id);
+
+    check('T-M50A1 approvedKeys: NORMAL in, pending/expired critical out, approved critical in',
+      pendingOut && normalIn && approvedIn && isExpired && expiredOut,
+      `pendingOut=${pendingOut} normalIn=${normalIn} approvedIn=${approvedIn} expired=${isExpired} expiredOut=${expiredOut}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+
+  // ---------------- M5.0-A fix 2: updater verification exit code ----------------
+  //  verify-update.js FAIL par non-zero deta hai (aur .bat use aage bhejti hai).
+  (() => {
+    const bad = tmpData('verifybad');
+    fs.mkdirSync(bad, { recursive: true });
+    // adhoora folder: na src, na BUILD_INFO -> verify FAIL hona chahiye
+    const r = spawnSync('node', [path.join(ROOT, 'tools', 'verify-update.js'), `--root=${bad}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+    // asli tool ke root par verify PASS (exit 0)
+    const g = spawnSync('node', [path.join(ROOT, 'tools', 'verify-update.js'), `--root=${ROOT}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+    check('T-M50A2 verify-update exits non-zero on a broken update, zero on a good one',
+      r.status === 2 && g.status === 0, `broken=${r.status} good=${g.status}`);
+    fs.rmSync(bad, { recursive: true, force: true });
+  })();
+
   // ---------------- P0-C ----------------
   (() => {
     const d = path.join(FX, 'm421tb');

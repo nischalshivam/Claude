@@ -18,8 +18,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const ROOT = path.resolve(__dirname, '..');
 const arg = n => { const a = process.argv.find(x => x.startsWith(`--${n}=`)); return a ? a.split('=').slice(1).join('=').replace(/^["']|["']$/g, '') : null; };
+// --root se kisi bhi folder ko check kar sakte ho (test + future UI updater).
+// Default: is script ke parent (yaani jahan tool laga hua hai).
+const ROOT = path.resolve(arg('root') || path.resolve(__dirname, '..'));
 const SRC = arg('src');
 
 const sha = f => { try { return crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex').slice(0, 12); } catch { return null; } };
@@ -28,10 +30,11 @@ const exists = p => { try { return fs.existsSync(p); } catch { return false; } }
 // jo files na aayein to tool chalega hi nahi
 const CRITICAL = [
   'src/run.js', 'src/manual.js', 'src/approval.js', 'src/readiness.js',
-  'src/timebase.js', 'src/effectivegate.js', 'src/gapplan.js', 'src/render.js',
-  'tools/check-pack.js', 'tools/ui.js', 'tools/recover-orphaned-media.js',
+  'src/timebase.js', 'src/effectivegate.js', 'src/gapplan.js', 'src/render.js', 'src/edl.js',
+  'tools/check-pack.js', 'tools/recover-orphaned-media.js',
+  'server/app.js', 'server/ui/index.html', 'server/ui/app.js',
 ];
-const DIRS = ['src', 'tools', 'lib', 'prompts', 'schemas', 'tests', 'docs'];
+const DIRS = ['src', 'server', 'tools', 'lib', 'prompts', 'schemas', 'tests', 'docs'];
 const YOURS = ['input', 'DATA', 'jobs', 'output', 'config.json'];
 
 function buildInfo(root) {

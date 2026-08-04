@@ -1,3 +1,15 @@
+# Research-First Clip Tool — M5.0-A (editor foundation)
+
+> **M5.0-A — ab ek chalne wala local editor hai.** `START_UI.bat` chalao,
+> browser khul jayega (sirf `127.0.0.1`, na account, na internet, na npm install).
+> Overview · Research Health · Missing Media · Editor — sab ek jagah. "Draft banao"
+> button server ke through asli `draft.mp4` + gap-plan + EDL banata hai. Do addendum
+> fix (expired approval, updater exit code) is release ke pehle commit mein lage.
+> Kya chalta hai / kya baaki: `KNOWN_LIMITATIONS.md`. Acceptance: `docs/M50B_ACCEPTANCE.md`.
+> API: `docs/API_CONTRACT.md` · EDL: `docs/EDL_SCHEMA.md`.
+
+---
+
 # Research-First Clip Tool — M4.2.1
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label

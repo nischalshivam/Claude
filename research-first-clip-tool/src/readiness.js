@@ -197,7 +197,14 @@ function evaluate(dataRoot, manual, cfg, opts = {}) {
 function approvedKeys(dataRoot, manual, cfg) {
   const out = new Set();
   for (const r of requests(dataRoot, manual, cfg)) {
-    if (r.media_status === 'VALID' && r.approval_status !== 'PENDING') {
+    // M5.0-A fix: `!== 'PENDING'` galat tha — usme EXPIRED bhi ghus jata tha.
+    // Dashboard "manzoori expire ho gayi" bol raha hota tha, aur yahi function
+    // usi request ko gate ko "approved" bhej deta tha. Final pre-check abhi bhi
+    // rok deta (isliye data-loss nahi hua), par do jagah do sach — wahi bug hai
+    // jo M4.2.1 ne baaki har jagah khatam kiya. Ab ek saaf predicate:
+    //   NORMAL beat ko approval chahiye hi nahi; critical ko SIRF APPROVED.
+    const approved = !r.approval_required || r.approval_status === 'APPROVED';
+    if (r.media_status === 'VALID' && approved) {
       out.add(r.request_key);
       if (r.request_id) out.add(r.request_id);   // purane packs ke liye
     }
