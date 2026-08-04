@@ -1,5 +1,5 @@
 =========================================================
-  M4.1 — KYA KARNA HAI (7 step, seedhe shabdon mein)
+  M4.2.1 — KYA KARNA HAI (8 step, seedhe shabdon mein)
 =========================================================
 
 Do folder hain. Inhe alag rakhna zaroori hai:
@@ -25,59 +25,89 @@ phir "y" likho.
 Ho gaya. Naya code purane folder mein lag gaya.
 Aapka input\, DATA\ aur jobs\ ko haath nahi laga.
 
+Aakhir mein wo khud check karke dikhayega:
+    version, docs\ aaya ya nahi, aur aapka kaam surakshit hai ya nahi.
+
 >> AB SE SAARA KAAM PURANE FOLDER MEIN HOGA. Naya folder chhod do.
 
 
 ---------------------------------------------------------
-STEP 2 — khoya hua evidence wapas laao
+STEP 2 — khoya hua MEDIA wapas laao   (naya, M4.2.1)
 ---------------------------------------------------------
-Pichhli baar folder replace karne se aapke pack se 19 locators aur
-19 frame hints kho gaye the. Wo wapas aane hain.
+Pichhli baar ek bug ki wajah se aapke 16 DATA folder — jinme aapki
+dhoondhi hui images/videos thi — DATA\_ORPHANED mein chale gaye the.
 
-PURANE folder mein address bar par "cmd" likh kar Enter dabao
-(ya Shift + right-click -> "Open PowerShell window here").
+Ab tool wo khud wapas laa sakta hai. PURANE folder mein cmd kholo:
 
-Phir ye paste karo:
+    node tools\recover-orphaned-media.js --dry-run
 
-    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json
+Ye sirf DIKHAYEGA ki kya kahan jayega. Kuch nahi badlega.
+Theek lage to:
 
-Ye sirf DIKHAYEGA ki kya wapas aayega. Kuch badlega nahi.
-"locators : 49 -> 68" jaisa dikhna chahiye.
+    node tools\recover-orphaned-media.js --apply
 
-Theek lage to wahi command dobara, aage --apply laga kar:
-
-    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json --apply
-
-Aapke theek kiye hue 31 cue aur 109 criticality waise ke waise rahenge.
+Zaroori baatein:
+  - aapki koi maujooda file kabhi overwrite nahi hogi
+  - _ORPHANED se kuch delete nahi hoga (copy hota hai)
+  - jo match pakka nahi hai use tool khud nahi lagata — "[SHAYAD]"
+    likh kar report mein daal deta hai, aap khud decide karo
+  - poori report: output\orphan-recovery-report.json
 
 
 ---------------------------------------------------------
-STEP 3 — pack check
+STEP 3 — khoya hua EVIDENCE wapas laao
+---------------------------------------------------------
+Ye tab hi karna jab aapke paas purana M3.6.1 wala folder abhi bhi ho.
+
+    node tools\merge-pack.js input\scene-research.json "C:\...\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json"
+
+Ye sirf DIKHAYEGA. Kuch badlega nahi.
+
+Kitna badhna chahiye? Iska koi FIX number nahi hai (pichhli baar maine
+"68 hona chahiye" likh diya tha — wo galat tha). Ye ek UNION hai, aur
+kitna badhega ye aapke abhi wale pack par depend karta hai.
+
+Bas ye aakhri line dekho:
+
+    [THEEK HAI] Kuch khoya nahi, aur N nayi validated cheezein aayi hain.
+
+Aisa dikhe to wahi command dobara --apply laga kar chalao.
+"[RUKO] Kuch evidence GHAT gaya" dikhe to --apply MAT chalana, mujhe
+output\pack-merge-report.json bhej dena.
+
+Purana folder ab nahi hai? Ye step chhod do. Kuch tootega nahi.
+
+
+---------------------------------------------------------
+STEP 4 — pack check
 ---------------------------------------------------------
 START_HERE.bat -> option 2
 
-Coverage ~66% se badhkar ~78% ke aas-paas honi chahiye.
-"5 check fail" jaisa message aana normal hai - ghabrana nahi.
+"5 check fail" jaisa message aana normal hai — ghabrana nahi.
+Wo raw research pack ka score hai, final video ka nahi.
 
 
 ---------------------------------------------------------
-STEP 4 — DRAFT banao  (ye sabse bada step hai)
+STEP 5 — DRAFT banao   (ye sabse bada step hai)
 ---------------------------------------------------------
 START_HERE.bat -> D
 
-Ab ye poori 15-minute video bana dega. Pehle ye timeline par ruk
-jata tha - wo bug theek ho gaya.
-
+Ab ye poori video bana dega aur kabhi beech mein rukega nahi.
 Jahan tool ko koi footage nahi mila, wahan laal card aayega:
 "MISSING 001", "MISSING 002" ...
 
-Ye draft.mp4 hai. Ise dekh lo - pata chal jayega kahan kya kami hai.
+Ye draft.mp4 hai. Ise dekh lo — pata chal jayega kahan kya kami hai.
+
+Ek nayi baat (M4.2.1): agar aapka voiceover aur SRT ki lambai mein
+2 second se zyada ka farak hua, to tool YAHIN saaf-saaf ruk jayega
+aur batayega ki kya theek karna hai. Pehle wo 30 second tak chup-chaap
+kaat deta tha — yaani aapki narration ka hissa gayab ho sakta tha.
 
 
 ---------------------------------------------------------
-STEP 5 — DATA folder kholo
+STEP 6 — DATA folder kholo
 ---------------------------------------------------------
-Purane folder mein ab ek naya folder hoga: DATA\
+Purane folder mein ab ek folder hoga: DATA\
 
 Andar aise folder milenge:
     DATA\MISSING_001__02m03s-02m24s__P03_M01\
@@ -94,7 +124,7 @@ WHAT_IS_MISSING.txt mein likha hoga:
 
 
 ---------------------------------------------------------
-STEP 6 — apni images/videos daalo
+STEP 7 — apni images/videos daalo
 ---------------------------------------------------------
 Search karke jo mile, use us folder ke media\ mein copy kar do.
 
@@ -110,22 +140,47 @@ Aise folder mein ek khaali file bhi banani hai:
 
 Ye isliye ki zaroori beat par tool aapse ek saaf HAAN maangta hai.
 
+NAYA (M4.2.1): ab wo HAAN us waqt ke media se BANDH jati hai.
+Baad mein aap us folder ki file badal do, order badal do ya naya
+voiceover laga do — to tool khud bolega:
+
+    "manzoori expire ho gayi — media badal gaya, dobara dekh kar haan do"
+
+Aur APPROVE_MEDIA.txt ka naam APPROVAL_EXPIRED.txt kar dega (andar wajah
+likhi hogi). Ye jaan-boojh kar hai: purani haan naye visual par chipkani
+nahi chahiye.
+
 Dashboard chahiye to: START_UI.bat  (browser khul jayega, drag-drop
 kar sakte ho, wahan approve ka tick bhi hai)
 
 
 ---------------------------------------------------------
-STEP 7 — final video
+STEP 8 — final video
 ---------------------------------------------------------
 START_HERE.bat -> option 8
 
-Downloads dobara nahi honge - sirf naye hisse banenge.
-final.mp4 mil jayegi. Uske saath shot-review.html kholna -
+Downloads dobara nahi honge — sirf naye hisse banenge.
+final.mp4 mil jayegi. Uske saath shot-review.html kholna —
 har shot ka frame ek page par dikhta hai.
+
+Check karne layak ek cheez:
+    jobs\<naam>\render-manifest.json -> "duration" block
+Usme audio, timeline aur rendered — teeno ka asli number likha hoga
+aur teeno lagbhag ek jaise hone chahiye.
 
 
 ---------------------------------------------------------
 AGAR KAHIN RUK JAYE
 ---------------------------------------------------------
-Screen par jo likha hai wo padhna - usme aage ka raasta hota hai.
+Screen par jo likha hai wo padhna — usme aage ka raasta hota hai.
 Phir bhi na chale to jobs\<naam>\run.log bhej dena.
+
+
+---------------------------------------------------------
+POORI CHECKLIST (har step par kya dikhna chahiye)
+---------------------------------------------------------
+docs\M421_ACCEPTANCE.md
+
+Usme har step ke saath likha hai ki screen par exactly kya aana
+chahiye. Kahin alag dikhe to wahin ruk kar wo line bhej dena —
+guess karne ki zaroorat nahi.

@@ -111,7 +111,10 @@ function evaluate(tl, resolved, opts = {}) {
       const c = String(crit).toUpperCase();
       const exact = asset === 'EXACT_VIDEO' || s.kind === 'video';
       const hinted = s.hint_time != null || (Array.isArray(s.hint_times) && s.hint_times.length > 0);
-      const userOk = USER_MEDIA.has(asset) && s.manual_request_id && approved.has(s.manual_request_id);
+      // sthir key pehle; purani request_id sirf backward-compat ke liye
+      const userOk = USER_MEDIA.has(asset) &&
+        ((s.manual_request_key && approved.has(s.manual_request_key)) ||
+         (s.manual_request_id && approved.has(s.manual_request_id)));
       const ok = userOk || (c === 'HARD_EVIDENCE' ? exact : (exact || hinted));
       if (!ok) {
         critical.push(s.moment_id || `slot_${s.i}`);

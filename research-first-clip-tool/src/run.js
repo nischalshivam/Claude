@@ -35,6 +35,7 @@ const gapplan = require('./gapplan.js');
 const manual = require('./manual.js');
 const effectivegate = require('./effectivegate.js');
 const readiness = require('./readiness.js');
+const timebase = require('./timebase.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -100,7 +101,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.2'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.2.1'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -168,6 +169,21 @@ async function main() {
     flushLog(spec.id);
     process.exit(3);
   };
+  // ---- TIMEBASE GATE (M4.2.1): pehle ye tay karo ki video kitni lambi hai ----
+  //  Ye sabse pehle isliye hai kyunki iske baad ka HAR kaam is ek number par
+  //  tikta hai — alignment, timeline, gap plan (yaani user se kitna media
+  //  maanga jayega), shot review aur render. M4.2 mein ye faisla sabse AAKHIR
+  //  mein (mux ke waqt) hota tha, isliye gap planner user se 1.4s ka aisa media
+  //  maang leta tha jo baad mein kaat diya jata.
+  const tb = timebase.resolve({ srtFile: spec.srt, audioFile: spec.audio, cfg });
+  spec.timebase = tb;
+  if (tb.reason) U[tb.ok ? 'log' : 'warn'](`   timebase: ${tb.reason}`);
+  if (!tb.ok && !isPreviewRun && (cfg.output && cfg.output.mode) !== 'review' && !flag('accept-audio-mismatch')) {
+    blockAndExit('AUDIO_TIMEBASE_MISMATCH',
+      `voiceover aur SRT ki lambai mein ${Math.abs(tb.difference_sec).toFixed(1)}s ka farak hai — itna chup-chaap nahi kaat sakta.`,
+      timebase.blockSteps(tb));
+  }
+
   // ---- EFFECTIVE GATE, part 1 (M4): media hai ya nahi ----
   //  Ye pack ki QUALITY ka sawaal nahi hai, isliye ye --diagnostic-override se
   //  bhi nahi hatta. Baat sirf itni hai: final video ke har slot par sach mein
@@ -359,7 +375,7 @@ async function main() {
         const applied = manual.applyToTimeline(tl, DATA_ROOT, cfg);
         if (applied.applied) {
           tl = applied.tl;
-          U.ok(`aapka apna media ${applied.applied} jagah laga diya (${applied.requests.join(', ')})`);
+          U.ok(`aapka apna media ${applied.applied} jagah laga diya (${(applied.labels || applied.requests).join(', ')})`);
         }
 
         // 3. EK EFFECTIVE GATE — final slots par ek hi faisla
@@ -476,8 +492,14 @@ const DATA_ROOT = U.dataRoot();
  */
 function hybridState(spec, cfg) {
   const out = { state: 'AUTO_READY', total: 0, ready: 0, pending: [], stale: false };
+  // "koi request nahi" ka matlab tabhi "kuch missing nahi" hai jab draft SACH
+  // MEIN ban chuka ho. Isse pehle wo sirf "abhi pata nahi" hai (M4.2.1 / P1-G).
+  const draftExists = ['gap-plan.json', 'draft.mp4', 'final.mp4']
+    .some(f => { try { return fs.existsSync(U.p(spec.id, f)); } catch { return false; } });
   let ev, reqs;
-  try { ev = readiness.evaluate(DATA_ROOT, manual, cfg); reqs = ev.requests; } catch { return out; }
+  try { ev = readiness.evaluate(DATA_ROOT, manual, cfg, { draftExists }); reqs = ev.requests; } catch { return out; }
+  out.readiness = ev.state;
+  out.draft_exists = draftExists;
   if (!reqs.length) return out;
 
   // gap plan usi pack/SRT ka hona chahiye jispar ab render ho raha hai
@@ -514,7 +536,10 @@ function hybridState(spec, cfg) {
 // Isse do faayde: (1) video ke placeholder par wahi number aata hai jo DATA
 // folder par hai, (2) draft ke fail hone par bhi requests bani rehti hain.
 function buildGapPlan(spec, cfg, resolved, tl, gate) {
-  const cues = SUB.parseFile(spec.origSrt || spec.srt);
+  // gap plan bhi USI lambai par — user se sirf utna media maanga jaye jitna
+  // sach mein final video mein aayega (M4.2.1)
+  const projectDur = (spec.timebase && spec.timebase.project_duration) || 0;
+  const cues = timebase.clampCues(SUB.parseFile(spec.origSrt || spec.srt), projectDur);
   const packIndex = {};
   for (const pk of spec.pack.packs) packIndex[pk.pack_id] = pk;
   const gp = gapplan.plan({
@@ -526,6 +551,7 @@ function buildGapPlan(spec, cfg, resolved, tl, gate) {
       // audio bhi fingerprint mein: wahi SRT par naya voiceover = purani manzoori
       // ab valid nahi (timing badal chuki hai).
       audio_signature: spec.audio ? audioSig(spec.audio) : 'none',
+      project_duration: projectDur ? +projectDur.toFixed(3) : null,
     },
     projectId: spec.id, cfg, gate,
   });

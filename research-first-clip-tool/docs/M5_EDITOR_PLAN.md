@@ -212,6 +212,26 @@ provenance (auto exact / user media / kaunsa source), aur approval.
 
 ---
 
+## 6.1 Backend contracts jo M4.2.1 par FREEZE ho chuke hain
+
+M5 ka UI in par bharosa kar sakta hai. Inhe badalne ka matlab hoga UI ka
+dobara likhna, isliye ye ab locked hain:
+
+| Contract | Kahan | Kya guarantee hai |
+|---|---|---|
+| `request_key` (`REQ_xxxxxxxx`) | `src/manual.js: requestKey()` | Ek gap ki pehchaan. Sirf jagah + moments se banti hai. Display number badalne se KABHI nahi badalti. Overrides, approval, ordering, trim, reuse, fingerprint — sab isi se judte hain. |
+| `request_id` / `label` | `gap-plan.json` | Sirf dikhane ke liye (`MISSING 007`). Kabhi identity nahi. |
+| Approval record | `DATA/manual-approvals.json` | `{request_key, approved, approved_at, media_fingerprint, request_fingerprint, input_fingerprint}`. Teeno fingerprint match karein tabhi `APPROVED`, warna `EXPIRED`. |
+| Readiness | `src/readiness.js: evaluate()` | Ek hi jagah se `state`, `can_export`, per-request `media_status` + `approval_status`. UI, CLI aur gate teeno yahi padhte hain. |
+| Project state | `readiness.PROJECT_STATE` | 15 states, `NO_INPUTS` se `FINAL_READY` tak. `NO_DRAFT` aur `AUTO_READY` alag hain. |
+| Timebase | `src/timebase.js: resolve()` | `project_duration = audio_duration`. `<= 2.0s` auto clamp, `> 2.0s` block. Timeline, gap plan, EDL, review aur render — sab ek hi number par. |
+| Duration block | `render-manifest.json -> duration` | `audio`, `srt_end_before_clamp`, `timeline`, `rendered`, `correction`, `difference_sec` — koi null nahi. |
+| Manual provenance | `render-manifest.json -> shots[]` | `manual_request_key` + `manual_request_id` + `manual_sha256` + `manual_file`. |
+
+EDL model inhi ke upar banega — `request_key` hi EDL clip ka `source_ref` hoga.
+
+---
+
 ## 7. Technical
 
 - Backend wahi Node engine hai jo abhi hai — file aur process ka kaam sirf wahi karta hai
@@ -260,7 +280,8 @@ Export ke saath milega: `final.mp4`, `export-result.json`, `render-manifest.json
 
 | | Kya | Kya milega |
 |---|---|---|
-| **M4.2** | stability (ho chuka) | stable IDs, ek sach, sahi messages, audio timebase |
+| **M4.2** | stability (ho chuka) | stable IDs, ek sach, sahi messages |
+| **M4.2.1** | final hardening (ho chuka) | stable key poore tool mein, fingerprinted approval, audio timebase gap plan se pehle, orphan recovery, honest states |
 | **M5.0** | UI + raw editor | project screens, missing-media UI, preview, inspector, timeline, EDL, undo/redo, content lock — **koi effect nahi** |
 | **M5.1** | template engine | typed schema, short preview, 4 validated templates, per-shot override |
 | **M5.2** | preset library + niche | 24-30 presets, anime/documentary/Hollywood profiles aur pilots |

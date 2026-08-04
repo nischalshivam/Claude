@@ -45,7 +45,10 @@
     "preset": "veryfast",
     "kenBurnsZoom": 0.1,
     "allowSilent": false,
-    "_note": "allowSilent=false => production ko voiceover audio zaroori (missing audio = fail, misleading DONE nahi). Test harness true set karta hai."
+    "audioClampSeconds": 2.0,
+    "audioToleranceSeconds": 0.5,
+    "_note": "allowSilent=false => production ko voiceover audio zaroori (missing audio = fail, misleading DONE nahi). Test harness true set karta hai.",
+    "_timebaseNote": "Voiceover audio hi project ki asli lambai hai. SRT us se itne second tak alag ho to tool khud theek kar leta hai (audioClampSeconds). Isse zyada farak ho to run RUK jata hai — kyunki 10-30 second ka farak 'chhoti si tail' nahi, adhoora voiceover ya galat SRT hota hai. Ek baar chalane ke liye chhoot: command ke aage --accept-audio-mismatch."
   },
   "validation": {
     "_note": "Handoff Stage 1 rules.",

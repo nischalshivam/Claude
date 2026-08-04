@@ -387,7 +387,25 @@ function writeDataFolders(dataRoot, gapPlan) {
       if (a.pack_sha256 && b.pack_sha256 && a.pack_sha256 !== b.pack_sha256) sameInputs = false;
       if (a.srt_sha256 && b.srt_sha256 && a.srt_sha256 !== b.srt_sha256) sameInputs = false;
     } catch {}
-    if (hasMedia && sameInputs) { satisfied.push(dir); continue; }
+    if (hasMedia && sameInputs) {
+      satisfied.push(dir);
+      // Ye folder ab kisi placeholder se nahi juda — aur uska purana number
+      // naye plan ke kisi folder se mil sakta hai (dono "MISSING 001" dikhenge).
+      // Isliye andar saaf-saaf likh dete hain ki ye ho chuka hai (M4.2.1).
+      try {
+        fs.writeFileSync(path.join(dataRoot, dir, 'BHAR_CHUKA.txt'),
+          'YE JAGAH BHAR CHUKI HAI\n' +
+          '=======================\n\n' +
+          'Aapka media yahan laga hua hai, aur video mein is jagah par ab koi\n' +
+          'MISSING card nahi hai.\n\n' +
+          'Folder ke naam ka number (MISSING_001, 002 ...) sirf PURANA number hai.\n' +
+          'Naye card apna alag number lete hain, isliye do folder ka number ek\n' +
+          'jaisa dikh sakta hai. Ghabrane ki baat nahi — jis folder mein ye file\n' +
+          'hai, us par aapka kaam khatam.\n\n' +
+          'Yahan se media hataoge to wo jagah dobara khali ho jayegi.\n');
+      } catch {}
+      continue;
+    }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = path.join(dataRoot, '_ORPHANED', stamp);
     fs.mkdirSync(dest, { recursive: true });
@@ -432,6 +450,8 @@ function writeDataFolders(dataRoot, gapPlan) {
     '  media/                -> apni images/videos ISME daalo\n' +
     '  request.json          -> tool ke liye hai, ise chhedne ki zaroorat nahi\n\n' +
     'Order set karna ho to filename ke aage number lagao: 01_, 02_, 03_\n\n' +
+    'Jis folder mein BHAR_CHUKA.txt hai, wahan aapka kaam ho chuka hai —\n' +
+    'uska folder-number sirf purana naam hai, usse matlab mat rakhna.\n\n' +
     'Files daalne ke baad tool mein "Missing media complete karo" chalao.\n' +
     'Purane downloads dobara nahi honge — sirf ye hisse naye banenge.\n\n' +
     `Abhi ${gapPlan.requests.length} jagah media chahiye ` +

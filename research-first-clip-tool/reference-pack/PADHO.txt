@@ -3,11 +3,11 @@ KHOYE HUE LOCATORS WAPAS KAISE LAAYE
 
 PEHLE EK GALTI SUDHAR LOON:
 Pichhle ZIP mein maine yahan ek "M3.6.1 repaired pack" rakha tha aur kaha tha
-ki usse 49 -> 68 locators ho jayenge. Wo file GALAT thi — usme bhi 49 hi
-locators the. Us file se wo merge ho hi nahi sakta tha. Isliye wo file hata di.
+ki usse locators badh jayenge. Wo file GALAT thi — usme purane hi locators the.
+Us file se wo merge ho hi nahi sakta tha. Isliye wo file hata di.
 
-ASLI 68-locator wala pack AAPKI apni machine par hai. Wo M3.6.1 wale folder ka
-input hai — jo aapne us waqt repair kiya tha. Aam taur par yahan:
+ASLI repaired pack AAPKI apni machine par hai. Wo M3.6.1 wale folder ka input
+hai — jo aapne us waqt repair kiya tha. Aam taur par yahan:
 
     C:\Users\Dell\Downloads\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json
 
@@ -21,21 +21,49 @@ Apne CHALTE HUE project folder mein cmd kholo aur pehle DEKHO (kuch badlega nahi
 
     node tools\merge-pack.js input\scene-research.json "C:\Users\Dell\Downloads\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json"
 
-Screen par aisa dikhna chahiye:
 
-    locators : 49 -> 68   (+19)
-    hints    : 173 -> 192  (+19)
+KITNA BADHNA CHAHIYE?
+---------------------
+Iska koi FIX number nahi hai — aur kisi ko bhi aapse fix number nahi maangna
+chahiye (maine pichhli baar "68 hona chahiye" likh diya tha, wo galat tha).
 
-Agar aisa dikhe to wahi command dobara, aage --apply laga kar:
+Wajah simple hai: ye merge ek UNION hai. Dono packs ka jod. Aapke abhi wale
+pack mein bhi kuch aisa evidence ho sakta hai jo purane mein tha hi nahi.
+Isliye nateeja 68 se zyada bhi ho sakta hai aur kam bhi — dono theek hain.
+
+Sirf DO cheezein dekhni hain, aur tool aakhir mein khud ye line chhapta hai:
+
+    [THEEK HAI] Kuch khoya nahi, aur N nayi validated cheezein aayi hain.
+
+    1. KUCH KHOYA NAHI    -> koi number ghata nahi hona chahiye
+    2. POSITIVE UNION     -> kuch na kuch naya aana chahiye
+
+Agar "[RUKO] Kuch evidence GHAT gaya" dikhe to --apply mat chalana, mujhe
+output\pack-merge-report.json bhej dena.
+
+
+TEEN ALAG NUMBER HAIN — INHE MILAO MAT
+--------------------------------------
+    locators (EXACT_TIME/DIALOGUE)  ek scene ka pata: kis video mein, kis waqt
+    frame hints (alag-alag frame)   ek locator ke andar kai exact frame ho sakte hain
+    moments par locator/hint        kitne moments ke paas kuch hai (ye alag ginti hai)
+
+Ek moment par 1 locator aur 4 frame hints ho sakte hain. Isliye "hints" ka
+number hamesha "locators" se bada dikhta hai — ye galti nahi hai.
+
+
+LAGANA HAI TO
+-------------
+Wahi command dobara, aage --apply laga kar:
 
     node tools\merge-pack.js input\scene-research.json "C:\...\M3.6.1\...\input\scene-research.json" --apply
 
 
 KYA SURAKSHIT RAHEGA
 --------------------
-  - aapke theek kiye hue 31 cue        -> waise ke waise
-  - 109 moments ki criticality          -> waisi ki waisi
-  - source health (WORKING/DEAD)        -> waisi ki waisi
+  - aapke theek kiye hue cue          -> waise ke waise
+  - har moment ki criticality          -> waisi ki waisi
+  - source health (WORKING/DEAD)       -> waisi ki waisi
 
 Sirf wo locators aur frame hints aayenge jo abhi pack mein hain hi nahi, aur
 har ek pehle check hoga (source maujood hai? timestamp source ki length ke
@@ -46,5 +74,5 @@ Backup apne aap: input\scene-research.json.bak
 
 AGAR WO PURANA FOLDER AB NAHI HAI
 ---------------------------------
-To ye step chhod dijiye. Tool phir bhi chalega — coverage thodi kam rahegi
-(~66% ki jagah ~78%), yaani kuch aur jagah aapko media daalna padega.
+To ye step chhod dijiye. Tool phir bhi chalega — coverage thodi kam rahegi,
+yaani kuch aur jagah aapko media daalna padega. Kuch tootega nahi.

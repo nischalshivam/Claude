@@ -85,7 +85,7 @@ echo --------------------------------------------------------------
 echo   naya code yahan se : %SRC%
 echo   project yahan par  : %DST%
 echo.
-echo   BADLEGA  : src, tools, lib, prompts, schemas, tests, reference-pack, *.bat
+echo   BADLEGA  : src, tools, lib, prompts, schemas, tests, docs, reference-pack, *.bat
 echo   NAHI BADLEGA : input\  DATA\  jobs\  output\  config.json
 echo --------------------------------------------------------------
 echo.
@@ -95,14 +95,17 @@ if /i not "%yn%"=="y" goto nothing
 REM --- purane code ka backup (rollback ke liye) ---
 set BK=%DST%\_backup_code_%RANDOM%
 mkdir "%BK%" 2>nul
-for %%D in (src tools lib prompts schemas smoke-test) do if exist "%DST%\%%D" xcopy /E /I /Q /Y "%DST%\%%D" "%BK%\%%D" >nul
+REM  M4.2.1: backup mein bhi wahi folder jo update mein hain - warna rollback
+REM  aadha hota hai (docs\ pichhli baar na copy hota tha, na backup)
+for %%D in (src tools lib prompts schemas tests docs smoke-test reference-pack) do if exist "%DST%\%%D" xcopy /E /I /Q /Y "%DST%\%%D" "%BK%\%%D" >nul
 copy /Y "%DST%\*.bat" "%BK%\" >nul 2>nul
 copy /Y "%DST%\package.json" "%BK%\" >nul 2>nul
+copy /Y "%DST%\BUILD_INFO.json" "%BK%\" >nul 2>nul
 echo.
 echo   purane code ka backup: %BK%
 echo.
 
-for %%D in (src tools lib prompts schemas tests smoke-test reference-pack) do (
+for %%D in (src tools lib prompts schemas tests docs smoke-test reference-pack) do (
   if exist "%SRC%\%%D" (
     if exist "%DST%\%%D" rmdir /S /Q "%DST%\%%D" 2>nul
     xcopy /E /I /Q /Y "%SRC%\%%D" "%DST%\%%D" >nul
@@ -116,17 +119,27 @@ REM config.json sirf tab jab wahan hai hi nahi - aapki settings nahi udaani
 if not exist "%DST%\config.json" if exist "%SRC%\config.json" copy /Y "%SRC%\config.json" "%DST%\config.json" >nul
 
 echo.
+REM --- ab ANDAAZA nahi, sach check karo (M4.2.1) ---
+pushd "%DST%"
+node tools\verify-update.js --src="%SRC%"
+set VRC=%ERRORLEVEL%
+popd
+
+echo.
 echo ==============================================================
-echo   HO GAYA. Aapka kaam safe hai:
-if exist "%DST%\input\scene-research.json" (echo      input\scene-research.json   [surakshit]) else (echo      input\scene-research.json   [nahi mila])
-if exist "%DST%\DATA" (echo      DATA\                      [surakshit]) else (echo      DATA\                      [abhi bana hi nahi])
-if exist "%DST%\jobs" (echo      jobs\                      [surakshit - downloads bache hue hain]) else (echo      jobs\                      [abhi bana hi nahi])
+if "%VRC%"=="0" (
+  echo   HO GAYA - update check bhi pass hua.
+) else (
+  echo   UPDATE LAGA, PAR CHECK MEIN KUCH KAMI HAI - upar padho.
+)
 echo.
 echo   AB KYA KARNA HAI:
 echo      1. Apne project folder mein jao: %DST%
-echo      2. Wahan START_HERE.bat chalao
+echo      2. PEHLE_YE_PADHO.txt kholo ^(8 step likhe hain^)
+echo      3. Phir START_HERE.bat chalao
 echo.
 echo   Rollback chahiye to %BK% se files wapas copy kar lo.
+echo   ^(usme src tools lib prompts schemas tests docs reference-pack sab hai^)
 echo ==============================================================
 pause
 exit /b 0

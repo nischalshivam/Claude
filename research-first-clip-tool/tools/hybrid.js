@@ -23,6 +23,10 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const U = require(path.join(ROOT, 'src', 'util.js'));
 const manual = require(path.join(ROOT, 'src', 'manual.js'));
+// M4.2.1: status aur final ab WAHI evaluator poochte hain jo production gate
+// poochta hai. Pehle ye sirf manual.scan() dekhta tha — yaani "sab taiyaar hai"
+// bol deta tha aur turant baad gate critical approval par rok deta tha.
+const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
 
 const DATA = path.join(ROOT, 'DATA');
 const cmd = (process.argv[2] || 'status').toLowerCase();
@@ -37,8 +41,17 @@ function runRfc(args) {
   return r.status == null ? 1 : r.status;
 }
 
+function draftExists() {
+  try {
+    const jobs = path.join(ROOT, 'jobs');
+    return fs.readdirSync(jobs).some(j =>
+      ['gap-plan.json', 'draft.mp4', 'final.mp4'].some(f => fs.existsSync(path.join(jobs, j, f))));
+  } catch { return false; }
+}
+
 function status() {
   line(); console.log('  HYBRID STATUS — kitna ban chuka, kitna baaki'); line();
+  const ev = readiness.evaluate(DATA, manual, cfg, { draftExists: draftExists() });
   const s = manual.scan(DATA, { cfg });
   if (!s.requests.length) {
     console.log('  DATA folder mein koi request nahi hai.');
@@ -49,15 +62,17 @@ function status() {
     line();
     return 0;
   }
-  const need = s.requests.filter(r => r.status !== 'READY');
-  console.log(`  ${s.requests.length} jagah aapke media ki zaroorat thi. ${s.requests.length - need.length} ho chuki, ${need.length} baaki.\n`);
-  for (const r of s.requests) {
-    const mark = r.status === 'READY' ? '[OK ]' : (r.status === 'NEEDS_MORE_MEDIA' ? '[ADD]' : '[   ]');
+  const need = ev.requests.filter(r => r.blocking);
+  console.log(`  ${ev.total} jagah aapke media ki zaroorat thi. ${ev.ready} ho chuki, ${need.length} baaki.`);
+  console.log(`  ${ev.human}\n`);
+  for (const r of ev.requests) {
+    const mark = !r.blocking ? '[OK ]' : (r.media_status === 'SHORT' ? '[ADD]'
+      : (r.approval_status === 'PENDING' || r.approval_status === 'EXPIRED' ? '[HAAN?]' : '[   ]'));
     console.log(`  ${mark} ${r.folder}`);
     console.log(`        ${clock(r.range.start_sec)} - ${clock(r.range.end_sec)}  (${r.range.duration_sec.toFixed(1)}s)  ${r.files.length} file`);
-    if (r.status === 'WAITING_FOR_MEDIA') console.log(`        "${String(r.narration_exact).slice(0, 68)}..."`);
-    if (r.status === 'NEEDS_MORE_MEDIA') console.log(`        ${r.short_seconds}s aur chahiye — ek aur file daalo (ya "allow reuse" on karo)`);
-    for (const b of r.invalid) console.log(`        [!] ${b.file}: ${b.problem}`);
+    if (r.media_status === 'EMPTY') console.log(`        "${String(r.narration_exact).slice(0, 68)}..."`);
+    for (const x of r.reasons) console.log(`        ${x}`);
+    for (const x of (r.notes || [])) console.log(`        (${x})`);
   }
   console.log('');
   if (!need.length) {
@@ -130,12 +145,12 @@ function draft() {
 }
 
 function final() {
-  const s = manual.scan(DATA, { cfg });
-  const need = s.requests.filter(r => r.status !== 'READY');
+  const ev = readiness.evaluate(DATA, manual, cfg, { draftExists: draftExists() });
+  const need = ev.requests.filter(r => r.blocking);
   if (need.length) {
     line();
-    console.log(`  [RUKA] ${need.length} jagah abhi media ka intezaar hai — final ab nahi banegi.`);
-    need.slice(0, 10).forEach(r => console.log(`     ${r.folder}  (${r.status})`));
+    console.log(`  [RUKA] ${need.length} jagah abhi taiyaar nahi — final ab nahi banegi.`);
+    need.slice(0, 10).forEach(r => console.log(`     ${r.folder}  (${r.reasons.join(' · ')})`));
     console.log('');
     console.log('  node tools/hybrid.js status  se poori list dekho.');
     line();

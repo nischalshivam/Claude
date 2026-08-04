@@ -13,7 +13,7 @@ cd /d "%~dp0"
 :menu
 cls
 echo ==============================================================
-echo   RESEARCH-FIRST CLIP TOOL  -  M4.2
+echo   RESEARCH-FIRST CLIP TOOL  -  M4.2.1
 echo ==============================================================
 if exist "input\scene-research.json" (echo   pack       : input\scene-research.json  [mila]) else (echo   pack       : NAHI MILA  -^> Genspark ka JSON input\ mein daalo)
 if exist "input\voiceover.srt" (echo   voiceover  : input\voiceover.srt  [mila]) else (echo   voiceover  : NAHI MILA  -^> preview/render nahi chalega)
@@ -78,12 +78,16 @@ echo.
 echo   1. Cue theek karo        ^(narration cue ko voiceover.srt se hubahu milao^)
 echo   2. Criticality migrate   ^(har moment par HOOK/HARD_EVIDENCE/NORMAL^)
 echo   3. Criticality + udhaar manzoor karo ^(purani allowed_pack_ids waali^)
+echo   4. Khoya hua media wapas laao ^(DATA\_ORPHANED se^) - pehle DEKHO
+echo   5. Khoya hua media wapas laao - SACH MEIN LAGAO
 echo   0. Wapas
 echo.
-set /p lc=  Kya karna hai (0-3)?
+set /p lc=  Kya karna hai (0-5)?
 if "%lc%"=="1" ( node tools\fix-cues.js input\scene-research.json input\voiceover.srt --apply & call :done "cue fix" & goto menu )
 if "%lc%"=="2" ( node tools\migrate-pack.js input\scene-research.json input\voiceover.srt --apply & call :done "criticality migrate" & goto menu )
 if "%lc%"=="3" ( node tools\migrate-pack.js input\scene-research.json input\voiceover.srt --apply --approve-borrow & call :done "migrate + borrow" & goto menu )
+if "%lc%"=="4" ( node tools\recover-orphaned-media.js --dry-run & call :done "orphan recovery (sirf dekha)" & goto menu )
+if "%lc%"=="5" ( node tools\recover-orphaned-media.js --apply & call :done "orphan recovery (laga diya)" & goto menu )
 if "%lc%"=="0" goto menu
 goto local
 

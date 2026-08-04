@@ -50,7 +50,17 @@ function align(spec, cfg, st) {
   if (!srtFile || !fs.existsSync(srtFile)) throw new Error(`voiceover.srt nahi mila: ${srtFile}`);
   const cues = SUB.parseFile(srtFile);
   if (!cues.length) throw new Error('voiceover.srt khaali/parse-fail');
-  const total = cues[cues.length - 1].end;
+  // ---- AUDIO HI SACH HAI (M4.2.1) ----
+  //  Project ki lambai ab yahan, sabse pehle tay hoti hai — aur wahi lambai
+  //  timeline, gap plan, shot review aur render sab istemal karte hain.
+  //  Pehle ye sirf SRT ki aakhri cue thi, aur audio ka hisaab sirf mux ke waqt
+  //  lagta tha: isliye gap planner user se aisa media maangta tha jo baad mein
+  //  kaat diya jata.
+  const tb = spec.timebase || null;
+  const total = tb && tb.project_duration ? +Number(tb.project_duration).toFixed(3) : cues[cues.length - 1].end;
+  if (tb && tb.correction && tb.correction !== 'NONE' && tb.correction !== 'NO_AUDIO' && tb.reason) {
+    U.log(`   timebase: ${tb.reason}`);
+  }
 
   const A = cfg.align || {};
   const acc = A.acceptSimilarity ?? 0.92;
@@ -65,7 +75,7 @@ function align(spec, cfg, st) {
   }
 
   const aligned = [];
-  let okCount = 0, reviewCount = 0;
+  let okCount = 0, reviewCount = 0, clamped = 0;
   for (const m of moments) {
     const { best, runnerUp } = bestWindows(cues, m.script_cue_exact);
     let flag = 'OK';
@@ -75,11 +85,17 @@ function align(spec, cfg, st) {
       if (best.score < acc) flag = 'REVIEW';
       else if ((best.score - ruScore) < margin) flag = 'AMBIGUOUS';
     }
+    // project ki lambai se aage koi beat nahi ja sakti — warna gap planner
+    // aisi jagah ke liye media maangega jo final video mein hai hi nahi
+    let bs = best ? +best.start.toFixed(2) : null;
+    let be = best ? +best.end.toFixed(2) : null;
+    if (be != null && be > total) { be = +total.toFixed(2); clamped++; }
+    if (bs != null && bs >= total) { bs = null; be = null; flag = 'PAST_AUDIO_END'; }
     if (flag === 'OK') okCount++; else reviewCount++;
     aligned.push({
       ...m,
-      beat_start: best ? +best.start.toFixed(2) : null,
-      beat_end: best ? +best.end.toFixed(2) : null,
+      beat_start: bs,
+      beat_end: be,
       align_score: best ? best.score : 0,
       align_runnerup: runnerUp ? runnerUp.score : 0,
       align_flag: flag,
@@ -93,11 +109,12 @@ function align(spec, cfg, st) {
   const coveragePct = total ? Math.round(Math.min(100, covered / total * 100)) : 0;
 
   const outFile = U.p(id, 'aligned.json');
-  fs.writeFileSync(outFile, JSON.stringify({ total, coveragePct, moments: aligned }, null, 2));
+  fs.writeFileSync(outFile, JSON.stringify({ total, coveragePct, timebase: spec.timebase || null, moments: aligned }, null, 2));
 
   U.ok(`aligned ${aligned.length} moments — ${okCount} clean, ${reviewCount} review/ambiguous`);
   U.log(`   narration length ${total.toFixed(1)}s | moment-coverage ~${coveragePct}%`);
-  st.meta.align = { total: +total.toFixed(1), moments: aligned.length, clean: okCount, review: reviewCount, coveragePct };
+  if (clamped) U.log(`   ${clamped} beat project ki lambai (${total.toFixed(1)}s) par kaate gaye`);
+  st.meta.align = { total: +total.toFixed(1), moments: aligned.length, clean: okCount, review: reviewCount, coveragePct, clamped };
   return { total, moments: aligned };
 }
 

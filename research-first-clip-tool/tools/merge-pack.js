@@ -166,10 +166,32 @@ for (const sid of Object.keys(D.sources)) {
 // ---------- report ----------
 const after = count(base);
 line('-');
-console.log(`  locators : ${before.loc} -> ${after.loc}   (+${addedLoc})`);
-console.log(`  hints    : ${before.hints} -> ${after.hints}   (+${addedHints})`);
-console.log(`  moments  : ${before.withLoc} -> ${after.withLoc} par locator   (${touched} moments badle)`);
-console.log(`  sources  : ${addedHealth} par health info aayi`);
+// M4.2.1: teen alag-alag cheezein hain, inhe alag-alag hi likho. Pehle
+// "locators" aur "hints" ko log ek hi number samajh lete the.
+console.log(`  locators (EXACT_TIME/DIALOGUE) : ${before.loc} -> ${after.loc}   (+${addedLoc})`);
+console.log(`  frame hints (alag-alag frame)  : ${before.hints} -> ${after.hints}   (+${addedHints})`);
+console.log(`  moments par locator            : ${before.withLoc} -> ${after.withLoc}`);
+console.log(`  moments par frame hint         : ${before.withHints} -> ${after.withHints}`);
+console.log(`  moments badle                  : ${touched}`);
+console.log(`  sources par health info        : ${addedHealth}`);
+
+// ---- SABSE ZAROORI LINE: kuch KHOYA to nahi? ----
+//  Ye merge ek UNION hai. Kitna add hoga ye aapke abhi wale pack par depend
+//  karta hai — koi fix number (jaise "68 hona chahiye") maangna galat hai.
+//  Sirf do cheezein maayne rakhti hain: kuch ghata nahi, aur jo aaya wo
+//  validate hokar aaya.
+const lost = (before.loc > after.loc) || (before.hints > after.hints) ||
+  (before.withLoc > after.withLoc) || (before.withHints > after.withHints);
+console.log('');
+if (lost) {
+  console.log('  [RUKO] Kuch evidence GHAT gaya — ye merge nahi lagana chahiye.');
+  console.log('         output/pack-merge-report.json bhejo, ise dekhna padega.');
+} else if (addedLoc + addedHints + addedHealth === 0) {
+  console.log('  [KUCH NAYA NAHI] Donor mein aisa kuch nahi tha jo pack mein pehle se na ho.');
+  console.log('                   Ye bhi theek hai — pack pehle se poora hai.');
+} else {
+  console.log(`  [THEEK HAI] Kuch khoya nahi, aur ${addedLoc + addedHints} nayi validated cheezein aayi hain.`);
+}
 if (rejected.length) {
   console.log('');
   console.log(`  ${rejected.length} cheezein NAHI li gayi (ye jaan-boojh kar chhodi hain):`);
@@ -188,6 +210,9 @@ fs.writeFileSync(reportFile, JSON.stringify({
   base_file: path.basename(baseFile), donor_file: path.basename(donorFile),
   before, after, donor: donorC,
   added: { locators: addedLoc, frame_hints: addedHints, source_health: addedHealth, moments_touched: touched },
+  // acceptance ka asli sawal: kuch ghata to nahi, aur jo aaya wo validate hua?
+  verdict: { no_evidence_loss: !lost, positive_union: (addedLoc + addedHints + addedHealth) > 0,
+    note: 'Union hai — kitna badhega ye abhi wale pack par depend karta hai. Koi fix count expect mat karo.' },
   accepted, rejected,
   preserved: 'script_cue_exact aur criticality base se jaise the waise hi hain',
 }, null, 2));

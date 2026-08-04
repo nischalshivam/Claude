@@ -20,6 +20,7 @@ const U = require('./util.js');
 const SUB = require('./subtitles.js');
 const KF = require('./keyframes.js');
 const SCOPE = require('./scope.js');
+const TB = require('./timebase.js');
 
 module.exports = function timeline(spec, cfg, st, resolved, total) {
   const id = spec.id;
@@ -34,9 +35,13 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // nahi. Yaani "draft kabhi rukta nahi" asli critical pack par galat nikla.
   const production = (cfg.output && cfg.output.mode) !== 'review' && (cfg.output && cfg.output.mode) !== 'draft';
 
-  const cues = SUB.parseFile(spec.srt);
+  let cues = SUB.parseFile(spec.srt);
   if (!total) total = cues.length ? cues[cues.length - 1].end : 0;
   total = +total.toFixed(3);
+  // M4.2.1: shot boundaries bhi project ki asli lambai ke andar hi. Pehle SRT
+  // total se lambi ho sakti thi aur aakhri shot us waqt tak chala jata tha jo
+  // final video mein hai hi nahi.
+  cues = TB.clampCues(cues, total);
 
   // keyframe bank (already-downloaded approved sources se) — card-killer
   let bank = {};

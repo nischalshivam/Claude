@@ -18,6 +18,7 @@ const ROOT = path.resolve(__dirname, '..');
 const U = require(path.join(ROOT, 'src', 'util.js'));
 const manual = require(path.join(ROOT, 'src', 'manual.js'));
 const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
+const approval = require(path.join(ROOT, 'src', 'approval.js'));
 
 const DATA = path.join(ROOT, 'DATA');
 const PORT = Number((process.argv.find(a => a.startsWith('--port=')) || '').slice(7)) || 7801;
@@ -43,18 +44,19 @@ function startRun(args, label) {
 }
 
 // ---- upload target: request folder ke media/ ke ANDAR hi, kahin aur nahi ----
-function requestDir(rid) {
+function findRequest(rid) {
   if (!fs.existsSync(DATA)) return null;
   for (const n of fs.readdirSync(DATA)) {
     if (!/^MISSING_\d{3}__/.test(n)) continue;
     try {
       const r = JSON.parse(fs.readFileSync(path.join(DATA, n, 'request.json'), 'utf8'));
-      const key = r.request_key || ('REQ_' + String(r.request_id || '').split('__').pop());
-      if (r.request_id === rid || key === rid) return path.join(DATA, n);
+      const key = manual.requestKey(r);
+      if (r.request_id === rid || key === rid) return { dir: path.join(DATA, n), req: r, key };
     } catch {}
   }
   return null;
 }
+function requestDir(rid) { const h = findRequest(rid); return h ? h.dir : null; }
 // filename se har khatarnak cheez nikal do — koi ".." nahi, koi drive letter nahi
 function safeName(name) {
   const base = path.basename(String(name || '').replace(/\\/g, '/'));
@@ -75,22 +77,37 @@ function setOverride(rid, patch) {
   // STHIR key se store karo. Pehle ye request_id (jisme display number tha) se
   // hota tha — ek gap bharte hi baaki gaps ke number badal jate the aur unki
   // manzoori/settings "kisi aur" ki ban jati thi.
-  const dir = requestDir(rid);
-  let key = rid;
-  if (dir) {
-    try {
-      const r = JSON.parse(fs.readFileSync(path.join(dir, 'request.json'), 'utf8'));
-      key = r.request_key || ('REQ_' + String(r.request_id || rid).split('__').pop());
-    } catch {}
-  }
+  const hit = findRequest(rid);
+  const key = hit ? hit.key : rid;
   const ov = manual.readOverrides(DATA);
   ov.schema = 'manual-overrides-v2';
   ov.requests = ov.requests || [];
-  let e = ov.requests.find(r => (r.request_key || r.request_id) === key);
+  let e = ov.requests.find(r => manual.requestKey(r) === key);
   if (!e) { e = { request_key: key }; ov.requests.push(e); }
   e.request_key = key;
+  const approvedPatch = 'approved' in patch ? !!patch.approved : null;
+  delete patch.approved;                       // manzoori ab record hai, boolean nahi
   Object.assign(e, patch);
+  // purani (M4.2) file mein padi hui boolean ko peeche mat chhodo — warna
+  // overrides ek baat kehti rahegi aur approval record doosri
+  if (approvedPatch !== null) e.approved = approvedPatch;
   manual.writeOverrides(DATA, ov);
+
+  // ---- MANZOORI = RECORD (M4.2.1) ----
+  //  Tick lagte hi us waqt ka media/request/input fingerprint record ho jata
+  //  hai. Baad mein file badli to wahi record khud bata dega ki manzoori ab
+  //  valid nahi — purana boolean ye kabhi nahi bata paata tha.
+  if (approvedPatch !== null && hit) {
+    if (approvedPatch) {
+      const s = manual.scan(DATA, { cfg });
+      const sr = (s.requests || []).find(r => r.request_key === key);
+      if (sr && sr.files.length) approval.approve(DATA, key, { scanReq: sr, req: hit.req, source: 'UI' });
+    } else {
+      approval.revoke(DATA, key);
+      // sentinel file bhi hata do, warna agli scan par manzoori wapas aa jayegi
+      try { fs.rmSync(path.join(hit.dir, approval.SENTINEL), { force: true }); } catch {}
+    }
+  }
 }
 
 // ---------------- page ----------------
@@ -98,7 +115,14 @@ function page() {
   // EK HI SACH — wahi evaluator jo CLI aur production gate use karta hai.
   // Pehle UI "HYBRID READY 23/23" bol deti thi aur engine turant 16 CRITICAL
   // par ruk jata tha. Ab Final button wahi kehta hai jo gate karega.
-  const ev = readiness.evaluate(DATA, manual, cfg);
+  // draft bana hai ya nahi — "koi request nahi" ke do bilkul alag matlab hain
+  let draftExists = false;
+  try {
+    const jobs = path.join(ROOT, 'jobs');
+    draftExists = fs.readdirSync(jobs).some(j =>
+      ['gap-plan.json', 'draft.mp4', 'final.mp4'].some(f => fs.existsSync(path.join(jobs, j, f))));
+  } catch {}
+  const ev = readiness.evaluate(DATA, manual, cfg, { draftExists });
   const ready = ev.can_export;
   const state = ev.state;
   const STATE_TEXT = { ...readiness.HUMAN };
@@ -114,7 +138,9 @@ function page() {
     <input type="checkbox" class="approve-cb" ${r.approval_status === 'APPROVED' ? 'checked' : ''}>
     <span>Maine ye visual dekh liya hai aur is narration ke liye ise approve karta hoon</span>
   </label>
-  ${r.approval_status === 'PENDING' ? '<p class="why">Ye zaroori beat hai — bina aapke haan ke final video nahi banegi. (Chahein to folder mein APPROVE_MEDIA.txt bhi bana sakte ho.)</p>' : ''}` : '';
+  ${r.approval_status === 'EXPIRED' ? `<p class="why">Manzoori EXPIRE ho gayi — ${esc(r.approval_reason || 'media/input badla hai')}. Ek baar dekh kar dobara tick karo.</p>` : ''}
+  ${r.approval_status === 'PENDING' ? '<p class="why">Ye zaroori beat hai — bina aapke haan ke final video nahi banegi. (Chahein to folder mein APPROVE_MEDIA.txt bhi bana sakte ho.)</p>' : ''}
+  ${r.approval_status === 'APPROVED' && r.approved_at ? `<p class="t">approve kiya: ${esc(String(r.approved_at).replace('T', ' ').slice(0, 16))}</p>` : ''}` : '';
     const bad = r.invalid.map(b => `<li class="bad"><b>${esc(b.file)}</b> — ${esc(b.problem)}</li>`).join('');
     const searches = (q.search_queries || []).map(x =>
       `<a target="_blank" href="https://www.youtube.com/results?search_query=${encodeURIComponent(x)}">YouTube</a>
@@ -128,12 +154,13 @@ function page() {
   ${(q.must_show || []).length ? `<p class="ms">dikhna chahiye: ${esc(q.must_show.join(', '))}</p>` : ''}
   ${(q.must_not_show || []).length ? `<p class="mn">NAHI dikhna chahiye: ${esc(q.must_not_show.join(', '))}</p>` : ''}
   ${searches ? `<div class="search">${searches}</div>` : ''}
-  <div class="drop" data-rid="${esc(r.request_id)}">yahan files drag karo (ya click karke chuno)
+  <div class="drop" data-rid="${esc(r.request_key || r.request_id)}">yahan files drag karo (ya click karke chuno)
     <input type="file" multiple hidden></div>
   ${files || bad ? `<ul class="files">${files}${bad}</ul>` : '<p class="t">abhi koi file nahi</p>'}
   <label><input type="checkbox" class="reuse" ${r.allow_reuse ? 'checked' : ''}> media kam pade to files dobara istemal kar lo</label>
   ${approveBox}
   ${r.reasons.length ? `<p class="why">${esc(r.reasons.join(' · '))}</p>` : ''}
+  ${(r.notes || []).length ? `<p class="t">${esc(r.notes.join(' · '))}</p>` : ''}
   <p class="t">order badalna ho to file ke naam ke aage 01_, 02_, 03_ laga do</p>
 </div>`;
   }).join('\n');
@@ -147,6 +174,7 @@ h1{font-size:21px;margin:0 0 6px}h3{font-size:15px;margin:0 0 6px}
 .READY_FOR_CONTENT_REVIEW,.AUTO_READY{background:#12351d;color:#8ce99a;border:1px solid #2f9e44}
 .NEEDS_MEDIA,.NEEDS_MORE_MEDIA{background:#33280f;color:#ffd8a8;border:1px solid #e8590c}
 .NEEDS_CRITICAL_APPROVAL{background:#33161a;color:#ffc9c9;border:1px solid #c92a2a}
+.NO_DRAFT{background:#1b2230;color:#aab3c2;border:1px solid #39414f}
 .bar{display:flex;gap:9px;margin:14px 0;flex-wrap:wrap}
 button{background:#2b6cb0;color:#fff;border:0;padding:9px 15px;border-radius:7px;cursor:pointer;font-size:13.5px}
 button:disabled{background:#39414f;color:#8b95a5;cursor:not-allowed}

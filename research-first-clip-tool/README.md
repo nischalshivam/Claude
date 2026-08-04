@@ -1,4 +1,4 @@
-# Research-First Clip Tool — M4.2
+# Research-First Clip Tool — M4.2.1
 
 > **M3.3 mein sabse bada fix:** renderer ab jo SACH mein render hua wahi label
 > karta hai. Pehle planned asset ka file missing ho to shot chupchap generic text
@@ -335,6 +335,25 @@ khatam).
 
 ## 6. Changelog
 
+**M4.2.1 — final hardening: char jagah jahan "theek lag raha tha" par sach nahi tha**
+
+M4.2 ne sthir `request_key` bana di thi — par poore tool ne use nahi kiya.
+Ye release wahi baaki kaam hai, aur M5 editor iske contracts par khada hoga.
+
+| Kya toota tha | Ab |
+|---|---|
+| `scan()` sthir key se dekhta tha par `applyToTimeline()` abhi bhi `request_id` se — renumber hote hi dashboard "reuse on, 20s bhar gaya" bolta tha aur **renderer wahi setting dhoondh hi nahi paata tha** | `requestKey()` aur `overrideFor()` — ek hi jagah. scan, apply, fingerprint, approval, ordering, trim, reuse, UI aur provenance sab isi se. Har manual shot par `manual_request_key` + `manual_request_id` dono |
+| manzoori kisi cheez se **bandhi hui nahi thi** — file A approve karke usi naam se file B rakh do, purani "haan" chalti rehti thi | `DATA/manual-approvals.json` — har manzoori ke saath media, request aur input (pack/SRT/audio) ka fingerprint. Ek bhi badla to `EXPIRED`, aur `APPROVE_MEDIA.txt` ka naam `APPROVAL_EXPIRED.txt` ho jata hai (andar wajah likhi hoti hai) |
+| audio ka hisaab sirf **mux ke waqt** lagta tha — timeline 896.1s, gap plan 896.1s, final 894.7s. Yaani aapse 1.4s ka aisa media manga jata tha jo baad mein kat jata. Aur **30 second tak** ka farak chup-chaap kat sakta tha | `src/timebase.js` — `project_duration = audio` sabse pehle. Timeline, gap plan, review aur render sab usi ek number par. `<= 2s` apne aap clamp, `> 2s` par run **rukta hai** aur batata hai kya theek karna hai |
+| `render-manifest.json` mein `rendered: null, audio: null` — sabse zaroori do number hi gayab | `duration` block mein `audio`, `srt_end_before_clamp`, `timeline`, `rendered`, `correction`, `difference_sec` — sab asli file se |
+| M4.1 ne aapke **16 folder** `_ORPHANED` mein daal diye the. M4.2 ne dobara hona to roka, par purana kaam wapas nahi laya | `node tools/recover-orphaned-media.js --dry-run` / `--apply` — key → moments+range → narration similarity. Kabhi overwrite nahi, original kabhi delete nahi, `output/orphan-recovery-report.json` |
+| draft banne se **pehle** bhi "koi khaali jagah nahi — video automatic poori ban sakti hai" | `NO_DRAFT` aur `AUTO_READY` alag. Poora project-state enum (`NO_INPUTS` … `FINAL_READY`) `readiness.PROJECT_STATE` mein |
+| `UPDATE_TOOL.bat` `docs/` copy hi nahi karta tha, aur update ke baad sirf "HO GAYA" likh deta tha | `docs/` ab update aur backup dono mein. Update ke baad `tools/verify-update.js` sach check karta hai: version, zaroori files ke hash, aur aapka `input/DATA/jobs/config` bacha hai ya nahi |
+| `PADHO.txt` merge ke liye ek **fix number** maangta tha (`49 -> 68`) — wo galat tha, kyunki merge ek union hai | Ab sirf do baatein: **kuch khoya nahi** aur **positive union**. `merge-pack.js` khud `[THEEK HAI]` / `[RUKO]` likhta hai, aur locator / frame-hint / moments-with-hints teeno alag-alag ginta hai |
+
+Frozen backend contracts (M5 UI inpar bharosa kar sakta hai):
+`docs/M5_EDITOR_PLAN.md` → section 6.1
+
 **M4.2 — stability: wo bugs jo 897-second run ne pakde**
 
 Draft ban gayi (896s, 87% covered) — par teen cheezein aisi thi jo har baar
@@ -350,9 +369,9 @@ aapka kaam wapas mangwa deti:
 | audio 894.7s, timeline 896.1s — aakhir mein 1.4s ka khaali silence | audio hi aakhri sach hai; timeline usi par kat jati hai |
 
 **Aur ek galti jo maine ki thi:** pichhle ZIP ka `reference-pack` galat file thi
-(49 locators, 68 nahi) — us se wo merge ho hi nahi sakta tha jo maine kaha tha.
-Wo file hata di. Ab `reference-pack/PADHO.txt` aapko **aapke apne M3.6.1 folder**
-se merge karna batata hai, jahan asli 68-locator pack hai.
+— us se wo merge ho hi nahi sakta tha jo maine kaha tha. Wo file hata di. Ab
+`reference-pack/PADHO.txt` aapko **aapke apne M3.6.1 folder** se merge karna
+batata hai, aur koi fix count nahi maangta (M4.2.1).
 
 Aage ka poora plan (editor, timeline, templates): `docs/M5_EDITOR_PLAN.md`
 

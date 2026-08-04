@@ -350,7 +350,7 @@ module.exports = function render(spec, cfg, st, tl) {
       video: s.video || null, media_file: s.media_file || null, media_start: s.media_start != null ? s.media_start : null,
       why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused,
       // manual provenance — kaunsi file, kis request se, kis hash ki
-      manual: !!s.manual, manual_request_id: s.manual_request_id || null,
+      manual: !!s.manual, manual_request_key: s.manual_request_key || null, manual_request_id: s.manual_request_id || null,
       manual_sha256: s.manual_sha256 || null, manual_file: s.manual_file || null,
       missing_label: s.missing_label || null });
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
@@ -379,6 +379,20 @@ module.exports = function render(spec, cfg, st, tl) {
   const finalOut = U.p(id, outName);
   const audio = spec.audio;
   const vdur = U.probe(master).duration || tl.total;
+  // ---- DURATION KA POORA HISAAB (M4.2.1) ----
+  //  Pehle manifest mein `rendered: null, audio: null` likha jata tha — yaani
+  //  sabse zaroori do number hi gayab the. Ab har number asli file se aata hai.
+  const tb = spec.timebase || {};
+  const durInfo = {
+    audio: tb.audio_duration != null ? tb.audio_duration : null,
+    srt_end_before_clamp: tb.srt_end != null ? tb.srt_end : null,
+    timeline: +(tl.total || 0).toFixed(3),
+    rendered: null,
+    target: null,
+    correction: tb.correction || 'NONE',
+    difference_sec: tb.difference_sec != null ? tb.difference_sec : null,
+    tolerance_sec: Number((cfg.render && cfg.render.audioClampSeconds) != null ? cfg.render.audioClampSeconds : 2.0),
+  };
   if (audio && fs.existsSync(audio)) {
     // ---- TIMELINE hi authoritative hai (M2.1 fix) ----
     // Purana bug: target = max(video, POORA audio). Preview mein video 122s tha
@@ -389,20 +403,40 @@ module.exports = function render(spec, cfg, st, tl) {
     const offset = spec.previewOffset || 0;
     const adurRaw = U.probe(audio).duration || 0;
     const audioAvail = Math.max(0, adurRaw - offset);
-    // ---- AUDIO HI AAKHRI SACH HAI (M4.2) ----
-    //  Asli run: audio 894.7s, timeline 896.1s — video ke aakhir mein 1.4s ka
-    //  khaali silence. Narration hi asli video hai; SRT sirf uska naksha hai
-    //  aur usme thoda aage-peeche ho sakta hai. Isliye jab timeline audio se
-    //  thodi lambi nikle, use audio par KAAT dete hain — aakhri shot chhota
-    //  ho jata hai, khaali silence kabhi nahi bachta.
+    // ---- AUDIO HI AAKHRI SACH HAI (M4.2.1) ----
+    //  Ab ye faisla UPAR (src/timebase.js) ho chuka hota hai: project ki lambai
+    //  audio se aati hai, aur timeline/gap-plan/shot-review sab usi par bane
+    //  hote hain. Isliye yahan kuch bacha hi nahi hona chahiye.
+    //  Jo thoda-bahut bache (rounding, concat ka +1 frame) wo hi kaatte hain.
+    //
+    //  M4.2 mein yahan 30 SECOND tak chup-chaap kata ja sakta tha. 30 second
+    //  ka matlab "chhoti si tail" nahi hota — wo adhoora voiceover ho sakta hai.
+    //  Ab utna farak upar hi RUK jata hai; yahan sirf <= clamp tak ki chhoot hai.
     let target = +vdur.toFixed(3);
+    const clampMax = Number((cfg.render && cfg.render.audioClampSeconds) != null ? cfg.render.audioClampSeconds : 2.0);
     const tol = (cfg.render && cfg.render.audioToleranceSeconds) || 0.5;
-    if (!offset && audioAvail > 1 && target > audioAvail + 0.02 && (target - audioAvail) <= 30) {
-      U.log(`   timeline ${target.toFixed(1)}s thi, voiceover ${audioAvail.toFixed(1)}s — video ko audio par kaat diya (${(target - audioAvail).toFixed(1)}s ka silence nahi aayega).`);
-      target = +audioAvail.toFixed(3);
+    if (!offset && audioAvail > 1 && target > audioAvail + 0.02) {
+      const over = target - audioAvail;
+      if (over <= clampMax) {
+        U.log(`   timeline ${target.toFixed(1)}s thi, voiceover ${audioAvail.toFixed(1)}s — video ko audio par kaat diya (${over.toFixed(1)}s ka silence nahi aayega).`);
+        target = +audioAvail.toFixed(3);
+        // upstream `correction` ko yahan overwrite mat karo — wo alag baat hai.
+        // Ye sirf rounding/concat ka aakhri hissa hai.
+        durInfo.mux_correction = 'CLAMPED_AT_MUX'; durInfo.mux_clamp_sec = +over.toFixed(3);
+      } else if (mode === 'production') {
+        throw new Error(`timeline ${target.toFixed(1)}s hai par voiceover sirf ${audioAvail.toFixed(1)}s — ${over.toFixed(1)}s ka farak chup-chaap nahi kaat sakta.\n` +
+          `   Pehle voiceover/SRT theek karo (ya config.json -> render.audioClampSeconds badhao).`);
+      } else {
+        U.warn(`timeline ${target.toFixed(1)}s vs voiceover ${audioAvail.toFixed(1)}s — ${over.toFixed(1)}s ka farak hai. Draft ban rahi hai, par final se pehle ise theek karo.`);
+      }
     } else if (!offset && Math.abs(audioAvail - target) > tol) {
       U.warn(`voiceover ${audioAvail.toFixed(1)}s aur timeline ${target.toFixed(1)}s mein ${Math.abs(audioAvail - target).toFixed(1)}s ka farak hai — dekh lena.`);
     }
+    // `audio` = poori voiceover file (timebase se). `audio_available` = is run
+    // ke liye bacha hua hissa — preview mein offset ke baad ye chhota hota hai.
+    if (durInfo.audio == null) durInfo.audio = +adurRaw.toFixed(3);
+    durInfo.audio_available = +audioAvail.toFixed(3);
+    durInfo.target = target;
     // PREVIEW mein audio poori hoti hai par timeline sirf window jitni — ye
     // normal hai, galti nahi. Isliye preview par ye ek saaf INFO line hai;
     // sirf FULL run mein hi ye asli mismatch ka ishara hai.
@@ -423,17 +457,32 @@ module.exports = function render(spec, cfg, st, tl) {
     throw new Error('voiceover audio nahi mila. Production render ke liye audio zaroori (ya config.render.allowSilent=true test ke liye).');
   }
 
+  const pr = U.probe(finalOut);
+  durInfo.rendered = pr.ok && pr.duration ? +pr.duration.toFixed(3) : null;
+
+  // ---- FINAL GATE: bani hui video aur voiceover ek hi lambai ke hon ----
+  //  Ye sirf poore (non-preview) production export par lagta hai. Draft ko
+  //  kabhi nahi rokta — draft ka kaam kami dikhana hai, rukna nahi.
+  if (mode === 'production' && !spec.isPreview && durInfo.rendered != null && durInfo.audio_available != null) {
+    const off = +(durInfo.rendered - durInfo.audio_available).toFixed(3);
+    durInfo.rendered_vs_audio_sec = off;
+    const okTol = Math.max(0.5, (cfg.render && cfg.render.audioToleranceSeconds) || 0.5);
+    if (Math.abs(off) > okTol) {
+      throw new Error(`final.mp4 ${durInfo.rendered.toFixed(2)}s ki bani par voiceover ${durInfo.audio.toFixed(2)}s ka hai (${off.toFixed(2)}s ka farak).\n` +
+        '   Ye chup-chaap nahi jaane dena chahiye — jobs/<id>/render-manifest.json mein duration block dekho.');
+    }
+  }
+
   fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({
     total: tl.total, mode, is_draft: mode === 'draft',
-    // teeno alag-alag likhe hue — taaki baad mein sawal na rahe
-    duration: { timeline: +(tl.total || 0).toFixed(3), rendered: null, audio: null },
+    // har number asli file se — koi null nahi, koi andaza nahi
+    duration: durInfo,
     // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
     // waqt chahiye, isliye offset yahin likh dete hain.
     preview_offset: spec.previewOffset || 0,
     missing_placeholders: missingSlots,
     shots: manifest,
   }, null, 2));
-  const pr = U.probe(finalOut);
   U.ok(`render: ${outName} (${n} segments${missingNo ? ', ' + missingNo + ' MISSING placeholder' : ''}${failed && !missingNo ? ', ' + failed + ' fallback' : ''}, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
   if (missingNo) {
     U.log(`   ${missingNo} jagah placeholder laga hai — ye draft hai, final nahi.`);

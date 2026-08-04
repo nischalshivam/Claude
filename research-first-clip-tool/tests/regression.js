@@ -1744,6 +1744,361 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
   })();
 })();
 
+// ============================================================
+//  T-M421x — M4.2.1 FINAL HARDENING
+//  Ye teen cheezein test karte hain jo M4.2 mein reh gayi thi:
+//    P0-A  stable key POORE tool mein (sirf scan mein nahi)
+//    P0-B  manzoori media aur inputs se BANDHI hui
+//    P0-C  audio hi timebase — gap plan se PEHLE, sirf mux par nahi
+//    P0-D  purana orphan media wapas
+//    P1-G  NO_DRAFT aur AUTO_READY alag cheezein hain
+// ============================================================
+(() => {
+  const manual = require(path.join(ROOT, 'src', 'manual.js'));
+  const approval = require(path.join(ROOT, 'src', 'approval.js'));
+  const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
+  const gapplan = require(path.join(ROOT, 'src', 'gapplan.js'));
+  const timebase = require(path.join(ROOT, 'src', 'timebase.js'));
+  const cfgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+
+  const cues = [];
+  for (let i = 0; i < 24; i++) cues.push({ start: i * 5, end: i * 5 + 5, text: `narration line number ${i} here` });
+  const packIndex = { P1: { scope: { kind: 'SERIES', title: 'Show X' } } };
+  // badIdx = jin shots par kuch nahi mila; crit = kis shot par kaunsi criticality
+  const mkPlan = (badIdx, crit = {}, fp = { pack_sha256: 'p', srt_sha256: 's', audio_signature: 'a' }) => {
+    const shots = [];
+    for (let i = 0; i < 20; i++) {
+      shots.push({ i, start: i * 5, end: i * 5 + 5, moment_id: `M${i}`, pack_id: 'P1', cue: cues[i].text,
+        criticality: crit[i] || 'NORMAL',
+        asset: badIdx.includes(i) ? 'GENERIC_TEXT_GRAPHIC' : 'EXACT_VIDEO' });
+    }
+    return gapplan.plan({ manifest: { preview_offset: 0, shots }, resolved: [], cues, packIndex,
+      fingerprint: fp, projectId: 'hard', cfg: {} });
+  };
+  const tmpData = n => { const p = path.join(ROOT, 'tests', 'tmp', `${n}_${process.pid}`); fs.rmSync(p, { recursive: true, force: true }); return p; };
+  const img = (p, c) => ff(['-f', 'lavfi', '-i', `color=c=${c}:s=640x360:d=1`, '-frames:v', '1', p]);
+  const folderAt = (dd, mm) => fs.readdirSync(dd).find(n => new RegExp(`__${mm}`).test(n));
+  const reqAt = (dd, mm) => JSON.parse(fs.readFileSync(path.join(dd, folderAt(dd, mm), 'request.json'), 'utf8'));
+
+  // ---------------- P0-A ----------------
+
+  // (1) renumber ke baad bhi UI ki reuse setting RENDERER tak pahunche
+  (() => {
+    const dd = tmpData('data_key1');
+    // teen gap: 5s, 25s, 45s. Teesre par 20s ka bada gap chahiye -> 45..65
+    const p1 = gapplan.plan({ manifest: { preview_offset: 0, shots: (() => {
+      const s = []; for (let i = 0; i < 20; i++) s.push({ i, start: i * 5, end: i * 5 + 5, moment_id: `M${i}`, pack_id: 'P1',
+        cue: cues[i].text, criticality: 'NORMAL', asset: [1, 5, 9, 10, 11, 12].includes(i) ? 'GENERIC_TEXT_GRAPHIC' : 'EXACT_VIDEO' }); return s; })() },
+      resolved: [], cues, packIndex, fingerprint: { pack_sha256: 'p', srt_sha256: 's' }, projectId: 'hard', cfg: {} });
+    gapplan.writeDataFolders(dd, p1);
+    // teesra gap = 45s se 65s (20 second). Do file — par user ne UI mein ULTA
+    // order chuna hai (zzz pehle). Yahi asli discriminator hai: scan to M4.2
+    // mein bhi sthir key se dekh leta tha, GALTI applyToTimeline mein thi.
+    const big = folderAt(dd, '00m45s');
+    const bigKey = manual.requestKey(reqAt(dd, '00m45s'));
+    img(path.join(dd, big, 'media', 'aaa.jpg'), '0x1E90FF');
+    img(path.join(dd, big, 'media', 'zzz.jpg'), '0x228B22');
+    // pehla gap bhi bhar do (taaki renumber ho)
+    img(path.join(dd, folderAt(dd, '00m05s'), 'media', '01_a.jpg'), '0x228B22');
+    // UI ki tarah: STHIR KEY se override likho
+    manual.writeOverrides(dd, { schema: 'manual-overrides-v2', requests: [{ request_key: bigKey,
+      allow_reuse: true, files: [{ relative_path: 'zzz.jpg', order: 1 }, { relative_path: 'aaa.jpg', order: 2 }] }] });
+
+    // ab renumber: pehla gap bhar gaya
+    const p2 = gapplan.plan({ manifest: { preview_offset: 0, shots: (() => {
+      const s = []; for (let i = 0; i < 20; i++) s.push({ i, start: i * 5, end: i * 5 + 5, moment_id: `M${i}`, pack_id: 'P1',
+        cue: cues[i].text, criticality: 'NORMAL', asset: [5, 9, 10, 11, 12].includes(i) ? 'GENERIC_TEXT_GRAPHIC' : 'EXACT_VIDEO' }); return s; })() },
+      resolved: [], cues, packIndex, fingerprint: { pack_sha256: 'p', srt_sha256: 's' }, projectId: 'hard', cfg: {} });
+    gapplan.writeDataFolders(dd, p2);
+
+    const sc = manual.scan(dd, { cfg: cfgJson });
+    const scanned = sc.requests.find(r => r.request_key === bigKey);
+    // renderer ka raasta: applyToTimeline
+    const tl = { total: 100, preview_offset: 0, slots: (() => { const s = []; for (let i = 0; i < 20; i++)
+      s.push({ i, start: i * 5, end: i * 5 + 5, kind: 'graphic', asset: 'GENERIC_TEXT_GRAPHIC' }); return s; })() };
+    const ap = manual.applyToTimeline(tl, dd, cfgJson);
+    const mine = ap.tl.slots.filter(s => s.manual_request_key === bigKey);
+    const firstFile = mine.length ? path.basename(mine[0].image || mine[0].media_file || '') : '';
+    check('T-M4211 a stable-key override reaches the renderer after renumbering (dashboard and render agree)',
+      !!scanned && scanned.allow_reuse === true && scanned.status === 'READY' && scanned.short_seconds === 0
+        && mine.length >= 4 && Math.abs(mine.reduce((a, s) => a + (s.end - s.start), 0) - 20) < 0.1
+        && firstFile === 'zzz.jpg',                       // <- ye sirf tab sahi hai jab override MILA ho
+      `scanReuse=${scanned && scanned.allow_reuse} status=${scanned && scanned.status} short=${scanned && scanned.short_seconds} appliedShots=${mine.length} firstApplied=${firstFile}`);
+
+    // (2) har manual shot par DONO pehchaan
+    check('T-M4212 every manual shot carries both the stable key and the display id',
+      mine.length > 0 && mine.every(s => /^REQ_/.test(s.manual_request_key || '') && /^MISSING_\d{3}__/.test(s.manual_request_id || '')),
+      `sample=${JSON.stringify(mine[0] && { k: mine[0].manual_request_key, i: mine[0].manual_request_id })}`);
+
+    // (3) fingerprint sirf display number badalne se na badle
+    //  Iske liye set ka badalna zaroori NAHI hona chahiye — isliye beech wala
+    //  gap bhi bhar dete hain. Ab agle plan mein sirf NUMBER badlega.
+    img(path.join(dd, folderAt(dd, '00m25s'), 'media', '01_b.jpg'), '0xC81E1E');
+    const fpA = manual.fingerprint(dd);
+    const p3 = gapplan.plan({ manifest: { preview_offset: 0, shots: (() => {
+      const s = []; for (let i = 0; i < 20; i++) s.push({ i, start: i * 5, end: i * 5 + 5, moment_id: `M${i}`, pack_id: 'P1',
+        cue: cues[i].text, criticality: 'NORMAL', asset: [9, 10, 11, 12].includes(i) ? 'GENERIC_TEXT_GRAPHIC' : 'EXACT_VIDEO' }); return s; })() },
+      resolved: [], cues, packIndex, fingerprint: { pack_sha256: 'p', srt_sha256: 's' }, projectId: 'hard', cfg: {} });
+    gapplan.writeDataFolders(dd, p3);          // ab wahi gap MISSING 001 ban gaya
+    const fpB = manual.fingerprint(dd);
+    // ...par media/trim/reuse badalne par ZAROOR badle
+    img(path.join(dd, folderAt(dd, '00m45s'), 'media', '02_new.jpg'), '0xFF8C00');
+    const fpC = manual.fingerprint(dd);
+    check('T-M4213 the manual fingerprint ignores display renumbering but never ignores real media changes',
+      fpA === fpB && fpC !== fpB, `renumber=${fpA === fpB} mediaChange=${fpC !== fpB}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+
+  // (4) UI ka file-order/trim override renumber ke baad bhi zinda rahe
+  (() => {
+    const dd = tmpData('data_key2');
+    const p1 = mkPlan([1, 5]);
+    gapplan.writeDataFolders(dd, p1);
+    const key = manual.requestKey(reqAt(dd, '00m25s'));
+    const dir = path.join(dd, folderAt(dd, '00m25s'));
+    img(path.join(dir, 'media', 'aaa.jpg'), '0x1E90FF');
+    img(path.join(dir, 'media', 'zzz.jpg'), '0x228B22');
+    manual.writeOverrides(dd, { schema: 'manual-overrides-v2', requests: [{ request_key: key, files: [
+      { relative_path: 'zzz.jpg', order: 1 }, { relative_path: 'aaa.jpg', order: 2 }] }] });
+    gapplan.writeDataFolders(dd, mkPlan([5]));   // renumber
+    const sc = manual.scan(dd, { cfg: cfgJson }).requests.find(r => r.request_key === key);
+    check('T-M4214 a stable-key file order survives renumbering (the user-chosen first file stays first)',
+      sc && sc.files.length === 2 && sc.files[0].file === 'zzz.jpg',
+      `order=${sc ? sc.files.map(f => f.file).join() : 'none'}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+
+  // ---------------- P0-B ----------------
+  (() => {
+    const dd = tmpData('data_appr');
+    const plan = mkPlan([3, 7], { 3: 'HARD_EVIDENCE', 7: 'HOOK' });
+    gapplan.writeDataFolders(dd, plan);
+    const dirs = fs.readdirSync(dd).filter(n => /^MISSING_/.test(n));
+    for (const n of dirs) {
+      img(path.join(dd, n, 'media', '01_a.jpg'), '0x228B22');
+      img(path.join(dd, n, 'media', '02_b.jpg'), '0xFF8C00');
+    }
+    const critDir = path.join(dd, folderAt(dd, '00m15s'));
+    const critKey = manual.requestKey(reqAt(dd, '00m15s'));
+
+    // sentinel se approve
+    for (const n of dirs) fs.writeFileSync(path.join(dd, n, 'APPROVE_MEDIA.txt'), 'haan\n');
+    const ev1 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const rec = approval.recordFor(approval.read(dd), critKey);
+    check('T-M4215 an APPROVE_MEDIA.txt confirmation is materialised into a fingerprinted approval record',
+      ev1.state === 'READY_FOR_CONTENT_REVIEW' && ev1.can_export === true
+        && rec && rec.approved === true && !!rec.media_fingerprint && !!rec.request_fingerprint
+        && !!rec.approved_at && !!(rec.input_fingerprint || {}).pack_sha256,
+      `state=${ev1.state} rec=${rec ? Object.keys(rec).join(',') : 'none'}`);
+
+    // (1) same filename, alag bytes -> manzoori khatam
+    img(path.join(critDir, 'media', '01_a.jpg'), '0xC81E1E');
+    const ev2 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const r2 = ev2.requests.find(r => r.request_key === critKey);
+    const sentinelGone = !fs.existsSync(path.join(critDir, 'APPROVE_MEDIA.txt'))
+      && fs.existsSync(path.join(critDir, 'APPROVAL_EXPIRED.txt'));
+    check('T-M4216 replacing the bytes of an approved file under the same name invalidates the approval',
+      r2 && r2.approval_status === 'EXPIRED' && ev2.can_export === false && sentinelGone,
+      `status=${r2 && r2.approval_status} canExport=${ev2.can_export} sentinelRenamed=${sentinelGone}`);
+
+    // (2) purani APPROVE_MEDIA.txt padi rehne se manzoori WAPAS na aaye
+    const ev2b = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    check('T-M4217 an expired approval never silently comes back on the next scan',
+      ev2b.requests.find(r => r.request_key === critKey).approval_status === 'EXPIRED' && ev2b.can_export === false,
+      `status=${ev2b.requests.find(r => r.request_key === critKey).approval_status}`);
+
+    // (3) nayi confirmation par wapas approved
+    fs.writeFileSync(path.join(critDir, 'APPROVE_MEDIA.txt'), 'dobara dekh liya, haan\n');
+    const ev3 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    check('T-M4218 a fresh confirmation after reviewing the new media restores approval',
+      ev3.requests.find(r => r.request_key === critKey).approval_status === 'APPROVED' && ev3.can_export === true,
+      `state=${ev3.state}`);
+
+    // (4) file add karne par bhi manzoori khatam (kya dikhega wo badal gaya)
+    img(path.join(critDir, 'media', '03_c.jpg'), '0x2850C8');
+    const ev4 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    check('T-M4219 adding another file to an approved critical request invalidates the approval',
+      ev4.requests.find(r => r.request_key === critKey).approval_status === 'EXPIRED',
+      `status=${ev4.requests.find(r => r.request_key === critKey).approval_status}`);
+
+    // (5) sirf display number/folder badalne se manzoori NA mare
+    fs.rmSync(path.join(critDir, 'media', '03_c.jpg'), { force: true });
+    fs.writeFileSync(path.join(critDir, 'APPROVE_MEDIA.txt'), 'phir se haan\n');
+    readiness.evaluate(dd, manual, cfgJson, { draftExists: true });        // record refresh
+    gapplan.writeDataFolders(dd, mkPlan([3], { 3: 'HARD_EVIDENCE' }));      // 7 bhar gaya -> renumber
+    const ev5 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const r5 = ev5.requests.find(r => r.request_key === critKey);
+    check('T-M42110 renaming only the display folder/label keeps a valid approval alive',
+      r5 && r5.approval_status === 'APPROVED' && /MISSING 001/.test(r5.label || ''),
+      `status=${r5 && r5.approval_status} label=${r5 && r5.label}`);
+
+    // (6) pack/SRT/audio badalne par manzoori khatam
+    gapplan.writeDataFolders(dd, mkPlan([3], { 3: 'HARD_EVIDENCE' },
+      { pack_sha256: 'p2', srt_sha256: 's', audio_signature: 'a' }));
+    const ev6 = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const r6 = ev6.requests.find(r => r.request_key === critKey);
+    check('T-M42111 changing the pack, SRT or voiceover expires an existing critical approval',
+      r6 && r6.approval_status === 'EXPIRED' && ev6.can_export === false,
+      `status=${r6 && r6.approval_status}`);
+
+    // (7) manzoori wapas lene par render_sig badle — purani SUCCESS reuse na ho
+    fs.writeFileSync(path.join(critDir, 'APPROVE_MEDIA.txt'), 'haan\n');
+    readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const sigApproved = manual.fingerprint(dd);
+    approval.revoke(dd, critKey);
+    try { fs.rmSync(path.join(critDir, 'APPROVE_MEDIA.txt'), { force: true }); } catch {}
+    const sigRevoked = manual.fingerprint(dd);
+    check('T-M42112 revoking an approval changes the render signature (no stale success is reused)',
+      sigApproved !== sigRevoked, `same=${sigApproved === sigRevoked}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+
+  // ---------------- P0-C ----------------
+  (() => {
+    const d = path.join(FX, 'm421tb');
+    fs.mkdirSync(d, { recursive: true });
+    const srtFile = path.join(d, 'v.srt');
+    const mkSrt = end => fs.writeFileSync(srtFile,
+      `1\n${srtTime(0)} --> ${srtTime(5)}\nfirst line here\n\n2\n${srtTime(5)} --> ${srtTime(end)}\nsecond line here\n`);
+    const mkAudio = sec => { const f = path.join(d, `a_${sec}.m4a`);
+      ff(['-f', 'lavfi', '-i', `sine=frequency=220:duration=${sec}`, '-c:a', 'aac', f]); return f; };
+    const a20 = mkAudio(20);
+
+    mkSrt(21.4);                                     // 1.4s ki tail
+    const t1 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
+    mkSrt(30);                                       // 10s ka farak
+    const t2 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
+    mkSrt(12);                                       // audio SRT se ~8s lamba
+    const t3 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
+
+    check('T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut',
+      t1.ok === true && t1.correction === 'CLAMPED_SRT_TAIL' && Math.abs(t1.project_duration - t1.audio_duration) < 0.01
+        && t2.ok === false && t2.correction === 'SRT_LONGER_THAN_AUDIO'
+        && t3.ok === false && t3.correction === 'AUDIO_LONGER_THAN_SRT',
+      `tail=${t1.correction}/${t1.ok} short=${t2.correction}/${t2.ok} long=${t3.correction}/${t3.ok}`);
+
+    // clamp ke baad cue project ki lambai se aage na jaye
+    mkSrt(21.4);
+    const SUB = require(path.join(ROOT, 'src', 'subtitles.js'));
+    const clamped = timebase.clampCues(SUB.parseFile(srtFile), t1.project_duration);
+    check('T-M42114 clamped cues never extend past the real project duration',
+      clamped.length === 2 && clamped[clamped.length - 1].end <= t1.project_duration + 0.001,
+      `lastEnd=${clamped[clamped.length - 1].end} project=${t1.project_duration}`);
+    fs.rmSync(d, { recursive: true, force: true });
+  })();
+
+  // asli run: timeline, gap plan aur final — teeno ek hi lambai par
+  (() => {
+    const d = path.join(FX, 'm421run');
+    fs.mkdirSync(d, { recursive: true });
+    // audio 18s, par SRT 19.4s tak (1.4s ki wahi tail jo asli run mein thi)
+    fs.writeFileSync(path.join(d, 'voiceover.srt'), [
+      { start: 0, end: 6, text: 'The alarm rings across the base.' },
+      { start: 6, end: 12, text: 'She opens the sealed hatch slowly.' },
+      { start: 12, end: 19.4, text: 'They meet on the rooftop at night.' },
+    ].map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`).join('\n'));
+    ff(['-f', 'lavfi', '-i', 'sine=frequency=220:duration=18', '-c:a', 'aac', path.join(d, 'voiceover.m4a')]);
+    writePack(d, { schema_version: 'scene-research-pack-v1', project_title: 'TB1', packs: [
+      { pack_id: 'T1', scope: { kind: 'SERIES', title: 'Show T', year: 2011, season: 1, episode_number: 1 },
+        sources: [{ source_id: 'TS', local_file: good.video, local_subs: good.srt, inspection_status: 'VERIFIED_WATCHED' }],
+        moments: [{ moment_id: 'T_M1', script_cue_exact: 'The alarm rings across the base.', criticality: 'NORMAL',
+          locators: [{ source_id: 'TS', locator_type: 'EXACT_TIME', start_sec: 2, end_sec: 8, confidence: 'HIGH' }], fallback: { type: 'NEEDS_SOURCE' } }] },
+      { pack_id: 'T2', scope: { kind: 'FILM', title: 'No Upload Film', year: 2020 }, sources: [],
+        moments: [
+          { moment_id: 'T_M2', script_cue_exact: 'She opens the sealed hatch slowly.', criticality: 'NORMAL', locators: [], fallback: { type: 'NEEDS_SOURCE' } },
+          { moment_id: 'T_M3', script_cue_exact: 'They meet on the rooftop at night.', criticality: 'NORMAL', locators: [], fallback: { type: 'NEEDS_SOURCE' } }] },
+    ] });
+    const dataDir = tmpData('data_tb');
+    const env = { ...process.env, RFC_DATA_DIR: dataDir, RFC_JOBS_DIR: JOBS };
+    const r = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m421tb', '--redo', '--diagnostic-override', '--draft'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 900000, env });
+    const jdir = path.join(JOBS, 'reg_m421tb');
+    let tl = null, gp = null, man = null;
+    try { tl = JSON.parse(fs.readFileSync(path.join(jdir, 'timeline.json'), 'utf8')); } catch {}
+    try { gp = JSON.parse(fs.readFileSync(path.join(jdir, 'gap-plan.json'), 'utf8')); } catch {}
+    try { man = JSON.parse(fs.readFileSync(path.join(jdir, 'render-manifest.json'), 'utf8')); } catch {}
+    const realDur = dur(path.join(jdir, 'draft.mp4'));
+    const gapEnd = gp ? Math.max(...gp.requests.map(x => x.range.end_sec)) : 0;
+    check('T-M42115 timeline, gap plan, manifest and the rendered file all agree on one audio-derived duration',
+      r.status === 0 && tl && Math.abs(tl.total - 18) < 0.05 && gapEnd <= 18.001
+        && man && Math.abs(realDur - 18) < 0.35,
+      `exit=${r.status} timeline=${tl && tl.total} gapEnd=${gapEnd} rendered=${realDur.toFixed(2)}`);
+
+    check('T-M42116 the render manifest records real audio/srt/timeline/rendered durations, never null',
+      man && man.duration && man.duration.audio != null && man.duration.srt_end_before_clamp != null
+        && man.duration.timeline != null && man.duration.rendered != null
+        && man.duration.correction === 'CLAMPED_SRT_TAIL'
+        && Math.abs(man.duration.srt_end_before_clamp - 19.4) < 0.05
+        && Math.abs(man.duration.difference_sec - 1.4) < 0.05,
+      `duration=${man && JSON.stringify(man.duration)}`);
+
+    // 10s chhota audio -> export BLOCK, chup-chaap kaat-chhaant nahi
+    ff(['-f', 'lavfi', '-i', 'sine=frequency=220:duration=8', '-c:a', 'aac', path.join(d, 'voiceover.m4a')]);
+    const r2 = spawnSync('node', ['src/run.js', `--input=${d}`, '--job=reg_m421tb2', '--redo', '--diagnostic-override', '--draft'],
+      { cwd: ROOT, encoding: 'utf8', timeout: 900000, env });
+    const out2 = (r2.stdout || '') + (r2.stderr || '');
+    check('T-M42117 an 11s shorter voiceover blocks the run with an explanation instead of cutting narration',
+      r2.status === 3 && /AUDIO_TIMEBASE_MISMATCH|farak/.test(out2) && !fs.existsSync(path.join(JOBS, 'reg_m421tb2', 'draft.mp4')),
+      `exit=${r2.status}`);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true });
+  })();
+
+  // ---------------- P0-D ----------------
+  (() => {
+    const dd = tmpData('data_orph');
+    const plan = mkPlan([1, 5]);
+    gapplan.writeDataFolders(dd, plan);
+    const keep = folderAt(dd, '00m05s');
+    const keepKey = manual.requestKey(reqAt(dd, '00m05s'));
+    // M4.1 wala nuksaan haath se banao: folder ko media samet _ORPHANED mein daal do
+    const stamp = path.join(dd, '_ORPHANED', '2025-01-01T00-00-00-000Z');
+    fs.mkdirSync(stamp, { recursive: true });
+    img(path.join(dd, keep, 'media', '01_mine.jpg'), '0x1E90FF');
+    fs.renameSync(path.join(dd, keep), path.join(stamp, keep));
+    // wahi gap phir se plan mein aata hai (kyunki media to chala gaya)
+    gapplan.writeDataFolders(dd, mkPlan([1, 5]));
+
+    const dry = spawnSync('node', ['tools/recover-orphaned-media.js', '--dry-run', `--data=${dd}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const afterDry = fs.existsSync(path.join(dd, folderAt(dd, '00m05s'), 'media', '01_mine.jpg'));
+    const app = spawnSync('node', ['tools/recover-orphaned-media.js', '--apply', `--data=${dd}`],
+      { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const back = fs.existsSync(path.join(dd, folderAt(dd, '00m05s'), 'media', '01_mine.jpg'));
+    const stillSafe = fs.existsSync(path.join(stamp, keep, 'media', '01_mine.jpg'));
+    let rep = null; try { rep = JSON.parse(fs.readFileSync(path.join(ROOT, 'output', 'orphan-recovery-report.json'), 'utf8')); } catch {}
+    check('T-M42118 orphaned media is matched by stable key and copied back, with the original left untouched',
+      dry.status === 0 && afterDry === false && app.status === 0 && back === true && stillSafe === true
+        && rep && rep.recovered.length === 1 && rep.recovered[0].confidence === 'EXACT'
+        && rep.recovered[0].request_key_to === keepKey,
+      `dryRunCopied=${afterDry} recovered=${back} originalKept=${stillSafe} report=${rep && rep.summary && JSON.stringify(rep.summary)}`);
+
+    // dobara chalane par kuch duplicate na ho
+    spawnSync('node', ['tools/recover-orphaned-media.js', '--apply', `--data=${dd}`], { cwd: ROOT, encoding: 'utf8', timeout: 120000 });
+    const files = fs.readdirSync(path.join(dd, folderAt(dd, '00m05s'), 'media'));
+    check('T-M42119 re-running recovery never duplicates a file that is already there',
+      files.length === 1 && files[0] === '01_mine.jpg', `files=${files.join()}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+
+  // ---------------- P1-G ----------------
+  (() => {
+    const dd = tmpData('data_state');
+    fs.mkdirSync(dd, { recursive: true });
+    const noDraft = readiness.evaluate(dd, manual, cfgJson, { draftExists: false });
+    const drafted = readiness.evaluate(dd, manual, cfgJson, { draftExists: true });
+    const ps = readiness.projectState({ hasPack: true, hasSrt: true, inputsValid: true, packChecked: true,
+      draftExists: false, everDrafted: false });
+    check('T-M42120 "no requests yet" before a draft is NO_DRAFT, never "the automatic video is complete"',
+      noDraft.state === 'NO_DRAFT' && noDraft.can_export === false
+        && drafted.state === 'AUTO_READY' && drafted.can_export === true
+        && ps === readiness.PROJECT_STATE.READY_TO_DRAFT
+        && Object.keys(readiness.PROJECT_STATE).length >= 15,
+      `noDraft=${noDraft.state}/${noDraft.can_export} drafted=${drafted.state} project=${ps} states=${Object.keys(readiness.PROJECT_STATE).length}`);
+    fs.rmSync(dd, { recursive: true, force: true });
+  })();
+})();
+
 // ---------- T-SENT: production jobs/ never touched by any test suite ----------
 (() => {
   const prod = path.join(ROOT, 'jobs', 'prod_sentinel'); fs.mkdirSync(prod, { recursive: true });
