@@ -1,10 +1,10 @@
 {
   "name": "research-first-clip-tool",
   "version": "4.2.1",
-  "git_commit": "bec7abe6b3c32f75f034cb89b39266ccbd94e179",
+  "git_commit": "e1e0909ca86e05ac0441f2bc52bbc6fe1ad532fc",
   "git_branch": "claude/automated-clip-sourcing-editing-scv5lf",
-  "git_dirty": true,
-  "built_at": "2026-08-04T13:57:05.660Z",
+  "git_dirty": false,
+  "built_at": "2026-08-04T13:57:18.748Z",
   "schema_version": "scene-research-pack-v1",
   "node": "v22.22.2",
   "test_logs": {
