@@ -19,3 +19,7 @@ tests/tmp/
 
 # DATA/ user ke apne dhoondhe hue media ka folder hai — repo mein kabhi nahi
 DATA/
+
+# reference-pack ka JSON user ke script ki lines rakhta hai (script_cue_exact)
+# — wo repo mein nahi jayega. ZIP mein bheja jata hai. PADHO.txt commit hoti hai.
+reference-pack/*.json

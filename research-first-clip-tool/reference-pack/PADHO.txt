@@ -1,0 +1,30 @@
+YE FOLDER KYA HAI
+=================
+
+Isme M3.6.1 wala REPAIRED pack ki copy hai (68 locators, 192 frame hints).
+
+Ye JAAN-BOOJH kar input\ mein nahi rakha gaya.
+
+Kyun? Aapke input\scene-research.json mein abhi jo pack hai wo zyada NAYA hai:
+usme 31 cue theek ho chuke hain aur 109 moments par criticality likhi ja chuki
+hai. Us file ko replace karna aapka kaam mita dega.
+
+Aur ye reference pack usme se wo cheezein rakhta hai jo folder replace karte
+waqt kho gayi thi: 19 locators aur 19 frame hints.
+
+DONO CHAHIYE. Isliye replace mat karo - MERGE karo:
+
+    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json
+
+    ^ ye sirf DIKHAYEGA ki kya-kya wapas aayega. Pack abhi nahi badlega.
+      Theek lage to yahi command dobara, aage --apply laga kar:
+
+    node tools\merge-pack.js input\scene-research.json reference-pack\M3.6.1-repaired-scene-research.json --apply
+
+Isse:
+  - aapke theek kiye hue cues       -> waise ke waise
+  - aapki criticality               -> waisi ki waisi
+  - khoye hue locators aur hints    -> wapas (har ek check hokar)
+
+Poori list kya aaya kya nahi: output\pack-merge-report.json
+Backup apne aap banta hai: input\scene-research.json.bak
