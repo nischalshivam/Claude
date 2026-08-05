@@ -34,6 +34,11 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   // beats par THROW kar deta tha — render, gap plan aur DATA folders bane hi
   // nahi. Yaani "draft kabhi rukta nahi" asli critical pack par galat nikla.
   const production = (cfg.output && cfg.output.mode) !== 'review' && (cfg.output && cfg.output.mode) !== 'draft';
+  // Research pack ka overlay_text VISUAL RESEARCH NOTE hai, final title nahi.
+  // Pehle har GRAPHIC beat par ye text automatically burn hota tha; ek weak
+  // pack mein 67% video par hints likh gaye. Text/template future Editor action
+  // se explicit opt-in hoga. Default timeline clean media banati hai.
+  const burnResearchOverlayText = !!(cfg.render && cfg.render.burnResearchOverlayText === true);
 
   let cues = SUB.parseFile(spec.srt);
   if (!total) total = cues.length ? cues[cues.length - 1].end : 0;
@@ -323,11 +328,13 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
           usedFrames.add(hinted[0].file);
           const base = { start: s0, end: s1, ...common, image: hinted[0].file, image_source: hinted[0].source_id,
             image_time: hinted[0].t, hint_time: hinted[0].hint_time, hint_delta: hinted[0].hint_delta, why: hinted[0].why };
-          if (isAnalysis && hintText) {
+          if (isAnalysis && hintText && burnResearchOverlayText) {
             push({ kind: 'graphic', ...base, text: hintText, template: e.template || 'QUOTE', asset: 'TEMPLATE_GRAPHIC_MEDIA' });
             statAssets.graphic++;
           } else {
-            push({ kind: 'still', ...base, asset: 'VERIFIED_SOURCE_STILL' });
+            push({ kind: 'still', ...base, asset: 'VERIFIED_SOURCE_STILL',
+              suggested_text: isAnalysis ? hintText : null,
+              research_overlay_suppressed: !!(isAnalysis && hintText) });
             statAssets.still++;
           }
           lastVisualKey = 'kf:' + hinted[0].file; continue;
@@ -383,12 +390,19 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
       const gtext = (e.overlay_text || e.fallback_text || e.script_cue_exact || '').trim();
       if (production) {
         const bg = KF.pickFrames(bank, allowed, usedFrames, 1, nearSec, e.frame_hints || []);
-        if (bg.length) {
+        if (bg.length && burnResearchOverlayText && gtext) {
           usedFrames.add(bg[0].file);
           push({ kind: 'graphic', start: s0, end: s1, ...common, text: gtext, image: bg[0].file,
                  image_source: bg[0].source_id, image_time: bg[0].t, why: bg[0].why,
                  template: e.template || 'QUOTE', asset: 'TEMPLATE_GRAPHIC_MEDIA' });
           statAssets.graphic++;
+        } else if (bg.length) {
+          usedFrames.add(bg[0].file);
+          push({ kind: 'still', start: s0, end: s1, ...common, image: bg[0].file,
+                 image_source: bg[0].source_id, image_time: bg[0].t, why: bg[0].why,
+                 suggested_text: gtext || null, research_overlay_suppressed: !!gtext,
+                 asset: 'VERIFIED_SOURCE_STILL' });
+          statAssets.still++;
         } else {
           push({ kind: 'graphic', start: s0, end: s1, ...common, text: gtext, template: e.template || null,
                  asset: 'GENERIC_TEXT_GRAPHIC' });
@@ -523,10 +537,10 @@ module.exports = function timeline(spec, cfg, st, resolved, total) {
   const genericSec = secAsset('GENERIC_TEXT_GRAPHIC');
   const cardSec = secAsset('LOW_CONFIDENCE_FALLBACK');
   sum = 0; for (const s of slots) sum += s.dur;
-  U.ok(`timeline: ${slots.length} shots (sum ${sum.toFixed(2)}s vs total ${total.toFixed(2)}s)`);
+  U.ok(`automatic timeline (DATA media se pehle): ${slots.length} shots (sum ${sum.toFixed(2)}s vs total ${total.toFixed(2)}s)`);
   U.log(`   exact video ${pct(secAsset('EXACT_VIDEO'))}% | context video ${pct(secAsset('CONTEXT_VIDEO'))}% | stills ${pct(secAsset('VERIFIED_SOURCE_STILL'))}% | montage ${pct(secAsset('MONTAGE'))}% | graphic-over-media ${pct(secAsset('TEMPLATE_GRAPHIC_MEDIA'))}%`);
   U.log(`   >> media-backed total ${pct(mediaSec)}%  |  GENERIC full-screen text ${pct(genericSec)}%  |  diagnostic cards ${pct(cardSec)}%`);
-  if (genericSec > total * 0.15) U.warn(`generic full-screen text ${pct(genericSec)}% (>15%) — in beats ke liye research pack mein fallback_plan/allowed_source_ids do`);
+  if (genericSec > total * 0.15) U.warn(`automatic draft mein generic/full-screen text ${pct(genericSec)}% (>15%) — filled DATA media lagne ke baad effective timeline neeche alag report hogi`);
   U.log(`   micro-gaps absorbed: ${absorbed}`);
   st.meta.timeline = { shots: slots.length, total, absorbed, assets: statAssets,
     mediaPct: pct(mediaSec), genericTextPct: pct(genericSec), cardPct: pct(cardSec),

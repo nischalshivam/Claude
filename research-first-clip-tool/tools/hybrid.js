@@ -37,7 +37,7 @@ let cfg = {}; try { cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.jso
 
 function runRfc(args) {
   const r = spawnSync('node', [path.join('src', 'run.js'), ...args],
-    { cwd: ROOT, stdio: 'inherit', env: process.env });
+    { cwd: ROOT, stdio: 'inherit', env: process.env, windowsHide: true });
   return r.status == null ? 1 : r.status;
 }
 

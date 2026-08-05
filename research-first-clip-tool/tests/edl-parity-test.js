@@ -28,6 +28,7 @@ process.env.RFC_JOBS_DIR = JOBS; process.env.RFC_DATA_DIR = DATA; process.env.RF
 const FF = process.env.FFMPEG_BIN || 'ffmpeg';
 const ff = a => execFileSync(FF, ['-y', '-hide_banner', '-loglevel', 'error', ...a], { timeout: 120000 });
 const edlMod = require(path.join(ROOT, 'src', 'edl.js'));
+const renderStage = require(path.join(ROOT, 'src', 'render.js'));
 const results = [];
 const check = (n, ok, d = '') => { results.push({ n, ok: !!ok }); console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${n}${d ? '  — ' + d : ''}`); };
 const ts = s => { const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = Math.floor(s % 60), ms = Math.round((s % 1) * 1000); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')},${String(ms).padStart(3, '0')}`; };
@@ -110,6 +111,74 @@ function run() {
   check('P-5 editing framing never changed narration timing (rendered ~ audio)',
     dur.rendered != null && dur.audio != null && Math.abs(dur.rendered - dur.audio) <= 0.6,
     `rendered=${dur.rendered} audio=${dur.audio}`);
+
+  // 6. Right-click Change Clip contract, actual exported pixels par. First
+  // automatic shot green hai; use solid magenta image se replace karo.
+  const replacement = path.join(TMP, 'solid-magenta.png');
+  ff(['-f', 'lavfi', '-i', 'color=c=magenta:s=1280x720:d=1', '-frames:v', '1', replacement]);
+  const edlNow = edlMod.rebuild(PROJ, 'parity', { projectId: 'current' });
+  const firstShot = edlNow.tracks.video_main.find(s => s.timeline.start < 0.1);
+  const rep = edlMod.replaceAsset(PROJ, { expected_revision: edlNow.revision, shot_id: firstShot.shot_id,
+    path: replacement, type: 'image', sha256: 'solid-magenta-test' });
+  const finRep = runRfc([]);
+  const repFinal = path.join(jobDir, 'final.mp4');
+  let repMan = null; try { repMan = JSON.parse(fs.readFileSync(path.join(jobDir, 'render-manifest.json'), 'utf8')); } catch {}
+  const repPx = finRep.status === 0 && fs.existsSync(repFinal) ? centerRGB(repFinal, 2) : [0, 0, 0];
+  const replacementRecorded = repMan && (repMan.shots || []).some(s => s.start < 0.1 && s.edl_replacement === true && s.edl_applied === true);
+  check('P-6 per-shot replacement is recorded as applied in final render manifest',
+    rep.ok && finRep.status === 0 && replacementRecorded,
+    `replace=${rep.ok} exit=${finRep.status} recorded=${replacementRecorded}`);
+  check('P-7 Change Clip actually changes exported pixels (green auto shot -> magenta user image)',
+    finRep.status === 0 && repPx[0] > 170 && repPx[2] > 170 && repPx[1] < 100,
+    `rgb=${repPx.join(',')}`);
+
+  // 7. Voiceover 12s, SRT 9s: full audio rahe aur last mapped visual 12s tak.
+  fs.writeFileSync(path.join(INPUT, 'voiceover.srt'), [
+    { s: 0, e: 6, t: 'the hero enters' }, { s: 6, e: 9, t: 'the lost city appears' },
+  ].map((c, i) => `${i + 1}\n${ts(c.s)} --> ${ts(c.e)}\n${c.t}\n`).join('\n'));
+  const tailRun = runRfc(['--redo']);
+  let tailMan = null, tailAligned = null;
+  try { tailMan = JSON.parse(fs.readFileSync(path.join(jobDir, 'render-manifest.json'), 'utf8')); } catch {}
+  try { tailAligned = JSON.parse(fs.readFileSync(path.join(jobDir, 'aligned.json'), 'utf8')); } catch {}
+  const tailMoment = tailAligned && tailAligned.moments && tailAligned.moments.find(m => m.moment_id === 'M2');
+  const tailDur = tailMan && tailMan.duration || {};
+  check('P-8 voiceover is never cut when SRT ends 3s early; last visual extends to exact audio end',
+    tailRun.status === 0 && tailMan && tailMan.total === 12
+      && tailDur.correction === 'EXTENDED_TO_AUDIO' && Math.abs(tailDur.audio - 12) < 0.05
+      && Math.abs(tailDur.rendered - 12) < 0.1 && tailMoment && Math.abs(tailMoment.beat_end - 12) < 0.01,
+    `exit=${tailRun.status} total=${tailMan && tailMan.total} dur=${JSON.stringify(tailDur)} beatEnd=${tailMoment && tailMoment.beat_end}`);
+
+  // 8. Old/cached timeline defense. Even if a legacy timeline still says
+  // kind=graphic + text, default production must render the underlying image
+  // CLEAN (no dim layer, blue bar or research hint text).
+  const guardImage = path.join(TMP, 'overlay-guard-green.png');
+  const guardAudio = path.join(TMP, 'overlay-guard-2s.m4a');
+  ff(['-f', 'lavfi', '-i', 'color=c=0x00FF00:s=640x360:d=1', '-frames:v', '1', guardImage]);
+  ff(['-f', 'lavfi', '-i', 'sine=frequency=330:duration=2', '-c:a', 'aac', guardAudio]);
+  const guardCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  guardCfg.canvas = { width: 640, height: 360, fps: 30 };
+  guardCfg.output = { ...(guardCfg.output || {}), mode: 'production' };
+  guardCfg.render = { ...(guardCfg.render || {}), burnResearchOverlayText: false };
+  const guardSpec = { id: 'overlay_guard', audio: guardAudio, previewOffset: 0, isPreview: false,
+    timebase: { audio_duration: 2, srt_end: 2, correction: 'NONE', difference_sec: 0 } };
+  const guardTl = { total: 2, slots: [{ i: 0, kind: 'graphic', start: 0, end: 2, dur: 2,
+    image: guardImage, text: 'INTERNAL RESEARCH HINT — DO NOT BURN', asset: 'TEMPLATE_GRAPHIC_MEDIA',
+    moment_id: 'OVERLAY_GUARD', criticality: 'NORMAL' }] };
+  let guardOut = null, guardMan = null, guardErr = null;
+  try {
+    guardOut = renderStage(guardSpec, guardCfg, { meta: {} }, guardTl);
+    guardMan = JSON.parse(fs.readFileSync(path.join(JOBS, 'overlay_guard', 'render-manifest.json'), 'utf8'));
+  } catch (e) { guardErr = e; }
+  const guardPx = guardOut && fs.existsSync(guardOut.file) ? centerRGB(guardOut.file, 1) : [0, 0, 0];
+  const guardShot = guardMan && guardMan.shots && guardMan.shots[0];
+  check('P-9 cached GRAPHIC timeline renders clean media by default (no dim/text layer)',
+    !guardErr && guardPx[1] > 190 && guardPx[0] < 60 && guardPx[2] < 60,
+    `rgb=${guardPx.join(',')} error=${guardErr ? guardErr.message : 'none'}`);
+  check('P-10 manifest proves research overlay suppression and contains no graphic-overlay asset',
+    guardShot && guardShot.asset === 'VERIFIED_SOURCE_STILL' && guardShot.research_overlay_suppressed === true
+      && guardMan.research_overlay_policy && guardMan.research_overlay_policy.enabled === false
+      && guardMan.research_overlay_policy.suppressed_shots === 1,
+    `shot=${guardShot && guardShot.asset} policy=${guardMan && JSON.stringify(guardMan.research_overlay_policy)}`);
 }
 
 try { run(); } catch (e) { check('parity-test crashed', false, String(e && e.stack || e).slice(0, 300)); }

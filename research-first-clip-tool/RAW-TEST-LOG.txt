@@ -15,7 +15,7 @@
   [OK]   cut: 5 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
   [OK]   local QA: 5 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
 >>> 7. timeline
-  [OK]   timeline: 11 shots (sum 46.00s vs total 46.00s)
+  [OK]   automatic timeline (DATA media se pehle): 11 shots (sum 46.00s vs total 46.00s)
 >>> 8. render
   [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
   [OK]   render: final.mp4 (11 segments, 46.0s, 1920x1080)
@@ -23,7 +23,7 @@
   [OK]   report: quality-report.html (5 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 11 shots ka contact sheet (har shot ka asli frame + evidence)
   [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi
-  DONE — tests/tmp/mini_999/akatsuki/
+  DONE — tests/tmp/mini_31967/akatsuki/
    final.mp4, shot-review.html, quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log
 
 == run pipeline: crossshow ==
@@ -41,7 +41,7 @@
   [OK]   cut: 3 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
   [OK]   local QA: 3 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
 >>> 7. timeline
-  [OK]   timeline: 9 shots (sum 41.00s vs total 41.00s)
+  [OK]   automatic timeline (DATA media se pehle): 9 shots (sum 41.00s vs total 41.00s)
 >>> 8. render
   [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
   [OK]   render: final.mp4 (9 segments, 41.0s, 1920x1080)
@@ -49,7 +49,7 @@
   [OK]   report: quality-report.html (3 resolved, 0 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 9 shots ka contact sheet (har shot ka asli frame + evidence)
   [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi
-  DONE — tests/tmp/mini_999/crossshow/
+  DONE — tests/tmp/mini_31967/crossshow/
    final.mp4, shot-review.html, quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log
 
 == run pipeline: edgecases ==
@@ -67,7 +67,7 @@
   [OK]   cut: 2 clips (preferred length, muted), 0 failed -> NEEDS_SOURCE
   [OK]   local QA: 2 pass (0 duplicate-flagged, 0 recovered via alternate), 0 reject -> NEEDS_SOURCE
 >>> 7. timeline
-  [OK]   timeline: 6 shots (sum 24.00s vs total 24.00s)
+  [OK]   automatic timeline (DATA media se pehle): 6 shots (sum 24.00s vs total 24.00s)
 >>> 8. render
   [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
   [OK]   render: final.mp4 (6 segments, 24.0s, 1920x1080)
@@ -75,7 +75,7 @@
   [OK]   report: quality-report.html (1 resolved, 1 review, 1 NEEDS_SOURCE) + NEEDS_SOURCE.csv
   [OK]   shot-review.html — 6 shots ka contact sheet (har shot ka asli frame + evidence)
   [OK]   har shot ke paas asli media hai — DATA folder ki zaroorat nahi
-  DONE — tests/tmp/mini_999/edgecases/
+  DONE — tests/tmp/mini_31967/edgecases/
    final.mp4, shot-review.html, quality-report.html, NEEDS_SOURCE.csv, timeline.json, run.log
 
 ==============================================================================

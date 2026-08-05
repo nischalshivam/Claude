@@ -56,7 +56,7 @@
   [PASS] T-M335 a Show-A beat with no media never borrows Show-B footage  — A1 shots=1 borrowedFromB=0 assets=GENERIC_TEXT_GRAPHIC
   [PASS] T-M336 HARD_EVIDENCE without an exact clip blocks production export  — exit=1 blocked=false
   [PASS] T-M338 two consecutive shots of one moment never show the same frame  — 3 shots, 2 distinct frames, 0 adjacent repeats
-  [PASS] T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)  — assets=TEMPLATE_GRAPHIC_MEDIA
+  [PASS] T-M339 research overlay_text is planning metadata: default final stays clean  — assets=VERIFIED_SOURCE_STILL suppressed=3
   [PASS] T-M340 range download does not ask yt-dlp to re-encode at cut points  — force-keyframes flag absent
   [PASS] T-M337 --redo removes the stale render manifest (report cannot show old numbers)  — stalePresent=false
   [PASS] T-M361 stale/missing pack check blocks a production render (exit 3)  — exit=3 gateMsg=true
@@ -124,7 +124,7 @@
   [PASS] T-M42112 revoking an approval changes the render signature (no stale success is reused)  — same=false
   [PASS] T-M50A1 approvedKeys: NORMAL in, pending/expired critical out, approved critical in  — pendingOut=true normalIn=true approvedIn=true expired=true expiredOut=true
   [PASS] T-M50A2 verify-update exits non-zero on a broken update, zero on a good one  — broken=2 good=0
-  [PASS] T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut  — tail=CLAMPED_SRT_TAIL/true short=SRT_LONGER_THAN_AUDIO/false long=AUDIO_LONGER_THAN_SRT/false
+  [PASS] T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut  — tail=CLAMPED_SRT_TAIL/true short=SRT_LONGER_THAN_AUDIO/false long=AUDIO_LONGER_THAN_SRT/false lead=EXTENDED_TO_AUDIO/true
   [PASS] T-M42114 clamped cues never extend past the real project duration  — lastEnd=20 project=20
   [PASS] T-M42115 timeline, gap plan, manifest and the rendered file all agree on one audio-derived duration  — exit=0 timeline=18 gapEnd=18 rendered=18.00
   [PASS] T-M42116 the render manifest records real audio/srt/timeline/rendered durations, never null  — duration={"audio":18,"srt_end_before_clamp":19.4,"timeline":18,"rendered":18,"target":18,"correction":"CLAMPED_SRT_TAIL","difference_sec":1.4,"tolerance_sec":2,"audio_available":18}

@@ -35,7 +35,7 @@ function startRun(args, label) {
   if (running) return false;
   runLog.length = 0;
   runLog.push(`> ${label}`);
-  running = spawn('node', [path.join('src', 'run.js'), ...args], { cwd: ROOT, env: process.env });
+  running = spawn('node', [path.join('src', 'run.js'), ...args], { cwd: ROOT, env: process.env, windowsHide: true });
   const push = b => { for (const l of String(b).split('\n')) if (l.trim()) runLog.push(l); if (runLog.length > 600) runLog.splice(0, runLog.length - 600); };
   running.stdout.on('data', push);
   running.stderr.on('data', push);
@@ -312,5 +312,5 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('='.repeat(66));
   const opener = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
     : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
-  try { spawn(opener[0], opener[1], { detached: true, stdio: 'ignore' }).unref(); } catch {}
+  try { spawn(opener[0], opener[1], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch {}
 });

@@ -29,7 +29,10 @@ const sha1 = s => crypto.createHash('sha1').update(String(s)).digest('hex');
 // asset type kind/asset se
 function assetType(shot) {
   const k = (shot.kind || '').toLowerCase();
-  if (k === 'still' || k === 'graphic') return k === 'graphic' ? 'graphic' : 'image';
+  // Montage ka pehla asset ek image hota hai. Use video kehne par browser JPG
+  // ko <video> mein kholta tha aur har montage "preview proxy nahi bani" bolta
+  // tha. Graphic media bhi image element mein hi preview hota hai.
+  if (k === 'still' || k === 'montage' || k === 'graphic') return k === 'graphic' ? 'graphic' : 'image';
   if (shot.image && !shot.media_file && !shot.video) return 'image';
   return 'video';
 }
@@ -49,8 +52,18 @@ function originOf(shot) {
 
 // har shot ke liye ek path_token — browser ko kabhi raw path nahi milta,
 // server isi token ko allow-list ke against resolve karta hai
-function assetPath(shot) {
-  return shot.media_file || shot.image || (Array.isArray(shot.images) && shot.images[0]) || null;
+function rawAssetPath(shot) {
+  // EXACT_VIDEO shots `video` mein path rakhte hain. M5.0-B.1 mein ye field
+  // chhoot gayi thi, isliye exact clips ka token banta hi nahi tha.
+  return shot.media_file || shot.video || shot.image || (Array.isArray(shot.images) && shot.images[0]) || null;
+}
+function assetPath(shot, jobId) {
+  const raw = rawAssetPath(shot);
+  if (!raw) return null;
+  // Engine timeline paths job-relative hote hain (clips/, cache/...). Media
+  // index absolute files hash karta hai. Dono ko ek hi canonical absolute path
+  // par lana zaroori hai, warna valid file ka token kabhi resolve nahi hota.
+  return path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(U.jobDir(jobId), raw);
 }
 
 /**
@@ -87,7 +100,8 @@ function buildFromJob(jobId, opts = {}) {
   };
 
   const video_main = shots.map((sh, idx) => {
-    const p = assetPath(sh);
+    const rawPath = rawAssetPath(sh);
+    const p = assetPath(sh, jobId);
     const type = assetType(sh);
     const start = +(Number(sh.start) + previewOffset).toFixed(3);
     const end = +(Number(sh.end) + previewOffset).toFixed(3);
@@ -103,7 +117,10 @@ function buildFromJob(jobId, opts = {}) {
       moment_ids: sh.moment_id ? [sh.moment_id] : (sh.moment_ids || []),
       timeline: { start, end },
       asset: {
-        asset_id: p ? 'ASSET_' + sha1(p).slice(0, 12) : null,
+        // asset_id editorial identity hai (rebuild/reconcile ke liye); token
+        // browser security identity hai (absolute on-disk path). Inhe alag
+        // rakhne se purane edits bhi bachte hain aur media bhi resolve hota hai.
+        asset_id: rawPath ? 'ASSET_' + sha1(rawPath).slice(0, 12) : null,
         sha256: sh.manual_sha256 || null,
         path_token: p ? sha1(p) : null,
         path: p,                       // server-side only; browser ko token milta hai
@@ -230,6 +247,68 @@ function patch(root, body) {
   return { ok: true, edl, revision: edl.revision, touched };
 }
 
+// Editor se kisi ek shot ka visual badalna ek first-class edit hai. File server
+// pehle validate karke project/replacements ke andar rakhta hai; yahan sirf us
+// approved local asset ko revision-guarded EDL decision banaya jata hai.
+function replaceAsset(root, body) {
+  const edl = read(root);
+  if (!edl) return { ok: false, code: 'NO_EDL', message: 'abhi koi EDL nahi — pehle draft banao' };
+  if (typeof body.expected_revision === 'number' && body.expected_revision !== edl.revision) {
+    return { ok: false, code: 'REVISION_CONFLICT', message: `aapke paas rev ${body.expected_revision}, disk par ${edl.revision} — page refresh karo`, revision: edl.revision };
+  }
+  if (edl.content_locked && !body.allow_locked) return { ok: false, code: 'CONTENT_LOCKED', message: 'content lock hai — pehle unlock karo' };
+  const s = (edl.tracks.video_main || []).find(x => x.shot_id === body.shot_id);
+  if (!s) return { ok: false, code: 'NO_SHOT', message: `shot ${body.shot_id} nahi mila` };
+  const p = path.resolve(String(body.path || ''));
+  if (!p || !fs.existsSync(p)) return { ok: false, code: 'NO_MEDIA', message: 'replacement media disk par nahi mili' };
+  const type = String(body.type || '').toLowerCase() === 'video' ? 'video' : 'image';
+  if (!s.original_asset) {
+    s.original_asset = JSON.parse(JSON.stringify(s.asset || null));
+    s.original_provenance = JSON.parse(JSON.stringify(s.provenance || null));
+    s.original_missing = !!s.missing;
+  }
+  s.asset = {
+    asset_id: 'USER_' + sha1(`${p}|${body.sha256 || ''}`).slice(0, 16),
+    sha256: body.sha256 || null,
+    path_token: sha1(p),
+    path: p,
+    type,
+    source_in: Math.max(0, Number(body.source_in) || 0),
+    source_out: type === 'video' && body.duration ? +Number(body.duration).toFixed(3) : null,
+  };
+  s.provenance = { origin: 'USER_REPLACEMENT', source_id: null, scope_relation: 'USER_APPROVED', url: null };
+  s.replacement = { path: p, sha256: body.sha256 || null, type, file: path.basename(p), duration: body.duration || null, replaced_at: new Date().toISOString() };
+  s.user_replaced = true;
+  s.user_edited = true;
+  s.missing = false;
+  const v = validate(edl);
+  if (!v.ok) return { ok: false, code: 'INVALID', message: v.errors.join('; '), errors: v.errors };
+  edl.revision += 1; edl.updated_at = new Date().toISOString();
+  writeAtomic(root, edl);
+  return { ok: true, edl, revision: edl.revision, shot_id: s.shot_id };
+}
+
+function clearReplacement(root, body) {
+  const edl = read(root);
+  if (!edl) return { ok: false, code: 'NO_EDL', message: 'abhi koi EDL nahi' };
+  if (typeof body.expected_revision === 'number' && body.expected_revision !== edl.revision) {
+    return { ok: false, code: 'REVISION_CONFLICT', message: `aapke paas rev ${body.expected_revision}, disk par ${edl.revision} — page refresh karo`, revision: edl.revision };
+  }
+  const s = (edl.tracks.video_main || []).find(x => x.shot_id === body.shot_id);
+  if (!s) return { ok: false, code: 'NO_SHOT', message: `shot ${body.shot_id} nahi mila` };
+  if (!s.user_replaced || !s.original_asset) return { ok: false, code: 'NO_REPLACEMENT', message: 'is shot par replacement nahi hai' };
+  s.asset = s.original_asset;
+  s.provenance = s.original_provenance || s.provenance;
+  s.missing = !!s.original_missing;
+  delete s.original_asset; delete s.original_provenance; delete s.original_missing;
+  delete s.replacement; delete s.user_replaced;
+  // Transform/trim ko preserve rakho; sirf asset replacement undo hua hai.
+  s.user_edited = shotIsEdited({ ...s, user_edited: false });
+  edl.revision += 1; edl.updated_at = new Date().toISOString();
+  writeAtomic(root, edl);
+  return { ok: true, edl, revision: edl.revision, shot_id: s.shot_id };
+}
+
 /**
  * Draft ke artifacts se EDL (re)build — par maujooda transform/trim edits bachao.
  * Reload par user ki mehnat kabhi nahi khoti.
@@ -251,7 +330,24 @@ function rebuild(root, jobId, opts = {}) {
       return out;
     };
     const oldByKey = Object.fromEntries(keyed(old.tracks.video_main));
+    // Asset badalne ke baad occurrence-key jaan-boojh kar badalti hai. Stable
+    // SLOT identity replacement ko rebuild/sync-manual ke paar bachati hai.
+    const oldReplacementBySlot = Object.fromEntries(old.tracks.video_main
+      .filter(s => s.user_replaced && s.replacement)
+      .map(s => [s.slot_id, s]));
     for (const [k, s] of keyed(fresh.tracks.video_main)) {
+      const replacement = oldReplacementBySlot[s.slot_id];
+      if (replacement) {
+        s.asset = JSON.parse(JSON.stringify(replacement.asset));
+        s.provenance = JSON.parse(JSON.stringify(replacement.provenance));
+        s.replacement = JSON.parse(JSON.stringify(replacement.replacement));
+        s.original_asset = JSON.parse(JSON.stringify(replacement.original_asset));
+        s.original_provenance = JSON.parse(JSON.stringify(replacement.original_provenance));
+        s.original_missing = replacement.original_missing;
+        s.user_replaced = true; s.user_edited = true; s.missing = false;
+        s.transform = { ...s.transform, ...replacement.transform };
+        continue;
+      }
       const o = oldByKey[k];
       if (o) {
         s.transform = { ...s.transform, ...o.transform };
@@ -307,8 +403,33 @@ function slotBase(s) {
  */
 function reconcile(edl, slots) {
   if (!edl || !edl.tracks || !Array.isArray(edl.tracks.video_main)) return { applied: 0, edits: [] };
+  // Replacement pehle, stable SLOT id se. Isse asset identity badalne par bhi
+  // final render wahi user-selected file leta hai.
+  const replacementBySlot = {};
+  for (const sh of edl.tracks.video_main) if (sh.user_replaced && sh.replacement && sh.asset) replacementBySlot[sh.slot_id] = sh;
+  const replacementSlots = new Set();
+  const applied = [];
+  for (const s of slots) {
+    const sid = 'SLOT_' + String(s.i != null ? s.i : 0).padStart(4, '0');
+    const sh = replacementBySlot[sid];
+    if (!sh) continue;
+    const a = sh.asset || {}, isVideo = a.type === 'video';
+    s.kind = isVideo ? 'context_video' : 'still';
+    s.asset = isVideo ? 'USER_VIDEO_REPLACEMENT' : 'USER_IMAGE_REPLACEMENT';
+    if (isVideo) { s.media_file = a.path; s.media_start = Number(a.source_in) || 0; delete s.image; delete s.images; delete s.video; }
+    else { s.image = a.path; delete s.media_file; delete s.images; delete s.video; }
+    s.manual = true; s.manual_sha256 = a.sha256 || null; s.manual_file = path.basename(a.path || '');
+    s.scope_relation = 'USER_APPROVED'; s.actual_source_id = null;
+    s.edl_transform = sh.transform || { fit: 'fill', crop_x: 0.5, crop_y: 0.5, scale: 1, rotation: 0, opacity: 1 };
+    if (isVideo && a.source_in > 0) s.edl_source_in = Number(a.source_in);
+    if (isVideo && a.source_out != null) s.edl_source_out = Number(a.source_out);
+    s.edl_shot_id = sh.shot_id; s.edl_replacement = true;
+    replacementSlots.add(s.i);
+    applied.push({ i: s.i, shot_id: sh.shot_id, replacement: true, file: path.basename(a.path || ''), type: a.type });
+  }
   const seenE = {}, edited = {};
   for (const sh of edl.tracks.video_main) {
+    if (sh.user_replaced) continue;
     const k = occKey(edlShotBase(sh), seenE);
     if (shotIsEdited(sh)) edited[k] = {
       transform: sh.transform || {},
@@ -317,8 +438,9 @@ function reconcile(edl, slots) {
       shot_id: sh.shot_id,
     };
   }
-  const seenS = {}, applied = [];
+  const seenS = {};
   for (const s of slots) {
+    if (replacementSlots.has(s.i)) continue;
     const e = edited[occKey(slotBase(s), seenS)];
     if (!e) continue;
     s.edl_transform = e.transform;
@@ -345,7 +467,7 @@ function editSignature(edl) {
     const base = edlShotBase(sh); const n = seen[base] || 0; seen[base] = n + 1;
     if (!shotIsEdited(sh)) continue;
     const t = sh.transform || {}, a = sh.asset || {};
-    bits.push(`${base}|${n}|${t.fit || 'fill'}|${t.scale}|${t.crop_x}|${t.crop_y}|${t.rotation}|${a.source_in}|${a.source_out}`);
+    bits.push(`${base}|${n}|${t.fit || 'fill'}|${t.scale}|${t.crop_x}|${t.crop_y}|${t.rotation}|${a.source_in}|${a.source_out}|${sh.user_replaced ? (a.sha256 || a.path || 'replacement') : ''}`);
   }
   return bits.length ? sha1(bits.sort().join('||')) : 'none';
 }
@@ -362,5 +484,5 @@ function withApproval(edl, statusByKey) {
 
 module.exports = {
   SCHEMA, buildFromJob, rebuild, read, writeAtomic, validate, patch, withApproval,
-  reconcile, shotIsEdited, editSignature, projectRoot, edlPath, revDir,
+  replaceAsset, clearReplacement, reconcile, shotIsEdited, editSignature, projectRoot, edlPath, revDir,
 };

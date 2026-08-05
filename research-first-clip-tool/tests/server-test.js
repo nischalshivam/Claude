@@ -54,7 +54,9 @@ fs.writeFileSync(path.join(jobDir, 'render-manifest.json'), JSON.stringify({
   duration: { audio: total, srt_end_before_clamp: total, timeline: total, rendered: total, correction: 'NONE', difference_sec: 0 },
   preview_offset: 0, missing_placeholders: [{ tag: 'MISSING 001', i: 1 }],
   shots: [
-    { i: 0, start: 0, end: 10, dur: 10, kind: 'still', asset: 'VERIFIED_SOURCE_STILL', moment_id: 'M0', criticality: 'NORMAL', image: imgPath, scope_relation: 'SAME_EPISODE', source_id: 'S1' },
+    // Engine paths job-relative hote hain. Server test ko absolute path dena
+    // production token bug ko chhupa raha tha.
+    { i: 0, start: 0, end: 10, dur: 10, kind: 'still', asset: 'VERIFIED_SOURCE_STILL', moment_id: 'M0', criticality: 'NORMAL', image: 'segments/shot0.jpg', scope_relation: 'SAME_EPISODE', source_id: 'S1' },
     { i: 1, start: 10, end: 20, dur: 10, kind: 'graphic', asset: 'MISSING_PLACEHOLDER', moment_id: 'M1', criticality: 'HARD_EVIDENCE', missing_label: 'MISSING 001', cue: 'the missing beat' },
   ],
 }, null, 2));
@@ -174,33 +176,62 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
     // 10s range -> do file chahiye taaki poori bhar jaye (VALID)
     await upload('01_a.jpg', '0x1E90FF');
     await upload('02_b.jpg', '0x228B22');
-    await req('POST', `/api/v1/requests/${encodeURIComponent(reqKey)}/approve`);
+    const bulkApproval = await req('POST', '/api/v1/requests/approve-all-ready-critical', { body: {} });
     r = await req('GET', '/api/v1/missing');
     const afterApprove = (r.json.requests || [])[0];
     // ab 01_a.jpg ke bytes badlo (usi naam se) -> approval EXPIRE
     await upload('01_a.jpg', '0xC81E1E');
     r = await req('GET', '/api/v1/missing');
     const afterChange = (r.json.requests || [])[0];
-    check('T-SRV9 upload+approve makes it APPROVED; changing the bytes expires the approval',
-      afterApprove && afterApprove.approval_status === 'APPROVED'
+    check('T-SRV9 explicit bulk review approves every VALID critical request; changing bytes expires it',
+      bulkApproval.status === 200 && bulkApproval.json.approved === 1
+        && afterApprove && afterApprove.approval_status === 'APPROVED'
         && afterChange && afterChange.approval_status === 'EXPIRED',
-      `approved=${afterApprove && afterApprove.approval_status} afterChange=${afterChange && afterChange.approval_status}`);
+      `bulk=${bulkApproval.json && bulkApproval.json.approved} approved=${afterApprove && afterApprove.approval_status} afterChange=${afterChange && afterChange.approval_status}`);
 
-    // 10. UI shell + app.js served, token injected
+    // 10. right-click replacement contract: binary asset -> EDL -> token stream,
+    // phir undo par original clip wapas. Raw filesystem path browser ko nahi.
+    r = await req('GET', '/api/v1/edl');
+    const beforeReplace = r.json.edl;
+    const replacementFile = path.join(TMP, 'replacement.jpg');
+    ff(['-f', 'lavfi', '-i', 'color=c=0xD12D2D:s=640x360:d=1', '-frames:v', '1', replacementFile]);
+    const replacementBuf = fs.readFileSync(replacementFile);
+    let replaceRes = await rawPost(`/api/v1/edl/${encodeURIComponent(sid)}/replace?name=replacement.jpg&expected_revision=${beforeReplace.revision}`, replacementBuf);
+    const replaced = replaceRes.json && replaceRes.json.edl && replaceRes.json.edl.tracks.video_main.find(s => s.shot_id === sid);
+    const noReplacementRawPath = replaced && replaced.asset.path === undefined
+      && (!replaced.replacement || replaced.replacement.path === undefined)
+      && (!replaced.original_asset || replaced.original_asset.path === undefined);
+    const replacedMedia = replaced && replaced.asset.path_token ? await req('GET', `/api/v1/media/${replaced.asset.path_token}`) : { status: 0 };
+    const undoRes = replaced ? await req('DELETE', `/api/v1/edl/${encodeURIComponent(sid)}/replacement?expected_revision=${replaceRes.json.edl.revision}`) : { status: 0, json: null };
+    const undone = undoRes.json && undoRes.json.edl && undoRes.json.edl.tracks.video_main.find(s => s.shot_id === sid);
+    check('T-SRV10 per-shot replacement persists, streams safely, and can restore the original',
+      replaceRes.status === 200 && replaced.provenance.origin === 'USER_REPLACEMENT' && noReplacementRawPath
+        && replacedMedia.status === 200 && undoRes.status === 200 && undone.provenance.origin !== 'USER_REPLACEMENT',
+      `replace=${replaceRes.status} media=${replacedMedia.status} undo=${undoRes.status} rawSafe=${noReplacementRawPath}`);
+
+    // Final artifact is streamed for Chromium Save-As (not buffered in JSON).
+    const finalFixture = path.join(jobDir, 'final.mp4');
+    ff(['-f', 'lavfi', '-i', 'color=c=black:s=320x180:r=30:d=1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', finalFixture]);
+    const artifact = await req('GET', '/api/v1/artifacts/final');
+    check('T-SRV11 final artifact endpoint streams MP4 for Save-As',
+      artifact.status === 200 && (artifact.ct || '').includes('video/mp4') && artifact.buf.length > 100,
+      `status=${artifact.status} bytes=${artifact.buf.length}`);
+
+    // UI shell + app.js served, token injected
     r = await req('GET', '/', { token: null });
     const htmlOk = r.status === 200 && r.buf.toString().includes(TOKEN) && !r.buf.toString().includes('%%SESSION_TOKEN%%');
     const rjs = await req('GET', '/app.js', { token: null });
-    check('T-SRV10 the UI shell is served with the token injected and app.js loads',
+    check('T-SRV12 the UI shell is served with the token injected and app.js loads',
       htmlOk && rjs.status === 200, `html=${htmlOk} appjs=${rjs.status}`);
 
     // ---- M5.0-A.2: in-UI inputs ----
-    // 11. import audio (mp3/m4a/wav auto-detect) + inputs summary shows duration
+    // import audio (mp3/m4a/wav auto-detect) + inputs summary shows duration
     const aud = path.join(TMP, 'vo.m4a'); ff(['-f', 'lavfi', '-i', 'sine=frequency=220:duration=12', '-c:a', 'aac', aud]);
     const audBuf = fs.readFileSync(aud);
     let rr = await rawPost(`/api/v1/import?kind=audio&name=vo.m4a`, audBuf);
     const impOk = rr.status === 200 && rr.json.ok && rr.json.duration > 11;
     rr = await rawPost(`/api/v1/import?kind=audio&name=bad.txt`, Buffer.from('x'));
-    check('T-SRV11 audio import accepts m4a and reports duration; a non-audio ext is refused',
+    check('T-SRV13 audio import accepts m4a and reports duration; a non-audio ext is refused',
       impOk && rr.status === 400, `audio=${impOk} badExt=${rr.status}`);
 
     // 12. import pack (valid) + reject invalid json
@@ -208,7 +239,7 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
     rr = await rawPost('/api/v1/import?kind=pack&name=p.json', Buffer.from(JSON.stringify(pack)));
     const packOk = rr.status === 200 && rr.json.ok;
     rr = await rawPost('/api/v1/import?kind=pack&name=p.json', Buffer.from('{not json'));
-    check('T-SRV12 pack import saves valid JSON and refuses broken JSON',
+    check('T-SRV14 pack import saves valid JSON and refuses broken JSON',
       packOk && rr.status === 400 && rr.json.code === 'BAD_JSON', `pack=${packOk} broken=${rr.json && rr.json.code}`);
 
     // 13. script import + make-srt (script + audio -> estimated srt) + inputs summary
@@ -218,7 +249,7 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
     const srtOk = rr.status === 200 && rr.json.ok && rr.json.cues === 3 && Math.abs(rr.json.total - 12) < 0.5;
     r = await req('GET', '/api/v1/inputs');
     const sum = r.json.inputs;
-    check('T-SRV13 make-srt builds an estimated SRT from script+audio; inputs summary reflects it',
+    check('T-SRV15 make-srt builds an estimated SRT from script+audio; inputs summary reflects it',
       srtOk && sum.srt && sum.srt.cues === 3 && sum.script === true && sum.audio.duration > 11,
       `srt=${JSON.stringify(rr.json)} summaryCues=${sum.srt && sum.srt.cues}`);
 
@@ -228,12 +259,12 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
     r = await req('GET', '/api/v1/inputs');
     const cleared = !r.json.inputs.audio && !r.json.inputs.srt;
     const archiveExists = fs.existsSync(path.join(PROJ, 'archive'));
-    check('T-SRV14 fresh start archives inputs (moves, never deletes) and clears the project',
+    check('T-SRV16 fresh start archives inputs (moves, never deletes) and clears the project',
       archived && cleared && archiveExists, `archived=${archived} clearedAudio=${cleared} archiveDir=${archiveExists}`);
 
     // 15. genspark prompt is served
     r = await req('GET', '/api/v1/genspark-prompt');
-    check('T-SRV15 the Genspark research-pack prompt is served to the UI',
+    check('T-SRV17 the Genspark research-pack prompt is served to the UI',
       r.status === 200 && r.json.ok && typeof r.json.text === 'string' && r.json.text.length > 200,
       `len=${r.json && r.json.text && r.json.text.length}`);
 

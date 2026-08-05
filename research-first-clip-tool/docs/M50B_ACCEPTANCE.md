@@ -1,37 +1,29 @@
-# M5.0-B acceptance — asli Candace project (UI ke through)
+# M5.0-B.1 production acceptance
 
-Ye woh gate hai jab tak main "M5.0-B complete" nahi bolunga aur templates/effects
-shuru nahi karunga. Synthetic tests (regression 133/0, content 13/0, server 10/0,
-live draft) pass ho chuke — par asli video aapke project par bane, wahi sach hai.
+Start only with `MOVIE_EDITOR.bat`. There is no update/old-folder workflow.
 
-Editor kholo: `START_UI.bat` (browser apne aap khulega).
+## Automated gates
 
-| # | Kya check karna hai | Kahan |
-|---|---|---|
-| 1 | update verify pass (version 5.0.0-a, docs\ aaya) | UPDATE_TOOL ke baad ka check |
-| 2 | orphan recovery report dekha | `output\orphan-recovery-report.json` |
-| 3 | Draft editor mein khulta hai | Editor tab → shots dikhein |
-| 4 | har missing range sahi stable request_key par | Missing tab: har card ka key `REQ_…` |
-| 5 | order/trim/reuse reload ke baad bache | edit → refresh → wahi rahe |
-| 6 | critical media badalne par approval EXPIRE | file badlo → card orange "expire" |
-| 7 | Final tab tak disabled jab tak sab blocker clear na ho | header Final button |
-| 8 | `final.mp4` mein zero placeholder | `render-manifest.json` → `missing_placeholders: []` |
-| 9 | rendered ≈ voiceover (0.5s ke andar) | `render-manifest.json` → `duration.rendered` vs `duration.audio` |
-| 10 | har user shot par request key + media hash | `render-manifest.json` → `shots[].manual_request_key` + `manual_sha256` |
-| 11 | shot-review ke frame sahi | `shot-review.html` |
-| 12 | warm rerun par download dobara nahi | `run.log` mein "pehle ho chuka, skip" |
-| 13 | fail/cancel kabhi success na dikhe | job log + `job-result.json` status |
+- A second launcher click reopens the running instance; no `EADDRINUSE` crash.
+- Draft is successful only if process exit is zero **and** `draft.mp4` exists.
+- Final is successful only if process exit is zero **and** `final.mp4` exists.
+- Any non-zero render exit stays on New Video with the real error and log.
+- A small final-SRT display tail is clamped to voiceover; large mismatches block.
+- Fresh start archives the current project and returns to empty inputs.
 
-Kahin bug mile to main active M5 branch mein regression test ke saath theek
-karunga — dobara generalized backend audit nahi, jab tak baat data-loss / galat
-approval / timing-corruption ki na ho.
+## One real-video acceptance run
 
-## Note: M5.0-A mein #5, #8-#12 ka daayra
+1. New Video: add pack, voiceover, script and SRT.
+2. Build -> Editor. Confirm the Editor opens only after the draft artifact exists.
+3. Play, pause and scrub through three distant sections.
+4. Fill every Missing Media card; approve every HARD EVIDENCE card.
+5. In Editor, change one obvious crop/scale/trim and reload the page; it must persist.
+6. Export. Confirm `final.mp4` has no MISSING placeholder and its duration matches voiceover within 0.5s.
+7. Double-click `MOVIE_EDITOR.bat` while the editor is already open; it must reopen, not crash.
+8. Click Fresh start and confirm the next project begins empty while the old work remains under `archive/`.
 
-- #5 (order/trim/reuse): **missing-media** wale (upload/approve/reuse) abhi render
-  ko affect karte hain aur reload ke baad bache rehte hain — ye M5.0-A mein testable
-  hai. Editor ke **crop/trim** transform EDL mein bachte hain par render EDL se M5.0-B
-  mein judega.
-- #8-#12 poora final export ke through hain — wo aapke asli media aane ke baad
-  (jo internet par nahi mila) chalega. Backend ye sab M4.2.1 mein prove kar chuka;
-  yahan UI ke through dohrana hai.
+## Honest scope
+
+This verifies the production foundation and current editor. Full ripple editing,
+split/reorder, style templates, transitions/effects, batch queue, and a real
+multi-project library remain later milestones; see `KNOWN_LIMITATIONS.md`.

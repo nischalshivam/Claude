@@ -134,6 +134,11 @@ module.exports = function render(spec, cfg, st, tl) {
   const segDir = U.ensureDir(U.p(id, 'segments'));
   const font = findFont(cfg);
   const drawtextOK = hasDrawtext();
+  // Defense-in-depth: purani cached timeline mein kind=graphic/text maujood ho
+  // sakta hai. Config false ho to renderer bhi dim/accent/text ko kabhi burn
+  // nahi karega. Sirf future explicit Editor template opt-in isse true karega.
+  const burnResearchOverlayText = !!(cfg.render && cfg.render.burnResearchOverlayText === true);
+  let suppressedResearchOverlays = 0;
   if (!font) U.warn('koi TTF font nahi mila — text cards bina text ke (solid color) banenge. config.render.fontFile set karo.');
   else if (!drawtextOK) U.warn('is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.');
 
@@ -282,22 +287,33 @@ module.exports = function render(spec, cfg, st, tl) {
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg]);
         }
       } else if (s.kind === 'graphic') {
-        // ---- MEDIA-BACKED GRAPHIC: asli frame + dim + accent + text ----
-        const filters = [
-          `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`,
-          `eq=brightness=-0.18:saturation=0.75`,                      // dim taaki text padha jaye
-          `drawbox=x=0:y=0:w=${W}:h=${H}:color=0x0a0d18@0.45:t=fill`,
-          `drawbox=x=140:y=(ih-380)/2:w=8:h=380:color=0x4f8cff@0.95:t=fill`,
-        ];
-        if (font && drawtextOK) {
-          const txtFile = path.join(segDir, `txt_${s.i}.txt`);
-          fs.writeFileSync(txtFile, wrap(s.text || s.cue || '', 32));
-          filters.push(`drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=0xffffff:fontsize=56:line_spacing=22:shadowcolor=0x000000@0.8:shadowx=2:shadowy=2:x=190:y=(h-text_h)/2`);
+        if (!burnResearchOverlayText) {
+          // CLEAN MEDIA POLICY: research overlay_text planning metadata hai.
+          // Frame ko na dim karo, na blue bar/text lagao. Ye branch old cached
+          // timelines ko bhi safe banati hai, sirf nayi timeline ko nahi.
+          suppressedResearchOverlays++;
+          r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imageAbs, '-t', dur.toFixed(3),
+            '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},fps=${FPS},setsar=1`,
+            '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
+            '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
+        } else {
+          // Explicit opt-in only: asli frame + dim + accent + text.
+          const filters = [
+            `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos`, `crop=${W}:${H}`,
+            `eq=brightness=-0.18:saturation=0.75`,
+            `drawbox=x=0:y=0:w=${W}:h=${H}:color=0x0a0d18@0.45:t=fill`,
+            `drawbox=x=140:y=(ih-380)/2:w=8:h=380:color=0x4f8cff@0.95:t=fill`,
+          ];
+          if (font && drawtextOK) {
+            const txtFile = path.join(segDir, `txt_${s.i}.txt`);
+            fs.writeFileSync(txtFile, wrap(s.text || s.cue || '', 32));
+            filters.push(`drawtext=fontfile='${escFont(font)}':textfile='${escFont(txtFile)}':fontcolor=0xffffff:fontsize=56:line_spacing=22:shadowcolor=0x000000@0.8:shadowx=2:shadowy=2:x=190:y=(h-text_h)/2`);
+          }
+          filters.push(`fps=${FPS}`, 'setsar=1');
+          r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imageAbs, '-t', dur.toFixed(3),
+            '-vf', filters.join(','), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
+            '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
         }
-        filters.push(`fps=${FPS}`, 'setsar=1');
-        r = U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', imageAbs, '-t', dur.toFixed(3),
-          '-vf', filters.join(','), '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast',
-          '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg], { timeout: 180000 });
       } else {
       // ---- GRAPHIC / CARD ----
       const isDiag = ['needs_source', 'needs_review'].includes(s.kind);
@@ -348,8 +364,9 @@ module.exports = function render(spec, cfg, st, tl) {
     // aur automation ki asli kaamyabi bhi chhupa deta hai.
     const USER_ASSET = { video: 'USER_VIDEO', context_video: 'USER_VIDEO', still: 'USER_IMAGE', montage: 'USER_MONTAGE' };
     let assetUsed = s.manual ? (USER_ASSET[s.kind] || 'USER_IMAGE')
-      : (PLANNED_MEDIA[s.kind] ? PLANNED_ASSET[s.kind]
-        : (['needs_source', 'needs_review'].includes(s.kind) ? 'DIAGNOSTIC_CARD' : 'GENERIC_TEXT_GRAPHIC'));
+      : (s.kind === 'graphic' && !burnResearchOverlayText ? 'VERIFIED_SOURCE_STILL'
+        : (PLANNED_MEDIA[s.kind] ? PLANNED_ASSET[s.kind]
+          : (['needs_source', 'needs_review'].includes(s.kind) ? 'DIAGNOSTIC_CARD' : 'GENERIC_TEXT_GRAPHIC')));
     let assetNote = null;
     if (missingReason || !r || !r.ok || !fs.existsSync(seg)) {
       // VERIFIED FALLBACK STATE MACHINE — kabhi chupchap doosre renderer mein nahi.
@@ -406,11 +423,14 @@ module.exports = function render(spec, cfg, st, tl) {
       must_show: s.must_show || [], must_not_show: s.must_not_show || [], cue: s.cue || null,
       video: s.video || null, media_file: s.media_file || null, media_start: s.media_start != null ? s.media_start : null,
       why: s.why || s.reason || null, template: s.template || null, reused: !!s.reused,
+      suggested_text: s.suggested_text || (!burnResearchOverlayText && s.kind === 'graphic' ? (s.text || null) : null),
+      research_overlay_suppressed: !!(s.research_overlay_suppressed || (!burnResearchOverlayText && s.kind === 'graphic')),
       // manual provenance — kaunsi file, kis request se, kis hash ki
       manual: !!s.manual, manual_request_key: s.manual_request_key || null, manual_request_id: s.manual_request_id || null,
       manual_sha256: s.manual_sha256 || null, manual_file: s.manual_file || null,
       // P0-A: editor edit jo SACH mein render hui (parity proof)
       edl_applied: !!s.edl_transform, edl_shot_id: s.edl_shot_id || null,
+      edl_replacement: !!s.edl_replacement,
       edl_transform: s.edl_transform || null,
       edl_source_in: s.edl_source_in != null ? s.edl_source_in : null,
       edl_source_out: s.edl_source_out != null ? s.edl_source_out : null,
@@ -430,6 +450,38 @@ module.exports = function render(spec, cfg, st, tl) {
     c = U.ffmpeg(['-f', 'concat', '-safe', '0', '-i', listFile, '-c:v', 'libx264', '-preset', 'veryfast',
       '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), master]);
     if (!c.ok) throw new Error('concat fail: ' + (c.stderr || '').slice(0, 150));
+  }
+
+  // MP4 concat-copy har segment boundary par fractional frame rounding kho
+  // sakta hai. 100+ shots par ye Candace run mein 0.9s ho gaya tha: timeline
+  // 894.7s, master 893.8s. Purana mux voiceover ka aakhri hissa kaat deta tha.
+  // Chhota bounded deficit ho to LAST FRAME ka ek tiny tail segment jodo. Isme
+  // poori 15-minute master ko dobara encode nahi karna padta.
+  const expectedVideoDur = +(tl.total || 0).toFixed(3);
+  let masterProbe = U.probe(master);
+  let masterDur = masterProbe.duration || expectedVideoDur;
+  const frameSec = 1 / FPS;
+  const concatDeficit = +(expectedVideoDur - masterDur).toFixed(3);
+  const maxTailRepair = Math.max(2, Number((cfg.render && cfg.render.audioClampSeconds) || 2));
+  if (concatDeficit > frameSec + 0.01 && concatDeficit <= maxTailRepair) {
+    const tailFrame = U.p(id, 'segments', '_tail_frame.jpg');
+    const tailSeg = U.p(id, 'segments', '_tail_pad.mp4');
+    const tailList = U.p(id, 'segments', '_tail_list.txt');
+    const padded = U.p(id, 'video_master_padded.mp4');
+    const grab = U.ffmpeg(['-sseof', '-0.20', '-i', master, '-frames:v', '1', '-q:v', '2', tailFrame]);
+    const makeTail = grab.ok && fs.existsSync(tailFrame) ? U.ffmpeg(['-loop', '1', '-framerate', String(FPS), '-i', tailFrame,
+      '-t', (concatDeficit + frameSec * 2).toFixed(3), '-vf', `scale=${W}:${H},fps=${FPS},setsar=1`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(cfg.render.crf || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', tailSeg]) : { ok: false };
+    if (makeTail.ok && fs.existsSync(tailSeg)) {
+      fs.writeFileSync(tailList, `file '${master.replace(/'/g, "'\\''")}'\nfile '${tailSeg.replace(/'/g, "'\\''")}'\n`);
+      const pad = U.ffmpeg(['-f', 'concat', '-safe', '0', '-i', tailList, '-t', expectedVideoDur.toFixed(3), '-c', 'copy', padded]);
+      if (pad.ok && fs.existsSync(padded)) {
+        fs.rmSync(master, { force: true });
+        fs.renameSync(padded, master);
+        masterProbe = U.probe(master); masterDur = masterProbe.duration || expectedVideoDur;
+        U.log(`   concat rounding: aakhri frame ${concatDeficit.toFixed(2)}s extend kiya (voiceover tail safe).`);
+      }
+    }
   }
 
   // master voiceover mux
@@ -474,7 +526,9 @@ module.exports = function render(spec, cfg, st, tl) {
     //  M4.2 mein yahan 30 SECOND tak chup-chaap kata ja sakta tha. 30 second
     //  ka matlab "chhoti si tail" nahi hota — wo adhoora voiceover ho sakta hai.
     //  Ab utna farak upar hi RUK jata hai; yahan sirf <= clamp tak ki chhoot hai.
-    let target = +vdur.toFixed(3);
+    // Project timeline authoritative hai. `vdur` concat container ka rounded
+    // measurement hai; use target banane se narration tail kat sakti thi.
+    let target = +(tl.total || vdur).toFixed(3);
     const clampMax = Number((cfg.render && cfg.render.audioClampSeconds) != null ? cfg.render.audioClampSeconds : 2.0);
     const tol = (cfg.render && cfg.render.audioToleranceSeconds) || 0.5;
     if (!offset && audioAvail > 1 && target > audioAvail + 0.02) {
@@ -504,6 +558,10 @@ module.exports = function render(spec, cfg, st, tl) {
     // sirf FULL run mein hi ye asli mismatch ka ishara hai.
     if (spec.isPreview) {
       U.log(`   preview: ${vdur.toFixed(1)}s window (${offset.toFixed(1)}s se) — voiceover ${adurRaw.toFixed(1)}s ka hai, usme se utna hi hissa liya gaya.`);
+    }
+    if (mode === 'production' && !spec.isPreview && expectedVideoDur - vdur > Math.max(tol, frameSec * 2)) {
+      throw new Error(`video master ${vdur.toFixed(2)}s hai par timeline ${expectedVideoDur.toFixed(2)}s (${(expectedVideoDur - vdur).toFixed(2)}s chhoti). ` +
+        'Concat tail repair nahi lag saki; narration ka aakhri hissa kaatne ke bajay export rok raha hoon.');
     }
     if (audioAvail + 0.05 < target) U.warn(`audio sirf ${audioAvail.toFixed(1)}s hai par timeline ${target.toFixed(1)}s — aakhir mein silence padega.`);
     const aoff = offset ? ['-ss', String(offset)] : [];
@@ -545,11 +603,24 @@ module.exports = function render(spec, cfg, st, tl) {
       'Final export rok raha hoon — render-manifest.json ka edl_parity dekho.');
   }
 
+  // Production invariant: config false par ek bhi research overlay asset final
+  // manifest mein nahi bach sakta. Renderer branch + ye gate future regressions
+  // ko fail-closed rakhenge.
+  if (mode === 'production' && !burnResearchOverlayText && manifest.some(m => m.asset === 'TEMPLATE_GRAPHIC_MEDIA')) {
+    throw new Error('research overlay policy fail: final manifest mein TEMPLATE_GRAPHIC_MEDIA bach gaya');
+  }
+
   fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({
     total: tl.total, mode, is_draft: mode === 'draft',
+    legacy_criticality_waiver: !!spec.legacyCriticalityWaiver,
     // har number asli file se — koi null nahi, koi andaza nahi
     duration: durInfo,
     edl_parity: edlParity,
+    research_overlay_policy: {
+      enabled: burnResearchOverlayText,
+      suppressed_shots: manifest.filter(m => m.research_overlay_suppressed).length,
+      source: 'config.render.burnResearchOverlayText',
+    },
     // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
     // waqt chahiye, isliye offset yahin likh dete hain.
     preview_offset: spec.previewOffset || 0,
@@ -557,6 +628,7 @@ module.exports = function render(spec, cfg, st, tl) {
     shots: manifest,
   }, null, 2));
   U.ok(`render: ${outName} (${n} segments${missingNo ? ', ' + missingNo + ' MISSING placeholder' : ''}${failed && !missingNo ? ', ' + failed + ' fallback' : ''}, ${pr.ok ? pr.duration.toFixed(1) + 's' : '?'}, ${W}x${H})`);
+  if (suppressedResearchOverlays) U.log(`   clean-media policy: ${suppressedResearchOverlays} research hint/text overlay suppress kiye.`);
   if (missingNo) {
     U.log(`   ${missingNo} jagah placeholder laga hai — ye draft hai, final nahi.`);
     U.log('   Har placeholder par uska number likha hai (MISSING 001, 002 ...) aur wahi');

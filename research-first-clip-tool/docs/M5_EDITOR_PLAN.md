@@ -46,7 +46,7 @@ badalna, narration timing badalna, ya aisi file ka naam lena jo bani hi nahi.
 
 ## 3. Editor ka layout
 
-Dark, desktop jaisa, browser mein — `START_UI.bat` se khulega.
+Dark, desktop jaisa, browser mein — `MOVIE_EDITOR.bat` se khulega.
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐

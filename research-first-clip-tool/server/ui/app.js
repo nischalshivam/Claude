@@ -1,5 +1,5 @@
 // ============================================================
-//  Movie Editor UI (M5.0-A.2) — single page, no build.
+//  Movie Editor UI (M5.1) — single page, no build.
 //  Ek usool: readiness/state kabhi yahan calculate nahi hote — server ka
 //  PROJECT_STATE hi sach hai; ye page use dikhata hai.
 // ============================================================
@@ -29,6 +29,7 @@ async function upload(kind, file) {
 const mediaUrl = t => `/api/v1/media/${t}?token=${TOKEN}`;
 const thumbUrl = (t, s = 0) => `/api/v1/thumb/${t}?t=${s}&token=${TOKEN}`;
 const previewUrl = (t, s = 0, d = 6) => `/api/v1/preview/${t}?start=${Math.max(0, s)}&duration=${Math.max(.25, d)}&token=${TOKEN}`;
+const finalArtifactUrl = () => `/api/v1/artifacts/final?token=${TOKEN}`;
 function toast(msg, kind = '') { const t = $('#toast'); t.innerHTML = ''; t.append(el('div', { class: `toast ${kind}` }, msg)); setTimeout(() => { t.innerHTML = ''; }, kind === 'bad' ? 6500 : 3500); }
 function downloadText(name, text) { const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })), download: name }); document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
 async function copyText(text, ok = 'copy ho gaya') { try { await navigator.clipboard.writeText(text || ''); toast(ok, 'ok'); } catch { toast('clipboard permission nahi mili', 'bad'); } }
@@ -41,12 +42,12 @@ const STATE_BADGE = {
 };
 function badge(state) { return el('span', { class: 'badge ' + (STATE_BADGE[state] || 'b-busy') }, el('span', { class: 'dot' }), state); }
 
-let STATE = null, VIEW = 'newvideo', PRESET = 'auto';
+let STATE = null, VIEW = 'newvideo', PRESET = 'auto', START_ERROR = null, VIEW_EPOCH = 0;
 
 async function refreshState() {
   const { data } = await api('/state'); STATE = data;
   const s = $('#statusline');
-  if (s) s.textContent = `state: ${data.state}\ninputs: ${data.inputs && data.inputs.pack ? 'pack✓' : 'pack✗'} ${data.inputs && data.inputs.srt ? 'srt✓' : 'srt✗'} ${data.inputs && data.inputs.audio ? 'audio✓' : 'audio✗'}`;
+  if (s) s.textContent = `version: M5.1\nstate: ${data.state}\ninputs: ${data.inputs && data.inputs.pack ? 'pack✓' : 'pack✗'} ${data.inputs && data.inputs.srt ? 'srt✓' : 'srt✗'} ${data.inputs && data.inputs.audio ? 'audio✓' : 'audio✗'}`;
   return data;
 }
 
@@ -73,10 +74,11 @@ function topBar(title, sub, actions) {
 }
 
 // ===================== NEW VIDEO =====================
-async function viewNewVideo() {
+async function viewNewVideo(epoch = ++VIEW_EPOCH) {
   const v = $('#view'); v.className = ''; v.innerHTML = '';
   const box = el('div', { class: 'wrap' }); v.append(box);
   const { data: inp } = await api('/inputs');
+  if (epoch !== VIEW_EPOCH || VIEW !== 'newvideo') return;
   const I = (inp && inp.inputs) || {};
 
   topBar('New Video', 'Ek script + voiceover do — tool draft bana dega. Sab yahin, folder kholne ki zaroorat nahi.', [
@@ -138,12 +140,23 @@ async function viewNewVideo() {
   // ---- readiness strip ----
   box.append(readinessStrip());
 
-  // ---- job log ----
-  box.append(el('div', { class: 'card' }, el('h3', {}, 'Progress'), el('pre', { class: 'log', id: 'jobLog' }, STATE && STATE.job && STATE.job.running ? 'chal raha hai…' : '(abhi kuch nahi chal raha)')));
+  // ---- job result + log ----
+  const lastJob = STATE && STATE.job;
+  if (START_ERROR || (lastJob && !lastJob.running && lastJob.ok === false)) {
+    const er = START_ERROR || lastJob;
+    box.append(el('div', { class: 'card', style: 'border-color:var(--bad)' },
+      el('h3', { style: 'color:var(--bad)' }, `Build nahi bani${er.code ? ' — ' + er.code : ''}`),
+      el('p', { class: 'hint' }, er.message || er.error || 'Progress log mein detail dekho.'),
+      er.steps && er.steps.length ? el('pre', { class: 'log mt' }, er.steps.join('\n')) : null));
+  }
+  const priorLog = lastJob && Array.isArray(lastJob.log_tail) ? lastJob.log_tail.join('\n') : '';
+  box.append(el('div', { class: 'card' }, el('h3', {}, 'Progress'),
+    el('pre', { class: 'log', id: 'jobLog' }, priorLog || (lastJob && lastJob.running ? 'chal raha hai…' : '(abhi kuch nahi chal raha)'))));
   if (STATE && STATE.job && STATE.job.running) attachJobStream();
 
   // restore textarea if script saved earlier? (we don't fetch content; leave blank)
-  const bb = $('#buildBtn'); if (bb) bb.disabled = !(I.pack && I.pack.valid && I.srt);
+  const bb = $('#buildBtn');
+  if (bb) bb.disabled = !(I.pack && I.pack.valid && I.srt && I.audio && (!STATE.timebase || STATE.timebase.ok));
 }
 
 function inputBlock({ label, accept, kind, status, statusClass, errors }) {
@@ -171,7 +184,7 @@ async function doUpload(kind, file, drop) {
   if (drop) drop.textContent = 'bhej raha hoon: ' + file.name;
   const r = await upload(kind, file);
   if (!r.ok) { toast((file.name) + ': ' + (r.message || 'fail'), 'bad'); }
-  else toast(file.name + ' aa gaya', 'ok');
+  else { START_ERROR = null; toast(file.name + ' aa gaya', 'ok'); }
   await refreshState(); viewNewVideo();
 }
 async function saveScript() {
@@ -208,11 +221,14 @@ async function freshStart() {
   if (!confirm('Fresh start: abhi ka pack/voiceover/draft sab archive/ mein chala jayega (delete nahi hoga). Nayi video shuru karni hai?')) return;
   const { data } = await api('/new-project', { method: 'POST', body: '{}' });
   if (!data.ok) return toast(data.message || 'fresh start fail', 'bad');
+  START_ERROR = null;
   toast('Ho gaya — sab archive\\' + (data.archived_to || '') + ' mein. Ab nayi files daalo.', 'ok');
   await refreshState(); viewNewVideo();
 }
 async function showGenspark() {
+  const epoch = ++VIEW_EPOCH;
   const { data } = await api('/genspark-prompt');
+  if (epoch !== VIEW_EPOCH) return;
   const v = $('#view'); v.className = ''; v.innerHTML = '';
   const box = el('div', { class: 'wrap' }); v.append(box);
   topBar('Research pack kaise banaye', 'Ye prompt Genspark (ya kisi bhi LLM) mein daalo — wo scene-research.json de dega.', [el('button', { class: 'btn', onclick: () => setView('newvideo') }, '← wapas')]);
@@ -224,9 +240,15 @@ async function showGenspark() {
 
 // ===================== JOB (SSE) =====================
 let es = null;
+let EXPORT_HANDLE = null;
 function runJob(kind) {
   api(`/${kind === 'final' ? 'export' : 'draft'}`, { method: 'POST', body: '{}' }).then(({ data }) => {
-    if (!data.ok) return toast(data.error || data.message || 'job start nahi hua', 'bad');
+    if (!data.ok) {
+      START_ERROR = { code: data.code, message: data.error || data.message || 'job start nahi hua', steps: data.steps || [] };
+      toast(START_ERROR.message, 'bad');
+      return refreshState().then(() => viewNewVideo());
+    }
+    START_ERROR = null;
     toast(`${kind} shuru — pack check + build`, 'ok');
     if (VIEW !== 'newvideo') setView('newvideo'); else viewNewVideo();
     setTimeout(attachJobStream, 200); refreshState();
@@ -237,13 +259,73 @@ function attachJobStream() {
   es = new EventSource(`/api/v1/jobs/events?token=${TOKEN}`);
   const L = () => $('#jobLog');
   es.addEventListener('log', e => { const box = L(); if (!box) return; const d = JSON.parse(e.data); box.textContent += (box.textContent && !box.textContent.endsWith('\n') ? '\n' : '') + d.line; box.scrollTop = box.scrollHeight; });
-  es.addEventListener('done', e => { const d = JSON.parse(e.data); toast(`job khatam (exit ${d.exit})`, d.exit === 0 ? 'ok' : 'bad'); es.close(); es = null; refreshState().then(() => { if (VIEW === 'newvideo') viewNewVideo(); }); });
+  es.addEventListener('done', async e => {
+    const d = JSON.parse(e.data);
+    es.close(); es = null;
+    if (!d.ok) {
+      START_ERROR = { code: d.code, message: d.message || `Build exit ${d.exit} par ruk gayi.` };
+      toast(START_ERROR.message, 'bad');
+      return refreshState().then(() => viewNewVideo());
+    }
+    START_ERROR = null;
+    toast(d.message || 'Draft taiyar hai', 'ok');
+    if (d.kind === 'final') await saveFinalArtifact();
+    refreshState().then(() => { if (d.kind === 'draft') setView('editor'); else if (VIEW === 'newvideo') viewNewVideo(); });
+  });
   es.addEventListener('idle', () => { if (es) { es.close(); es = null; } });
   es.onerror = () => { if (es) { es.close(); es = null; } };
 }
 
+async function chooseExportHandle() {
+  if (!window.showSaveFilePicker) return null;
+  const base = ((STATE && STATE.job_id) || 'final-video').replace(/[^a-z0-9_-]+/gi, '-');
+  return window.showSaveFilePicker({ suggestedName: `${base}.mp4`,
+    types: [{ description: 'MP4 video', accept: { 'video/mp4': ['.mp4'] } }] });
+}
+
+async function exportFinal() {
+  const approvePending = !!(STATE && STATE.media_state === 'NEEDS_CRITICAL_APPROVAL');
+  if (approvePending && !confirm(`${STATE.blocking || 'Kuch'} HARD EVIDENCE visuals valid hain, par approval pending hai.\n\nKya aapne sabko dekh liya hai aur final video ke liye approve karte hain?`)) return;
+  // Chromium file picker direct click ke andar hi khul sakta hai, isliye pehle.
+  let handle = null;
+  try { handle = await chooseExportHandle(); }
+  catch (e) { if (e && e.name === 'AbortError') return; return toast('Save location select nahi hui: ' + e.message, 'bad'); }
+
+  await refreshState();
+  if (STATE && STATE.media_state === 'NEEDS_CRITICAL_APPROVAL') {
+    const { data } = await api('/missing');
+    const pending = (data.requests || []).filter(r => r.approval_required && r.approval_status !== 'APPROVED' && r.media_status === 'VALID');
+    if (!pending.length) return toast('Critical media abhi complete/valid nahi hai — Missing Media dekho.', 'bad');
+    const a = await api('/requests/approve-all-ready-critical', { method: 'POST', body: '{}' });
+    if (!a.ok || !a.data.ok) return toast(a.data.message || 'critical approval complete nahi hui', 'bad');
+    toast(`${a.data.approved} critical scenes approve ho gaye`, 'ok');
+    await refreshState();
+  }
+  if (!STATE || !STATE.can_export) { setView('missing'); return toast('Kuch media/approval abhi bhi pending hai — Missing Media khol diya.', 'bad'); }
+  EXPORT_HANDLE = handle;
+  runJob('final');
+}
+
+async function saveFinalArtifact() {
+  try {
+    const r = await fetch(finalArtifactUrl(), { headers: { 'x-rfc-token': TOKEN } });
+    if (!r.ok) throw new Error('final.mp4 stream nahi mili');
+    if (EXPORT_HANDLE && EXPORT_HANDLE.createWritable) {
+      const writable = await EXPORT_HANDLE.createWritable();
+      if (r.body && r.body.pipeTo) await r.body.pipeTo(writable);
+      else { await writable.write(await r.blob()); await writable.close(); }
+      toast('Final video aapke selected folder mein save ho gayi.', 'ok');
+    } else {
+      const a = el('a', { href: finalArtifactUrl(), download: `${(STATE && STATE.job_id) || 'final'}.mp4` });
+      document.body.append(a); a.click(); a.remove();
+      toast('Final video ready — browser Save As/download khol raha hai.', 'ok');
+    }
+  } catch (e) { toast(`Video tool ke jobs folder mein safe hai, par selected folder mein copy nahi hui: ${e.message}`, 'bad'); }
+  finally { EXPORT_HANDLE = null; }
+}
+
 // ===================== MISSING =====================
-async function viewMissing() {
+async function viewMissing(epoch = ++VIEW_EPOCH) {
   const v = $('#view'); v.className = ''; v.innerHTML = '';
   const box = el('div', { class: 'wrap' }); v.append(box);
   topBar('Missing Media', 'Jo footage internet par nahi mila — apni image/video daalo. Audio kabhi nahi badlega.', [
@@ -251,6 +333,7 @@ async function viewMissing() {
     el('button', { class: 'btn', onclick: () => openResearchKit('stage2') }, 'ChatGPT prompt 2'),
     el('button', { class: 'btn', onclick: refreshView }, 'Refresh')]);
   const { data } = await api('/missing');
+  if (epoch !== VIEW_EPOCH || VIEW !== 'missing') return;
   box.append(el('div', { class: 'card evidence-help' },
     el('h3', {}, 'HARD EVIDENCE ka matlab'),
     el('p', { class: 'hint', style: 'margin:4px 0 0' }, 'Narration koi factual ya scene-specific claim kar rahi hai. Yahan generic character photo ya random B-roll kaafi nahi: literal event, person ya object dikhna chahiye. Isi liye tool human approval maangta hai. NORMAL scenes mein ye extra tick nahi aata.')));
@@ -258,15 +341,30 @@ async function viewMissing() {
     el('button', { class: 'btn primary', onclick: () => openResearchKit('note') }, 'Missing-scenes note dekho / copy'),
     el('button', { class: 'btn', onclick: downloadResearchNote }, 'Note .txt download'),
     el('button', { class: 'btn', onclick: syncEditor }, 'Media editor mein lagao')));
+  const pendingCritical = (data.requests || []).filter(r => r.approval_required
+    && r.approval_status !== 'APPROVED' && r.media_status === 'VALID');
+  if (pendingCritical.length) box.append(el('div', { class: 'card approval-banner' },
+    el('h3', {}, `${pendingCritical.length} critical visuals upload ho chuke hain — sirf aapki approval baaki hai`),
+    el('p', { class: 'hint' }, 'Files missing nahi hain. Ek baar thumbnails dekh lo; phir ye button sab ready HARD EVIDENCE scenes ko approve karega. Empty/short file approve nahi hogi.'),
+    el('button', { class: 'btn primary', onclick: approveAllCritical }, `Maine sab dekh liye — ${pendingCritical.length} approve karo`)));
   if (!data.requests || !data.requests.length) {
     box.append(el('div', { class: 'card' }, el('p', {}, STATE && STATE.artifacts && STATE.artifacts.gap_plan ? 'Koi khaali jagah nahi — sab bhar chuka.' : 'Abhi koi request nahi. Pehle New Video se Draft banao.')));
     return;
   }
   for (const r of data.requests) box.append(missingCard(r));
 }
+async function approveAllCritical() {
+  if (!confirm('Kya aapne sab ready HARD EVIDENCE thumbnails dekh liye hain aur unhe final video ke liye approve karte hain?')) return;
+  const { ok, data } = await api('/requests/approve-all-ready-critical', { method: 'POST', body: '{}' });
+  if (!ok || !data.ok) return toast(data.message || 'bulk approval fail', 'bad');
+  toast(`${data.approved} critical scenes approve — state: ${data.state}`, 'ok');
+  await refreshState(); refreshView();
+}
 async function getResearchKit() { const { data } = await api('/missing/research-kit'); return data || {}; }
 async function openResearchKit(which) {
+  const epoch = ++VIEW_EPOCH;
   const data = await getResearchKit();
+  if (epoch !== VIEW_EPOCH) return;
   const text = which === 'stage1' ? data.stage1_prompt : which === 'stage2' ? data.stage2_prompt : data.note;
   const title = which === 'stage1' ? 'Prompt 1 — clean-script research map' : which === 'stage2' ? 'Prompt 2 — missing-scenes exact research' : 'Missing scenes — ready-to-copy note';
   const v = $('#view'); v.className = ''; v.innerHTML = ''; const box = el('div', { class: 'wrap' }); v.append(box);
@@ -362,15 +460,53 @@ async function removeMedia(key, file) {
 // ===================== EDITOR =====================
 let EDL = null, SEL = null;
 const PLAYER = { time: 0, playing: false, raf: 0, audio: null, media: null, shotId: null, startedAt: 0, startedTime: 0 };
-const ORIGIN_COLOR = { AUTO_EXACT: 'var(--ok)', AUTO_CONTEXT: 'var(--busy)', AUTO_STILL: 'var(--accent)', AUTO_MONTAGE: 'var(--busy)', AUTO_GRAPHIC: 'var(--warn)', USER: 'var(--warn)', MISSING: 'var(--bad)', UNKNOWN: 'var(--faint)' };
-async function viewEditor() {
+const ORIGIN_COLOR = { AUTO_EXACT: 'var(--ok)', AUTO_CONTEXT: 'var(--busy)', AUTO_STILL: 'var(--accent)', AUTO_MONTAGE: 'var(--busy)', AUTO_GRAPHIC: 'var(--warn)', USER: 'var(--warn)', USER_REPLACEMENT: 'var(--warn)', MISSING: 'var(--bad)', UNKNOWN: 'var(--faint)' };
+let SHOT_MENU = null;
+function closeShotMenu() { if (SHOT_MENU) SHOT_MENU.remove(); SHOT_MENU = null; }
+function showShotMenu(e, s) {
+  e.preventDefault(); e.stopPropagation(); SEL = s.shot_id; seekEditor(s.timeline.start); closeShotMenu();
+  const menu = el('div', { class: 'shot-menu' },
+    el('button', { onclick: () => { closeShotMenu(); chooseShotReplacement(s); } }, 'Change Clip / Image…'),
+    s.user_replaced ? el('button', { onclick: () => { closeShotMenu(); undoShotReplacement(s); } }, 'Original clip wapas lao') : null,
+    el('div', { class: 'shot-menu-note mono' }, `${clockFine(s.timeline.start)}–${clockFine(s.timeline.end)} · ${(s.timeline.end - s.timeline.start).toFixed(1)}s`));
+  document.body.append(menu); SHOT_MENU = menu;
+  menu.style.left = `${Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8)}px`;
+  menu.style.top = `${Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8)}px`;
+}
+window.addEventListener('click', closeShotMenu);
+window.addEventListener('blur', closeShotMenu);
+
+function chooseShotReplacement(s) {
+  const input = el('input', { type: 'file', accept: 'video/mp4,video/webm,video/quicktime,video/x-matroska,image/jpeg,image/png,image/webp', style: 'display:none' });
+  document.body.append(input);
+  input.onchange = async () => {
+    const f = input.files && input.files[0]; input.remove(); if (!f) return;
+    toast(`${s.slot_id}: ${f.name} laga raha hoon…`);
+    const url = `/api/v1/edl/${encodeURIComponent(s.shot_id)}/replace?name=${encodeURIComponent(f.name)}&expected_revision=${EDL.revision}&token=${TOKEN}`;
+    const r = await fetch(url, { method: 'POST', headers: { 'x-rfc-token': TOKEN }, body: f });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.ok) { toast(data.message || 'clip replace nahi hui', 'bad'); if (r.status === 409) viewEditor(); return; }
+    EDL = data.edl; SEL = s.shot_id; toast('Clip change save ho gaya — final export mein bhi yahi lagega.', 'ok'); viewEditor();
+  };
+  input.click();
+}
+
+async function undoShotReplacement(s) {
+  if (!confirm('Is shot par original automatic clip wapas laani hai?')) return;
+  const { ok, data, status } = await api(`/edl/${encodeURIComponent(s.shot_id)}/replacement?expected_revision=${EDL.revision}`, { method: 'DELETE' });
+  if (!ok) { toast(data.message || 'replacement undo nahi hui', 'bad'); if (status === 409) viewEditor(); return; }
+  EDL = data.edl; SEL = s.shot_id; toast('Original clip wapas aa gayi.', 'ok'); viewEditor();
+}
+async function viewEditor(epoch = ++VIEW_EPOCH) {
   stopPlayer(false);
   const v = $('#view'); v.className = 'editorwrap'; v.innerHTML = '';
   $('#top').innerHTML = ''; topBar('Editor', 'Voiceover-synced content preview · Space = play/pause · ←/→ = 2s seek', [
     el('button', { class: 'btn', onclick: () => setView('missing') }, 'Missing Media'),
     el('button', { class: 'btn', onclick: syncEditor }, 'Refresh media'),
-    el('button', { class: 'btn primary', onclick: () => runJob('final'), disabled: STATE && STATE.can_export ? null : 'disabled' }, 'Export')]);
+    el('button', { class: 'btn primary', onclick: exportFinal,
+      disabled: STATE && (STATE.can_export || STATE.media_state === 'NEEDS_CRITICAL_APPROVAL') ? null : 'disabled' }, 'Export / Save As')]);
   const { ok, data, status } = await api('/edl');
+  if (epoch !== VIEW_EPOCH || VIEW !== 'editor') return;
   if (!ok || !data.edl) {
     v.className = ''; v.innerHTML = '';
     v.append(el('div', { class: 'wrap' }, el('div', { class: 'card' }, el('p', {}, status === 404 ? 'Abhi koi draft nahi. New Video se Draft banao — phir har shot yahan dikhega.' : 'EDL load nahi hui.'), el('button', { class: 'btn primary', onclick: () => setView('newvideo') }, '→ New Video'))));
@@ -381,8 +517,10 @@ async function viewEditor() {
   const sel = shots.find(s => s.shot_id === SEL);
 
   const left = el('div', { class: 'ed-col l', id: 'shotList' }, el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Shots (' + shots.length + ')'));
-  for (const s of shots) left.append(el('div', { class: 'rowline shot-row', 'data-shot': s.shot_id, style: 'cursor:pointer;' + (s.shot_id === SEL ? 'background:var(--raised);' : ''), onclick: () => seekEditor(s.timeline.start) },
-    el('span', { class: 'k' }, s.display_label || s.slot_id.replace('SLOT_', '#')),
+  for (const s of shots) left.append(el('div', { class: 'rowline shot-row', 'data-shot': s.shot_id, style: 'cursor:pointer;' + (s.shot_id === SEL ? 'background:var(--raised);' : ''),
+    onclick: () => seekEditor(s.timeline.start), oncontextmenu: e => showShotMenu(e, s) },
+    el('div', {}, el('div', { class: 'shot-name' }, s.display_label || s.slot_id.replace('SLOT_', '#')),
+      el('div', { class: 'shot-time mono' }, `${clockFine(s.timeline.start)}–${clockFine(s.timeline.end)} · ${(s.timeline.end - s.timeline.start).toFixed(1)}s`)),
     el('span', { style: 'color:' + (ORIGIN_COLOR[s.provenance.origin] || 'var(--muted)') }, (s.provenance.origin || '').replace('AUTO_', '').toLowerCase() || '?')));
 
   const center = el('div', { class: 'ed-center' });
@@ -497,11 +635,17 @@ function inspector(s) {
   const box = el('div', {}); if (!s) return box;
   const L = (k, val) => el('div', { class: 'rowline' }, el('span', { class: 'k' }, k), el('span', { class: 'small' }, val == null || val === '' ? '—' : String(val)));
   box.append(el('div', { class: 'card', style: 'padding:12px' },
-    L('cue', s.cue ? '“' + s.cue.slice(0, 80) + '”' : '—'), L('range', `${clock(s.timeline.start)}–${clock(s.timeline.end)}`),
+    L('cue', s.cue ? '“' + s.cue.slice(0, 80) + '”' : '—'), L('range', `${clockFine(s.timeline.start)}–${clockFine(s.timeline.end)} (${(s.timeline.end - s.timeline.start).toFixed(1)}s)`),
     L('moments', (s.moment_ids || []).join(', ')), L('criticality', s.approval.criticality), L('origin', s.provenance.origin),
     L('scope', s.provenance.scope_relation), L('source', s.provenance.source_id), L('request key', s.request_key || '—'),
     L('media hash', s.asset && s.asset.sha256 ? s.asset.sha256.slice(0, 16) + '…' : '—'),
     s.approval.required ? L('approval', s.approval.status || 'PENDING') : null));
+  box.append(el('div', { class: 'card', style: 'padding:12px' },
+    el('h3', { style: 'font-size:12.5px' }, 'Shot media'),
+    el('p', { class: 'hint', style: 'margin:4px 0 9px' }, s.user_replaced ? `Manual: ${(s.replacement && s.replacement.file) || 'replacement'}` : 'Right-click shot ya neeche button se is clip ko badlo.'),
+    el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
+      el('button', { class: 'btn primary', onclick: () => chooseShotReplacement(s) }, 'Change Clip'),
+      s.user_replaced ? el('button', { class: 'btn', onclick: () => undoShotReplacement(s) }, 'Use Original') : null)));
   if (!s.asset || !s.asset.path_token) return box;
   const t = s.transform;
   const fld = (lab, node) => el('div', { class: 'field', style: 'margin:8px 0' }, el('label', {}, lab), node);
@@ -534,7 +678,8 @@ function timelineTracks(shots) {
       style: `left:${s.timeline.start * zoom}px;width:${w}px;background-color:${ORIGIN_COLOR[s.provenance.origin] || '#333'}` });
     if (s.asset && s.asset.path_token) clip.style.backgroundImage = `url(${thumbUrl(s.asset.path_token, s.asset.source_in || 0)})`;
     clip.append(el('div', { class: 'tg' }, s.display_label ? s.display_label.replace('MISSING ', 'M') : clock(s.timeline.start)));
-    clip.onclick = e => { e.stopPropagation(); seekEditor(s.timeline.start); }; canvas.append(clip); }
+    clip.onclick = e => { e.stopPropagation(); seekEditor(s.timeline.start); };
+    clip.oncontextmenu = e => showShotMenu(e, s); canvas.append(clip); }
   canvas.onclick = e => { const r = canvas.getBoundingClientRect(); seekEditor((e.clientX - r.left) / zoom); };
   canvas.append(el('div', { class: 'playhead', id: 'timelinePlayhead', 'data-zoom': String(zoom), style: `left:${PLAYER.time * zoom}px` }));
   const scroll = el('div', { class: 'timeline-scroll' }, canvas);
@@ -551,6 +696,7 @@ async function patchShot(shot_id, op) {
 
 // ===================== simple views =====================
 function viewQueue() {
+  ++VIEW_EPOCH;
   const v = $('#view'); v.className = ''; v.innerHTML = ''; topBar('Queue', 'Ek saath kai videos — abhi coming soon');
   v.append(el('div', { class: 'wrap' }, el('div', { class: 'card' },
     el('h3', {}, 'Queue (aa raha hai)'),
@@ -558,16 +704,18 @@ function viewQueue() {
     el('p', { class: 'small muted' }, 'Jab tak: New Video se ek video banao → editor → export → phir Fresh start se agli.'))));
 }
 function viewLibrary() {
+  ++VIEW_EPOCH;
   const v = $('#view'); v.className = ''; v.innerHTML = ''; topBar('Library', 'Sourcing abhi research-pack se hoti hai');
   v.append(el('div', { class: 'wrap' }, el('div', { class: 'card' },
     el('h3', {}, 'Library (aa raha hai)'),
     el('p', { class: 'hint' }, 'Design mein Library apni downloaded movies ko index karti hai. Abhi ye tool research-pack (Genspark) + online sources se chalta hai — wahi aapka asli flow hai. Local-movie library indexing baad ke milestone mein.'),
     el('button', { class: 'btn', onclick: showGenspark }, 'Research pack kaise banaye'))));
 }
-async function viewSettings() {
+async function viewSettings(epoch = ++VIEW_EPOCH) {
   const v = $('#view'); v.className = ''; v.innerHTML = ''; topBar('Settings', null);
   const box = el('div', { class: 'wrap' }); v.append(box);
   const { data } = await api('/health');
+  if (epoch !== VIEW_EPOCH || VIEW !== 'settings') return;
   box.append(el('div', { class: 'card' }, el('h3', {}, 'Tool'),
     el('div', { class: 'rowline' }, el('span', { class: 'k' }, 'version'), el('span', {}, (data && data.ui) || '?')),
     el('div', { class: 'rowline' }, el('span', { class: 'k' }, 'node'), el('span', {}, (data && data.node) || '?')),
@@ -593,8 +741,12 @@ window.addEventListener('keydown', e => {
 });
 
 (async function init() {
+  const bootEpoch = VIEW_EPOCH;
   try { setTheme(localStorage.getItem('rfc-theme') || 'dark'); } catch {}
   renderNav();
   try { await refreshState(); } catch { toast('server se connect nahi hua', 'bad'); }
-  setView('newvideo');
+  // User server response se pehle nav click kar de to boot us choice ko wapas
+  // New Video par overwrite na kare.
+  if (VIEW_EPOCH === bootEpoch) setView('newvideo');
+  else refreshView(); // early nav choice rakho, ab loaded STATE ke saath dobara paint
 })();

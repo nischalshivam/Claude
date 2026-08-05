@@ -1,0 +1,31 @@
+M5.0-B.2 FINAL VERIFICATION — 2026-08-05
+============================================================
+
+ROOT CAUSES FIXED
+1. Exact shots stored media in `video`; EDL ignored that field.
+2. Timeline used job-relative paths while media index hashed absolute paths.
+3. Montage images were classified as video and sent to an H.264 proxy.
+4. Existing broken EDL files were never rebuilt automatically.
+5. Legacy packs with missing criticality blocked final export after all gaps
+   had already been filled.
+6. FFmpeg/FFprobe/yt-dlp child processes flashed console windows on Windows.
+7. Concat frame rounding could make the video master shorter than narration.
+
+VERIFICATION
+- Mini/content:             13 PASS / 0 FAIL
+- Regression:              133 PASS / 0 FAIL
+- HTTP server/API:          15 PASS / 0 FAIL
+- M5B contract:             17 PASS / 0 FAIL
+- EDL -> FFmpeg parity:      6 PASS / 0 FAIL
+- Real Candace artifacts:  137/137 editor media tokens resolved
+- Browser-safe samples:    exact video, context video, still and graphic all
+  returned HTTP 200 with usable video/image content.
+- Real final export:       exit 0; 137 shots; 0 missing placeholders;
+  1920x1080; video 894.766667s; audio 894.7s.
+
+USER FLOW
+1. Double-click MOVIE_EDITOR.bat.
+2. Add pack, voiceover, script and SRT.
+3. Build Draft. Missing criticality is migrated automatically with a backup.
+4. Fill Missing Media; Editor refreshes the live EDL.
+5. Preview/edit and Export. No updater or old-folder drag step is required.

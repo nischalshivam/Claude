@@ -92,6 +92,13 @@ function fingerprint(spec, cfg, chk) {
   // jaana ek switch hai, naya project nahi.
   const cfgForHash = { ...cfg, output: { ...(cfg.output || {}) } };
   delete cfgForHash.output.mode;
+  // Presentation-only policy acquisition/cut evidence ko invalidate nahi
+  // karti. Isse hatane par style/text toggle poora cache wipe karke sources
+  // dobara download karta. Ye value neeche renderSig mein hai: sirf
+  // timeline/render/report rebuild honge.
+  cfgForHash.render = { ...(cfg.render || {}) };
+  delete cfgForHash.render.burnResearchOverlayText;
+  delete cfgForHash.render._overlayNote;
   return {
     pack: U.hashFile(spec.packFile),
     srt: U.hashFile(spec.srt),
@@ -102,7 +109,7 @@ function fingerprint(spec, cfg, chk) {
 }
 
 async function main() {
-  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M4.2.1'); U.log('='.repeat(60));
+  U.log('='.repeat(60)); U.log('  RESEARCH-FIRST CLIP TOOL — M5.1.1'); U.log('='.repeat(60));
 
   const cfg = U.config();
   // --review: diagnostic mode. Production gates (criticality, render-failure
@@ -245,7 +252,16 @@ async function main() {
       spec.isDiagnostic = true;
     }
     if (isFullExport && rep.missing_criticality) {
-      blockAndExit('CRITICALITY_MISSING', `${rep.missing_criticality} moments par criticality nahi hai — HOOK/HARD_EVIDENCE ka koi bachav nahi lagega.`, [
+      // One-time bridge for a project drafted before M5.0-B.2. Migrating its
+      // pack at Export time would change the fingerprint, stale every filled
+      // DATA folder and wipe hours of cached acquisition. This narrow waiver
+      // works only when canonical readiness says every detected human gap is
+      // complete. Fresh drafts are migrated before their first build.
+      if (flag('legacy-human-complete') && hybrid.state === 'HYBRID_READY') {
+        U.warn(`LEGACY HUMAN-COMPLETE — ${rep.missing_criticality} old moments par criticality field nahi thi, ` +
+          `par ${hybrid.ready}/${hybrid.total} detected gaps aapke reviewed media se complete hain. Cache/DATA bachakar export jaari.`);
+        spec.legacyCriticalityWaiver = true;
+      } else blockAndExit('CRITICALITY_MISSING', `${rep.missing_criticality} moments par criticality nahi hai — HOOK/HARD_EVIDENCE ka koi bachav nahi lagega.`, [
         'Criticality bataati hai ki kaunsa beat bina asli footage ke chhap hi nahi sakta.',
         'Ye na ho to engine sab kuch NORMAL maan leta hai aur udhaar footage chup-chaap chalta hai.',
         '',
@@ -286,7 +302,9 @@ async function main() {
   let edlSig = 'none';
   try { const projRoot = process.env.RFC_PROJECT_DIR ? path.resolve(process.env.RFC_PROJECT_DIR) : U.ROOT;
     edlSig = edlMod.editSignature(edlMod.read(projRoot)); } catch {}
-  const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production', edlSig].join('|'));
+  const overlayPolicy = !!(cfg.render && cfg.render.burnResearchOverlayText === true);
+  const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production', edlSig,
+    `research-overlay=${overlayPolicy}`].join('|'));
   if (!flag('redo') && st.render_sig && st.render_sig !== renderSig) {
     U.log('   aapka media ya mode badla hai — timeline/render dobara banega (downloads waise ke waise rahenge)');
     for (const k of ['timeline', 'render', 'report']) delete (st.done || {})[k];
@@ -383,6 +401,12 @@ async function main() {
         if (applied.applied) {
           tl = applied.tl;
           U.ok(`aapka apna media ${applied.applied} jagah laga diya (${(applied.labels || applied.requests).join(', ')})`);
+          const cardAssets = new Set(['GENERIC_TEXT_GRAPHIC', 'LOW_CONFIDENCE_FALLBACK', 'MISSING_PLACEHOLDER']);
+          const cardShots = tl.slots.filter(s => cardAssets.has(s.asset));
+          const cardSeconds = cardShots.reduce((n, s) => n + Number(s.dur || 0), 0);
+          const userShots = tl.slots.filter(s => s.manual || /^USER_/.test(String(s.asset || ''))).length;
+          const cardPct = tl.total ? Math.round(cardSeconds / tl.total * 1000) / 10 : 0;
+          U.ok(`effective timeline (DATA ke baad): ${tl.slots.length} shots, ${userShots} user shots, ${cardShots.length} generic/missing cards (${cardPct}%)`);
         }
 
         // 3. EK EFFECTIVE GATE — final slots par ek hi faisla

@@ -1,0 +1,49 @@
+{
+  "version": "M5.1.1 FINAL",
+  "package_version": "5.1.1",
+  "based_on": "researchfirstcliptoolM5.0B.2_FINAL",
+  "original_user_files_modified": false,
+  "date": "2026-08-05",
+  "root_causes_fixed": [
+    "EADDRINUSE second-instance crash",
+    "run.js exit 2/3 incorrectly reported as UI success exit 0",
+    "success without draft.mp4/final.mp4 artifact",
+    "2.3-second final subtitle display-tail blocked a 14m54.7s voiceover",
+    "completed failure log disappeared from New Video screen",
+    "old-folder drag/update workflow caused version confusion",
+    "editor omitted exact shot.video paths and hashed relative paths against an absolute media index",
+    "montage JPGs were incorrectly sent through the video proxy",
+    "legacy packs required a separate criticality repair before final export",
+    "FFmpeg child consoles flashed repeatedly on Windows",
+    "concat rounding could trim 0.9 seconds from a long narration tail"
+  ],
+  "user_flow": [
+    "unzip once",
+    "double-click MOVIE_EDITOR.bat",
+    "add pack, audio, script and SRT in New Video",
+    "Build -> Editor",
+    "fill Missing Media and edit",
+    "Export",
+    "use Fresh start for the next video"
+  ],
+  "verification": {
+    "user_timebase_preflight": "PASS",
+    "one_click_busy_port_and_reuse": "PASS",
+    "browser_ui": "PASS, zero console errors",
+    "mini_content": "13 PASS / 0 FAIL",
+    "regression": "133 PASS / 0 FAIL",
+    "server": "17 PASS / 0 FAIL",
+    "m5b_contract": "21 PASS / 0 FAIL",
+    "edl_ffmpeg_parity": "11 PASS / 0 FAIL",
+    "total": "195 PASS / 0 FAIL",
+    "real_project_editor": "137/137 shots resolved; sampled exact/context/image/graphic previews HTTP 200",
+    "real_project_final": "exit 0; 137 shots; 0 placeholders; 1920x1080; video 894.766667s; audio 894.7s"
+  },
+  "honest_remaining_scope": [
+    "full ripple/split/reorder editor",
+    "style templates, transitions and effects",
+    "batch queue and multi-project library",
+    "offline speech transcription; current Auto-SRT is estimated",
+    "transitions, animations, effects and text-template library (next milestone)"
+  ]
+}

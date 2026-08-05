@@ -841,7 +841,7 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
 
   // --- (5b) asli preview se mile do quality bugs ---
   // (a) ek hi hint moment ke DO shots par lag jata tha -> 8-11s ka freeze jaisa
-  // (b) analysis beat ka overlay_text gayab ho gaya tha (plain still ban gaya)
+  // (b) research overlay_text galti se final title ban kar burn nahi hona chahiye
   (() => {
     const qd = path.join(FX, 'm33quality');
     // 14-second beat -> shot planner ise 2-3 shots mein todega
@@ -871,9 +871,9 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     check('T-M338 two consecutive shots of one moment never show the same frame',
       qs.length >= 2 && adjRepeat === 0,
       `${qs.length} shots, ${new Set(imgs).size} distinct frames, ${adjRepeat} adjacent repeats`);
-    check('T-M339 analysis beat keeps its overlay text (media-backed graphic, not a silent still)',
-      qs.length > 0 && qs.every(s => s.asset === 'TEMPLATE_GRAPHIC_MEDIA'),
-      `assets=${[...new Set(qs.map(s => s.asset))].join('/')}`);
+    check('T-M339 research overlay_text is planning metadata: default final stays clean',
+      qs.length > 0 && qs.every(s => s.asset === 'VERIFIED_SOURCE_STILL' && s.research_overlay_suppressed === true),
+      `assets=${[...new Set(qs.map(s => s.asset))].join('/')} suppressed=${qs.filter(s => s.research_overlay_suppressed).length}`);
   })();
 
   // --- (5c) range download re-encode flag hata diya gaya hai ---
@@ -2028,12 +2028,16 @@ const good = makeEp(path.join(FX, 'ep'), 'good', [
     const t2 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
     mkSrt(12);                                       // audio SRT se ~8s lamba
     const t3 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
+    mkSrt(17.2);                                     // audio SRT se ~2.8s lamba
+    const t4 = timebase.resolve({ srtFile, audioFile: a20, cfg: cfgJson });
 
     check('T-M42113 a small SRT tail is clamped to the audio, a 10s gap is blocked, never silently cut',
       t1.ok === true && t1.correction === 'CLAMPED_SRT_TAIL' && Math.abs(t1.project_duration - t1.audio_duration) < 0.01
         && t2.ok === false && t2.correction === 'SRT_LONGER_THAN_AUDIO'
-        && t3.ok === false && t3.correction === 'AUDIO_LONGER_THAN_SRT',
-      `tail=${t1.correction}/${t1.ok} short=${t2.correction}/${t2.ok} long=${t3.correction}/${t3.ok}`);
+        && t3.ok === false && t3.correction === 'AUDIO_LONGER_THAN_SRT'
+        && t4.ok === true && t4.correction === 'EXTENDED_TO_AUDIO'
+        && Math.abs(t4.project_duration - t4.audio_duration) < 0.01,
+      `tail=${t1.correction}/${t1.ok} short=${t2.correction}/${t2.ok} long=${t3.correction}/${t3.ok} lead=${t4.correction}/${t4.ok}`);
 
     // clamp ke baad cue project ki lambai se aage na jaye
     mkSrt(21.4);

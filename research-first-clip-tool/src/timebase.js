@@ -42,6 +42,27 @@ function audioSignature(f) {
   try { const s = fs.statSync(f); return `${s.size}:${Math.round(s.mtimeMs)}`; } catch { return 'na'; }
 }
 
+// Subtitle exporters often keep the final cue on screen for a few seconds
+// after a long voiceover ends. Use a bounded proportional allowance for only
+// that display tail: 0.5% of audio, never over 5 seconds by default.
+function tailTolerance(audioDuration, baseTolerance, cfg = {}) {
+  const render = cfg.render || {};
+  const ratio = Number.isFinite(+render.audioTailClampRatio) ? +render.audioTailClampRatio : 0.005;
+  const hardMax = Number.isFinite(+render.audioTailClampMaxSeconds) ? +render.audioTailClampMaxSeconds : 5.0;
+  const proportional = Math.max(0, Number(audioDuration) || 0) * Math.max(0, ratio);
+  return +Math.max(baseTolerance, Math.min(hardMax, proportional)).toFixed(3);
+}
+
+// SRT ki aakhri display timing voiceover se 2–3 second pehle rukna common hai.
+// Audio ko kabhi trim nahi karte: bounded gap par last visual audio end tak
+// extend hota hai. Bada gap phir bhi block hai, kyunki wahan narration map hi
+// missing ho sakta hai.
+function leadTolerance(baseTolerance, cfg = {}) {
+  const render = cfg.render || {};
+  const hardMax = Number.isFinite(+render.audioLeadExtendMaxSeconds) ? +render.audioLeadExtendMaxSeconds : 5.0;
+  return +Math.max(baseTolerance, Math.max(0, hardMax)).toFixed(3);
+}
+
 /**
  * Ek hi jagah tay karo ki project kitna lamba hai.
  *
@@ -69,8 +90,10 @@ function resolve(o = {}) {
     if (p && p.duration > 0) audio_duration = +Number(p.duration).toFixed(3);
   }
 
+  const tailTol = audio_duration == null ? tol : tailTolerance(audio_duration, tol, cfg);
+  const leadTol = leadTolerance(tol, cfg);
   const base = {
-    srt_end, tolerance: tol,
+    srt_end, tolerance: tol, tail_tolerance: tailTol, lead_tolerance: leadTol,
     audio_signature: o.audioFile ? audioSignature(o.audioFile) : 'none',
   };
 
@@ -86,17 +109,17 @@ function resolve(o = {}) {
     return { ...base, audio_duration, project_duration, correction: CORRECTION.NONE,
       difference_sec: diff, ok: true, reason: null };
   }
-  if (diff > 0 && diff <= tol) {
+  if (diff > 0 && diff <= tailTol) {
     return { ...base, audio_duration, project_duration, correction: CORRECTION.CLAMPED_SRT_TAIL,
       difference_sec: diff, ok: true,
-      reason: `SRT ${srt_end.toFixed(1)}s tak jati hai par voiceover ${audio_duration.toFixed(1)}s ka hai — aakhri ${diff.toFixed(1)}s kaat diya` };
+      reason: `SRT ${srt_end.toFixed(1)}s tak jati hai par voiceover ${audio_duration.toFixed(1)}s ka hai — sirf aakhri subtitle ki ${diff.toFixed(1)}s display-tail audio end par clamp ki` };
   }
-  if (diff < 0 && -diff <= tol) {
+  if (diff < 0 && -diff <= leadTol) {
     return { ...base, audio_duration, project_duration, correction: CORRECTION.EXTENDED_TO_AUDIO,
       difference_sec: diff, ok: true,
       reason: `voiceover ${audio_duration.toFixed(1)}s ka hai par SRT ${srt_end.toFixed(1)}s par khatam — aakhri shot ${(-diff).toFixed(1)}s bada kar diya` };
   }
-  if (diff > tol) {
+  if (diff > tailTol) {
     return { ...base, audio_duration, project_duration, correction: CORRECTION.SRT_LONGER_THAN_AUDIO,
       difference_sec: diff, ok: false,
       reason: `voiceover sirf ${audio_duration.toFixed(1)}s ka hai par SRT ${srt_end.toFixed(1)}s tak likhi hai — ${diff.toFixed(1)}s ki narration audio mein hai hi nahi` };
@@ -142,11 +165,11 @@ function blockSteps(tb) {
     steps.push('  - audio ka aakhri khaali/extra hissa kaat do');
   }
   steps.push('');
-  steps.push(`Abhi ki chhoot: ${tb.tolerance.toFixed(1)}s tak ka farak tool khud theek kar leta hai`);
-  steps.push('(config.json -> render.audioClampSeconds).');
+  steps.push(`Abhi ki chhoot: audio lambi ho to ${Number(tb.lead_tolerance || tb.tolerance).toFixed(1)}s; sirf SRT display-tail ho to ${Number(tb.tail_tolerance || tb.tolerance).toFixed(1)}s tak`);
+  steps.push('(config.json -> render.audioLeadExtendMaxSeconds / audioTailClampMaxSeconds).');
   steps.push('');
   steps.push('Sirf dekhna hai, export nahi? command ke aage --accept-audio-mismatch lagao.');
   return steps;
 }
 
-module.exports = { resolve, clampCues, blockSteps, audioSignature, CORRECTION };
+module.exports = { resolve, clampCues, blockSteps, audioSignature, tailTolerance, leadTolerance, CORRECTION };

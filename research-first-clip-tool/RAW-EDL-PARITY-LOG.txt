@@ -4,7 +4,15 @@
   [PASS] P-3 crop_x=0 (+scale2) actually renders the LEFT half — centre pixel is RED  — rgb=253,0,0
   [PASS] P-4 crop_x=1 (+scale2) actually renders the RIGHT half — centre pixel is BLUE  — rgb=0,0,255
   [PASS] P-5 editing framing never changed narration timing (rendered ~ audio)  — rendered=12 audio=12
+  [PASS] P-6 per-shot replacement is recorded as applied in final render manifest  — replace=true exit=0 recorded=true
+  [PASS] P-7 Change Clip actually changes exported pixels (green auto shot -> magenta user image)  — rgb=253,1,252
+  [PASS] P-8 voiceover is never cut when SRT ends 3s early; last visual extends to exact audio end  — exit=0 total=12 dur={"audio":12,"srt_end_before_clamp":9,"timeline":12,"rendered":12,"target":12,"correction":"EXTENDED_TO_AUDIO","difference_sec":-3,"tolerance_sec":2,"audio_available":12,"rendered_vs_audio_sec":0} beatEnd=12
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (1 segments, 2.0s, 640x360)
+   clean-media policy: 1 research hint/text overlay suppress kiye.
+  [PASS] P-9 cached GRAPHIC timeline renders clean media by default (no dim/text layer)  — rgb=1,254,0 error=none
+  [PASS] P-10 manifest proves research overlay suppression and contains no graphic-overlay asset  — shot=VERIFIED_SOURCE_STILL policy={"enabled":false,"suppressed_shots":1,"source":"config.render.burnResearchOverlayText"}
 
 ==============================================================
-  EDL PARITY SUMMARY: 6 PASS, 0 FAIL
+  EDL PARITY SUMMARY: 11 PASS, 0 FAIL
 ==============================================================

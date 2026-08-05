@@ -43,7 +43,7 @@ function buildInfo(root) {
 
 let bad = 0;
 console.log('='.repeat(62));
-console.log('  UPDATE CHECK — sach mein kya laga aur kya bacha');
+console.log('  TOOL INTEGRITY CHECK — fresh package poori hai ya nahi');
 console.log('='.repeat(62));
 
 const bi = buildInfo(ROOT);
@@ -78,20 +78,12 @@ for (const y of YOURS) {
   console.log(exists(p) ? `    [surakshit] ${y}` : `    [hai hi nahi] ${y}   (abhi bana nahi — normal hai)`);
 }
 
-// backup mila? (UPDATE_TOOL.bat _backup_code_* banata hai)
-let backups = [];
-try { backups = fs.readdirSync(ROOT).filter(n => n.startsWith('_backup_code_')); } catch {}
-console.log('');
-console.log(backups.length
-  ? `  purane code ka backup: ${backups[backups.length - 1]}  (rollback yahan se)`
-  : '  purane code ka backup nahi mila — agar update abhi chala hai to ye dekhna chahiye.');
-
 console.log('='.repeat(62));
 if (bad) {
   console.log('  [DHYAN DO] Upar jo [NAHI AAYA] / [PURANI REH GAYI] likha hai, wo theek karna hai.');
-  console.log('  Aam wajah: naya folder aadha unzip hua. Dobara unzip karke UPDATE_TOOL.bat chalao.');
+  console.log('  Aam wajah: ZIP aadha unzip hua. Fresh ZIP ko nayi jagah dobara unzip karo.');
 } else {
-  console.log('  Sab theek hai. Ab START_HERE.bat chalao.');
+  console.log('  Sab theek hai. Ab MOVIE_EDITOR.bat chalao.');
 }
 console.log('='.repeat(62));
 process.exit(bad ? 2 : 0);

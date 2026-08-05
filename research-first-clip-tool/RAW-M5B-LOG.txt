@@ -3,7 +3,20 @@ PASS ten assets exactly tile 18s
 PASS one short video fills 18s
 PASS explicit reuse creates pacing shots
 PASS same-request shots preserve independent EDL edits
+PASS per-shot replacement survives EDL rebuild and reconciles into final timeline by stable slot id
+PASS EDL canonicalizes exact/context/montage media and gives montage image type
 PASS short manual video render is loop-safe
+PASS editor exposes right-click replacement, exact shot times and streamed Save-As
 PASS CHATGPT_STAGE1_TOPIC_AND_SOURCE_MAP_PROMPT.txt forbids invented sources
 PASS CHATGPT_STAGE2_MISSING_SCENE_RESEARCH_PROMPT.txt forbids invented sources
-M5B CONTRACT: 8 PASS / 0 FAIL
+PASS long voiceover gets a bounded minor SRT display-tail allowance
+PASS audio can lead SRT by 2–3s without cutting the voiceover, but allowance stays bounded
+PASS job exit policy is fail-closed (only pack-check may use exit 2)
+PASS UI preflight can detect legacy packs that need automatic criticality migration
+PASS criticality strategy migrates fresh drafts but preserves a completed legacy cache
+PASS legacy waiver is narrow: explicit flag plus HYBRID_READY are both required
+PASS presentation overlay policy invalidates only timeline/render, never acquisition cache
+PASS all backend command runners hide child console windows on Windows
+PASS launcher and server share a stable instance identity
+PASS fresh package exposes one launcher and no updater/old-folder workflow
+M5B CONTRACT: 21 PASS / 0 FAIL

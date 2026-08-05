@@ -60,7 +60,10 @@ function run(bin, args, { timeout = 600000, input = null, throwOnFail = false, m
   // chahiye. yt-dlp aksar .cmd wrapper ke roop mein install hota hai, aur
   // RFC_YTDLP bhi wrapper par point kar sakta hai. Sirf usi case mein shell.
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(bin));
-  const opts = { timeout, maxBuffer, encoding: 'utf8', input: input || undefined };
+  // FFmpeg/FFprobe/yt-dlp ko Node se chalate waqt Windows console flash karta
+  // tha. Saara backend kaam hidden rahe; launcher/UI hi user-facing window hai.
+  const opts = { timeout, maxBuffer, encoding: 'utf8', input: input || undefined,
+    windowsHide: process.platform === 'win32' };
   if (needsShell) { opts.shell = true; args = args.map(a => (/[\s"^&|<>]/.test(String(a)) ? `"${String(a).replace(/"/g, '""')}"` : a)); }
   const r = spawnSync(bin, args, opts);
   const res = {

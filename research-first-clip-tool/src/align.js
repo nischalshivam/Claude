@@ -102,6 +102,20 @@ function align(spec, cfg, st) {
     });
   }
 
+  // Voiceover SRT se thodi lambi ho to AUDIO hi duration hai. Last mapped
+  // visual ko us exact audio end tak badhao; warna timeline total sahi hone ke
+  // bawajood aakhri 2–3 second ke liye koi shot plan nahi hota.
+  let extendedTail = 0;
+  if (tb && tb.correction === 'EXTENDED_TO_AUDIO') {
+    const last = aligned.filter(a => a.beat_end != null)
+      .sort((a, b) => b.beat_end - a.beat_end || b.beat_start - a.beat_start)[0];
+    if (last && last.beat_end < total) {
+      extendedTail = +(total - last.beat_end).toFixed(3);
+      last.beat_end = +total.toFixed(3);
+      last.timebase_tail_extended = true;
+    }
+  }
+
   // coverage: kitni narration moments se cover hui (informational)
   aligned.sort((a, b) => (a.beat_start ?? 1e9) - (b.beat_start ?? 1e9));
   let covered = 0;
@@ -113,8 +127,9 @@ function align(spec, cfg, st) {
 
   U.ok(`aligned ${aligned.length} moments — ${okCount} clean, ${reviewCount} review/ambiguous`);
   U.log(`   narration length ${total.toFixed(1)}s | moment-coverage ~${coveragePct}%`);
+  if (extendedTail) U.log(`   aakhri visual ${extendedTail.toFixed(1)}s audio end tak extend kiya — voiceover poori rahegi`);
   if (clamped) U.log(`   ${clamped} beat project ki lambai (${total.toFixed(1)}s) par kaate gaye`);
-  st.meta.align = { total: +total.toFixed(1), moments: aligned.length, clean: okCount, review: reviewCount, coveragePct, clamped };
+  st.meta.align = { total: +total.toFixed(1), moments: aligned.length, clean: okCount, review: reviewCount, coveragePct, clamped, extendedTail };
   return { total, moments: aligned };
 }
 

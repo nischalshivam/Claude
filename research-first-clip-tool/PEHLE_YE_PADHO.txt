@@ -1,91 +1,33 @@
-=========================================================
-  MOVIE EDITOR (M5.0-A.2) — SAB KUCH UI SE. FRESH START.
-=========================================================
+============================================================
+  MOVIE EDITOR M5.0-B.2 — FRESH START, ONE-CLICK
+============================================================
 
-Ab folder drag karne ki, purane folder dhoondhne ki zaroorat NAHI hai.
-Sab kaam ek hi window (browser) se hoga.
+Purana folder drag, UPDATE_TOOL, ya files manually copy karna bilkul nahi.
 
+1. ZIP ko ek nayi jagah unzip karo.
+2. Sirf MOVIE_EDITOR.bat par double-click karo.
+3. Browser mein New Video screen par ye files do:
+   - Research pack (.json)
+   - Voiceover (.mp3 / .m4a / .wav)
+   - Clean script (.txt ya paste)
+   - SRT: apni .srt do, ya Auto-banao dabao
+4. Build -> Editor dabao. Build sach mein draft.mp4 banne ke baad hi Editor
+   khulega. Failure hua to isi screen par exact reason aur log rahega.
+5. Missing Media mein gaps bharo, Editor mein preview/edit karo, phir Export.
 
----------------------------------------------------------
-PEHLI BAAR — 2 STEP
----------------------------------------------------------
-1. Is ZIP ko kahin bhi unzip karo (Desktop par nayi jagah — purane folders
-   ko haath mat lagao, unki zaroorat nahi).
+NOTE:
+Purane research pack mein criticality missing ho to tool uski backup banakar
+safe values khud bharega aur pack check dobara chalayega. Aapko REPAIR.bat ya
+alag migration command chalane ki zaroorat nahi.
 
-2. Andar START_UI.bat par double-click karo.
-   Browser apne aap khul jayega: Movie Editor.
+AGLI VIDEO:
+UI ke andar Fresh start dabao. Purana project archive/ mein safe chala jayega;
+input screen khali ho jayegi. Folder badalne ki zaroorat nahi.
 
-   (Node install hona chahiye — Node 18+. Agar "Node nahi mila" aaye to
-    ek baar nodejs.org se install karke dobara chalao.)
+AGAR DOBARA MOVIE_EDITOR CLICK KIYA:
+Tool running instance ko hi dobara kholega. "address already in use" error
+nahi aayega. Port busy ho to tool khud doosra free port chunega.
 
-
----------------------------------------------------------
-NAYI VIDEO BANANA — 4 CHEEZEIN, SAB UI SE
----------------------------------------------------------
-Left mein "New Video" par jao. Teen cheezein deni hain:
-
-  1) RESEARCH PACK (.json)
-     Ye Genspark se banta hai. Nahi hai? Upar "Research pack chahiye?"
-     button dabao — poora prompt milega. Use Genspark mein paste karo,
-     apni script do, jo .json aaye use yahan daal do (drag ya click).
-     Daalte hi tool bata dega: kitne packs, kitne moments — sahi hai ya nahi.
-
-  2) VOICEOVER (mp3 / m4a / wav — koi bhi)
-     Apni narration ki audio daalo. Tool khud samajh lega format.
-     Daalte hi uski lambai dikh jayegi.
-
-  3) CLEAN SCRIPT (narration ka text)
-     Poori narration text box mein paste karo → "Script save karo".
-     (ya .txt file daal do)
-
-  Ab TIMING (.srt):
-     - Aapke paas asli .srt hai (TTS/Whisper se)? "Apni .srt daalo" — sabse
-       badhiya, exact timing.
-     - Nahi hai? "Auto-banao (script + audio se)" dabao. Tool anumaan-timing
-       ki .srt bana dega. Draft ke liye kaafi; editor mein theek kar sakte ho.
-
-Sab hara (✓) dikhne lage to upar "Build → Editor" dabao.
-Tool pehle pack check karega, phir poori draft video banayega. Progress
-neeche live dikhega.
-
-
----------------------------------------------------------
-DRAFT KE BAAD
----------------------------------------------------------
-- "Editor" tab: har shot, preview, aur neeche timeline. Kisi shot par click
-  karo — right side uski poori detail + trim/crop.
-
-- "Missing Media" tab: jahan tool ko footage nahi mila (aksar wo movie jo
-  internet par hai hi nahi), wahan apni image/video daalo — drag & drop.
-  Zaroori (laal) beats par "approve" ka tick lagao.
-
-- Sab bhar jaaye to "Export" (editor ke upar) — final video ban jayegi.
-
-
----------------------------------------------------------
-AGLI NAYI VIDEO
----------------------------------------------------------
-Upar "Fresh start" dabao — abhi ka sab kaam archive\ mein chala jayega
-(delete kuch nahi hota), aur aap nayi script/voiceover daal sakte ho.
-Purane folders dhoondhne ki koi zaroorat nahi.
-
-
----------------------------------------------------------
-ABHI KYA COMING SOON HAI (imaandari se)
----------------------------------------------------------
-- Queue (5-10 video ek saath) — aa raha hai. Abhi ek waqt mein ek video.
-- Library (apni downloaded movies index karna) — abhi sourcing research-pack
-  se hoti hai (wahi aapka flow hai).
-- "Look" ke presets (Cinematic/Tense…) — Content Lock ke baad lagenge (M5.1).
-  Abhi chun ke rakh sakte ho, effect abhi nahi lagta.
-- Editor ke crop/trim EDL mein save hote hain; final render mein wo M5.0-B se
-  judenge. Missing-media (upload/approve) abhi bhi final ko affect karta hai.
-
-Poori list: KNOWN_LIMITATIONS.md
-
-
----------------------------------------------------------
-AGAR KUCH RUKE
----------------------------------------------------------
-Screen par jo likha hai wo padho. Progress log neeche hota hai.
-Phir bhi na chale to wo log mujhe bhej dena.
+SUPPORT:
+Build fail ho to New Video -> Progress ka poora text bhejo.
+Launcher fail ho to .runtime/server-7900.log bhejo.

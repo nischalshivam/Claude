@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-//  M5 LOCAL SERVER (M5.0-A) — editor ka backend.
+//  M5 LOCAL SERVER (M5.1) — editor ka backend.
 //
 //  Design faisle (jaan-boojh kar):
 //   * SIRF Node ka apna http — koi npm install nahi, koi framework nahi.
@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const INSTANCE_ID = crypto.createHash('sha256').update(ROOT.toLowerCase()).digest('hex').slice(0, 20);
 const U = require(path.join(ROOT, 'src', 'util.js'));
 const manual = require(path.join(ROOT, 'src', 'manual.js'));
 const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
@@ -89,7 +90,8 @@ function mediaIndex() {
   const out = {};
   // Voiceover is a first-class editor track, so the current input directory
   // belongs to the same token allow-list as DATA and job media.
-  const roots = [DATA, INPUT_DIR()];
+  // Per-shot editor replacements bhi isi opaque-token allow-list ke andar hain.
+  const roots = [DATA, INPUT_DIR(), path.join(edlMod.projectRoot(PROJ()), 'replacements')];
   const id = jobId();
   if (id) { try { roots.push(U.jobDir(id)); } catch {} }
   for (const r of roots) { try { if (fs.existsSync(r)) walkMedia(r, roots, out); } catch {} }
@@ -118,25 +120,102 @@ function packReportFresh() {
   } catch { return false; }
 }
 
+function missingCriticalityCount(packFile) {
+  try {
+    const p = JSON.parse(fs.readFileSync(packFile, 'utf8'));
+    let n = 0;
+    for (const pk of (p.packs || [])) for (const m of (pk.moments || [])) if (!m.criticality) n++;
+    return n;
+  } catch { return 0; }
+}
+
+function criticalityStrategy(kind, hasTimeline, missingCrit, canExport) {
+  const legacyDraft = kind === 'final' && !!hasTimeline;
+  return {
+    migrate_now: missingCrit > 0 && !legacyDraft,
+    legacy_waiver: legacyDraft && missingCrit > 0 && !!canExport,
+  };
+}
+
+function readJobResult(id) {
+  if (!id) return null;
+  try { return JSON.parse(fs.readFileSync(U.p(id, 'job-result.json'), 'utf8')); }
+  catch { return null; }
+}
+
+function failureDetails(job, exitCode) {
+  const result = readJobResult(job.id);
+  const logLine = [...job.log].reverse().find(l => /\[FAIL\]|PRODUCTION GATE|fatal:|error:/i.test(l));
+  const blocked = result && (result.blocked_reason || result.reason || result.message);
+  return {
+    code: result && result.blocked_reason ? result.blocked_reason
+      : exitCode === 3 ? 'PRODUCTION_GATE_BLOCKED' : exitCode === 2 ? 'BUILD_BLOCKED' : 'TOOL_ERROR',
+    message: String(blocked || logLine || `${job.kind} build exit ${exitCode} par ruk gayi`),
+    report: result || null,
+  };
+}
+
+function preflightJob(kind) {
+  if (!['draft', 'final'].includes(kind)) return { ok: false, code: 'BAD_JOB_KIND', error: 'unknown job type' };
+  const inp = inputInfo();
+  if (!inp.pack) return { ok: false, code: 'NO_PACK', error: 'Research pack (.json) pehle daalo.' };
+  if (!inp.srt) return { ok: false, code: 'NO_SRT', error: 'Voiceover timing (.srt) pehle daalo ya Auto-banao.' };
+  if (!inp.audio && !(cfg.render && cfg.render.allowSilent)) return { ok: false, code: 'NO_AUDIO', error: 'Voiceover audio (mp3/m4a/wav) pehle daalo.' };
+  try {
+    const v = validate.validateFile(inp.pack);
+    if (!v.ok) return { ok: false, code: 'PACK_INVALID', error: 'Research pack valid nahi hai. New Video screen par errors dekho.' };
+  } catch (e) { return { ok: false, code: 'PACK_INVALID', error: String(e && e.message || e) }; }
+  const tb = timebase.resolve({ srtFile: inp.srt, audioFile: inp.audio, cfg });
+  if (!tb.ok) return { ok: false, code: 'AUDIO_TIMEBASE_MISMATCH', error: tb.reason, steps: timebase.blockSteps(tb) };
+  return { ok: true, inp, timebase: tb };
+}
+
+function stepExitAccepted(step, exitCode) {
+  return (step.accepted || [0]).includes(exitCode);
+}
+
+function expectedArtifact(kind) {
+  return kind === 'final' ? 'final.mp4' : 'draft.mp4';
+}
+
 function startJob(kind) {
   if (running && !running.done) return { ok: false, error: 'ek kaam pehle se chal raha hai' };
+  const preflight = preflightJob(kind);
+  if (!preflight.ok) return preflight;
   const id = jobId();
   if (!id) return { ok: false, error: 'input/scene-research.json nahi mila' };
-  const inp = inputInfo();
+  const inp = preflight.inp;
 
   // Steps: pack report purana ho to pehle check-pack (run.js ka STALE gate isi ke
   // bina exit 3 de deta hai — wahi START_HERE option 2 pehle chalane wali baat).
   const steps = [];
-  if (!packReportFresh() && inp.pack && inp.srt) {
-    steps.push({ label: 'pack check', args: ['tools/check-pack.js', inp.pack, inp.srt, '--apply-probe'] });
+  // Purane/Genspark packs mein criticality aksar hoti hi nahi. CLI mein user
+  // ko alag REPAIR step chalana padta tha aur final 109/109 par block ho jata
+  // tha. UI ab safe structural migration khud karti hai (backup ke saath);
+  // cross-episode borrow ko kabhi auto-approve nahi karti.
+  const missingCrit = missingCriticalityCount(inp.pack);
+  const hasTimeline = jobArtifacts(id).timeline;
+  const critPlan = criticalityStrategy(kind, hasTimeline, missingCrit, evalReadiness().ev.can_export);
+  // Fresh projects migrate BEFORE the first draft. A pre-M5.0-B.2 draft must
+  // not change pack hash at Export time: that would stale filled DATA folders
+  // and wipe the expensive job cache. Fully completed legacy gaps use a narrow
+  // one-time waiver in run.js instead.
+  const migrateNow = critPlan.migrate_now;
+  if (migrateNow) {
+    steps.push({ label: `criticality auto-fix (${missingCrit} moments)`,
+      args: ['tools/migrate-pack.js', inp.pack, inp.srt, '--apply'], accepted: [0] });
+  }
+  if ((migrateNow || !packReportFresh()) && inp.pack && inp.srt) {
+    steps.push({ label: 'pack check', args: ['tools/check-pack.js', inp.pack, inp.srt, '--apply-probe'], accepted: [0, 2] });
   }
   // run.js ko SAAF-SAAF input dir batao. Production mein ye ROOT/input hi hai,
   // par run.js RFC_INPUT_DIR nahi padhta — isliye --input zaroori hai (warna
   // server temp/alag input par draft chalane par asli ROOT/input padh leta).
   const runArgs = ['src/run.js', `--input=${inp.dir}`];
-  steps.push({ label: kind, args: kind === 'final' ? runArgs : [...runArgs, '--draft', '--redo'] });
+  if (critPlan.legacy_waiver) runArgs.push('--legacy-human-complete');
+  steps.push({ label: kind, args: kind === 'final' ? runArgs : [...runArgs, '--draft', '--redo'], accepted: [0], expected: expectedArtifact(kind) });
 
-  const job = { id, kind, log: [`> ${kind} shuru (${new Date().toLocaleTimeString()})`], startedAt: Date.now(), done: false, exit: null, listeners: new Set(), proc: null };
+  const job = { id, kind, log: [`> ${kind} shuru (${new Date().toLocaleTimeString()})`], startedAt: Date.now(), done: false, exit: null, ok: null, code: null, message: null, artifact: null, listeners: new Set(), proc: null };
   const emit = l => { job.log.push(l); if (job.log.length > 3000) job.log.splice(0, job.log.length - 3000); for (const fn of job.listeners) { try { fn(l); } catch {} } };
   const push = b => { for (const l of String(b).split('\n')) if (l.length) emit(l); };
 
@@ -145,20 +224,38 @@ function startJob(kind) {
     if (i >= steps.length) { finish(0); return; }
     const step = steps[i++];
     emit(`> ${step.label} …`);
-    const proc = spawn('node', step.args.map(a => (a === step.args[0] ? path.join(ROOT, a) : a)), { cwd: ROOT, env: process.env });
+    const proc = spawn(process.execPath, step.args.map((a, n) => n === 0 ? path.join(ROOT, a) : a), { cwd: ROOT, env: process.env, windowsHide: true });
     job.proc = proc;
     proc.stdout.on('data', push); proc.stderr.on('data', push);
     proc.on('close', c => {
       emit(`> ${step.label} exit ${c}`);
       // check-pack exit 2 ka matlab "pack weak" — draft phir bhi banta hai (draft
       // diagnostic hai). Sirf exit 1 (tool toota) par ruk jao.
-      if (c === 1) return finish(c);
+      if (!stepExitAccepted(step, c)) {
+        const d = failureDetails(job, c == null ? 1 : c);
+        return finish(c == null ? 1 : c, d);
+      }
+      if (step.expected && !fs.existsSync(U.p(id, step.expected))) {
+        return finish(4, { code: 'ARTIFACT_MISSING', message: `${step.label} ne success bola, lekin ${step.expected} bani hi nahi.` });
+      }
       runNext();
     });
-    proc.on('error', e => { emit('> spawn error: ' + e.message); finish(1); });
+    proc.on('error', e => { emit('> spawn error: ' + e.message); finish(1, { code: 'SPAWN_ERROR', message: e.message }); });
   };
-  const finish = c => {
-    job.done = true; job.exit = c;
+  const finish = (c, detail = {}) => {
+    if (job.done) return;
+    const expected = expectedArtifact(kind);
+    const artifactExists = fs.existsSync(U.p(id, expected));
+    if (c === 0 && !artifactExists) {
+      c = 4;
+      detail = { code: 'ARTIFACT_MISSING', message: `Process khatam hua, lekin ${expected} nahi bani.` };
+    }
+    job.done = true; job.exit = c; job.ok = c === 0;
+    job.code = job.ok ? 'OK' : (detail.code || 'BUILD_FAILED');
+    job.message = job.ok ? `${expected} taiyar hai` : (detail.message || `${kind} fail hui`);
+    job.artifact = artifactExists ? expected : null;
+    job.report = detail.report || null;
+    emit(job.ok ? `> SUCCESS: ${expected} taiyar hai` : `> FAILED [${job.code}]: ${job.message}`);
     emit(`> khatam (exit ${c})`);
     for (const fn of job.listeners) { try { fn('__DONE__'); } catch {} }
   };
@@ -203,11 +300,15 @@ function projectState() {
     human: readiness.HUMAN[ev.state] || '',
     can_export: ev.can_export,
     inputs: { pack: !!inp.pack, srt: !!inp.srt, audio: !!inp.audio, inputs_valid: inputsValid, pack_checked: packChecked },
-    timebase: tb ? { audio: tb.audio_duration, srt_end: tb.srt_end, project_duration: tb.project_duration, correction: tb.correction, ok: tb.ok, reason: tb.reason } : null,
+    timebase: tb ? { audio: tb.audio_duration, srt_end: tb.srt_end, project_duration: tb.project_duration,
+      correction: tb.correction, ok: tb.ok, reason: tb.reason, tolerance: tb.tolerance,
+      tail_tolerance: tb.tail_tolerance, lead_tolerance: tb.lead_tolerance } : null,
     media_state: ev.state,
     total_requests: (ev.requests || []).length,
     blocking: (ev.blocking || []).length,
-    job: running ? { kind: running.kind, running: !running.done, exit: running.exit } : null,
+    job: running ? { kind: running.kind, running: !running.done, exit: running.exit, ok: running.ok,
+      code: running.code, message: running.message, artifact: running.artifact,
+      log_tail: running.log.slice(-120) } : null,
     artifacts: art,
     job_id: id,
     project_states: readiness.PROJECT_STATE,
@@ -284,6 +385,37 @@ function missingPayload() {
     }) };
 }
 
+// Bulk approval automatic nahi hai: ye endpoint tabhi call hota hai jab user
+// Missing Media banner/Export confirmation par saaf haan karta hai. Sirf VALID
+// critical requests approve hoti hain; empty/short/broken media kabhi nahi.
+function approveAllReadyCritical() {
+  const { ev } = evalReadiness();
+  const pending = (ev.requests || []).filter(r => r.approval_required
+    && r.approval_status !== 'APPROVED' && r.media_status === 'VALID' && (r.files || []).length);
+  const approved = [], skipped = [];
+  const ov = manual.readOverrides(DATA); ov.schema = 'manual-overrides-v2'; ov.requests = ov.requests || [];
+  for (const r of pending) {
+    try {
+      const hit = findRequest(r.request_key);
+      if (!hit) throw new Error('request folder nahi mila');
+      // missingPayload ki files wahi single validated scan se aayi hain; har
+      // request par 15 folders dobara ffprobe karna avoid karo.
+      approval.approve(DATA, r.request_key, { scanReq: r, req: hit.req, source: 'UI_BULK_REVIEW' });
+      let e = ov.requests.find(x => manual.requestKey(x) === r.request_key);
+      if (!e) { e = { request_key: r.request_key }; ov.requests.push(e); }
+      e.request_key = r.request_key; e.approved = true;
+      approved.push(r.request_key);
+    }
+    catch (e) { skipped.push({ request_key: r.request_key, reason: String(e && e.message || e) }); }
+  }
+  if (approved.length) manual.writeOverrides(DATA, ov);
+  const sync = approved.length ? syncManualEdl() : { ok: true, applied: 0 };
+  const after = missingPayload();
+  return { ok: skipped.length === 0, approved: approved.length, approved_keys: approved,
+    skipped, editor_synced: !!sync.ok, state: after.state, can_export: after.can_export,
+    remaining: (after.requests || []).filter(r => r.blocking).length };
+}
+
 function buildMissingNote(payload) {
   const reqs = (payload.requests || []).filter(r => r.media_status !== 'VALID' || r.blocking);
   const total = reqs.reduce((n, r) => n + Number((r.range || {}).duration_sec || 0), 0);
@@ -343,6 +475,17 @@ function edlForClient() {
   let edl = edlMod.read(PROJ());
   if (!edl && id && jobArtifacts(id).timeline) { try { edl = edlMod.rebuild(PROJ(), id, { projectId: 'current' }); } catch {} }
   if (!edl) return null;
+  // M5.0-B.1 ne exact-video path omit kiya aur relative path ko hash kiya tha.
+  // Existing project.edl.json ko user se "rebuild" karwaye bina ek baar khud
+  // repair karo. Manual DATA media live timeline se dobara lagti hai.
+  const brokenMediaIdentity = (edl.tracks.video_main || []).some(s => {
+    if (!s.asset || (s.provenance && s.provenance.origin === 'MISSING')) return false;
+    const p = s.asset.path;
+    return !p || !path.isAbsolute(p) || (fs.existsSync(p) && s.asset.path_token !== sha1(path.normalize(p)));
+  });
+  if (brokenMediaIdentity && id && jobArtifacts(id).timeline) {
+    try { const repaired = syncManualEdl(); if (repaired.ok) edl = repaired.edl; } catch {}
+  }
   // approval status live chadhao
   const { ev } = evalReadiness();
   const statusByKey = {};
@@ -350,7 +493,23 @@ function edlForClient() {
   edlMod.withApproval(edl, statusByKey);
   // browser ko raw path mat do — sirf token
   const safe = JSON.parse(JSON.stringify(edl));
-  for (const s of safe.tracks.video_main) if (s.asset) delete s.asset.path;
+  for (let i = 0; i < safe.tracks.video_main.length; i++) {
+    const s = safe.tracks.video_main[i];
+    const disk = edl.tracks.video_main[i] && edl.tracks.video_main[i].asset;
+    if (!s.asset) continue;
+    // Token hamesha usi absolute canonical path se nikle jise mediaIndex walk
+    // karta hai. Browser ko raw path kabhi nahi diya jata.
+    if (disk && disk.path && path.isAbsolute(disk.path) && fs.existsSync(disk.path)) {
+      s.asset.path_token = sha1(path.normalize(disk.path));
+      s.asset.available = true;
+    } else {
+      s.asset.path_token = null;
+      s.asset.available = false;
+    }
+    delete s.asset.path;
+    if (s.original_asset) delete s.original_asset.path;
+    if (s.replacement) delete s.replacement.path;
+  }
   const inp = inputInfo();
   safe.tracks.voiceover = inp.audio ? [{
     track_id: 'VOICEOVER_MASTER', path_token: sha1(inp.audio),
@@ -524,7 +683,8 @@ const server = http.createServer(async (req, res) => {
       return serveFileRange(req, res, path.join(__dirname, 'ui', 'app.js'));
     }
     if (req.method === 'GET' && p === '/api/v1/health') {
-      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.0-B', node: process.version });
+      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.1', node: process.version,
+        instance_id: INSTANCE_ID, launch_url: `http://127.0.0.1:${PORT}/?token=${TOKEN}` });
     }
 
     // ---- everything below needs the session token ----
@@ -582,6 +742,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/v1/missing/research-kit') return json(res, researchKit());
 
+    if (req.method === 'POST' && p === '/api/v1/requests/approve-all-ready-critical') {
+      const out = approveAllReadyCritical();
+      return json(res, out, out.ok ? 200 : 409);
+    }
+
     if (req.method === 'POST' && p === '/api/v1/draft') { const r = startJob('draft'); return json(res, r, r.ok ? 200 : 409); }
     if (req.method === 'POST' && p === '/api/v1/export') { const r = startJob('final'); return json(res, r, r.ok ? 200 : 409); }
     if (req.method === 'POST' && p === '/api/v1/jobs/cancel') {
@@ -596,8 +761,10 @@ const server = http.createServer(async (req, res) => {
       const job = running;
       if (!job) { send('idle', { running: false }); return res.end(); }
       for (const l of job.log) send('log', { line: l });
-      if (job.done) { send('done', { exit: job.exit, state: projectState() }); return res.end(); }
-      const onLine = l => { if (l === '__DONE__') { send('done', { exit: running && running.exit, state: projectState() }); res.end(); } else send('log', { line: l }); };
+      const donePayload = () => ({ exit: job.exit, ok: job.ok, code: job.code, message: job.message,
+        artifact: job.artifact, kind: job.kind, state: projectState() });
+      if (job.done) { send('done', donePayload()); return res.end(); }
+      const onLine = l => { if (l === '__DONE__') { send('done', donePayload()); res.end(); } else send('log', { line: l }); };
       job.listeners.add(onLine);
       req.on('close', () => { job.listeners.delete(onLine); });
       return;
@@ -679,6 +846,45 @@ const server = http.createServer(async (req, res) => {
       return json(res, { ok: true, applied: r.applied, edl: edlForClient() });
     }
 
+    // Right-click -> Change Clip. Binary upload validate hota hai, project ke
+    // andar save hota hai, phir EDL revision ke saath final render se judta hai.
+    if (req.method === 'POST' && (m = p.match(/^\/api\/v1\/edl\/([^/]+)\/replace$/))) {
+      const shotId = decodeURIComponent(m[1]);
+      const expectedRevision = Number(u.searchParams.get('expected_revision'));
+      const name = safeName(u.searchParams.get('name') || 'replacement');
+      const dir = path.join(edlMod.projectRoot(PROJ()), 'replacements', safeName(shotId));
+      fs.mkdirSync(dir, { recursive: true });
+      const dest = path.join(dir, `${Date.now()}_${name}`);
+      if (!U.isInside(dir, dest)) return err(res, 'BAD_PATH', 'galat replacement path', 400);
+      const buf = await readBody(req);
+      if (!buf.length) return err(res, 'EMPTY', 'file khaali hai', 400);
+      fs.writeFileSync(dest, buf);
+      const info = manual.inspectFile(dest);
+      if (!info.ok) { fs.rmSync(dest, { force: true }); return err(res, 'BAD_MEDIA', info.problem, 400); }
+      const out = edlMod.replaceAsset(PROJ(), { shot_id: shotId,
+        expected_revision: Number.isFinite(expectedRevision) ? expectedRevision : undefined,
+        path: dest, type: info.type === 'VIDEO' ? 'video' : 'image', sha256: info.sha256,
+        duration: info.duration || null });
+      if (!out.ok) { fs.rmSync(dest, { force: true }); return json(res, out, out.code === 'REVISION_CONFLICT' ? 409 : 400); }
+      return json(res, { ok: true, revision: out.revision, edl: edlForClient(), file: name, type: info.type });
+    }
+    if (req.method === 'DELETE' && (m = p.match(/^\/api\/v1\/edl\/([^/]+)\/replacement$/))) {
+      const expectedRevision = Number(u.searchParams.get('expected_revision'));
+      const out = edlMod.clearReplacement(PROJ(), { shot_id: decodeURIComponent(m[1]),
+        expected_revision: Number.isFinite(expectedRevision) ? expectedRevision : undefined });
+      if (!out.ok) return json(res, out, out.code === 'REVISION_CONFLICT' ? 409 : 400);
+      return json(res, { ok: true, revision: out.revision, edl: edlForClient() });
+    }
+
+    // Save-As UI is endpoint ko streaming mode mein chosen Chrome/Edge file
+    // handle par likhti hai; multi-GB export browser memory mein load nahi hota.
+    if (req.method === 'GET' && p === '/api/v1/artifacts/final') {
+      const id = jobId(); const file = id ? U.p(id, 'final.mp4') : null;
+      if (!file || !fs.existsSync(file)) return err(res, 'NO_FINAL', 'final.mp4 abhi nahi bani', 404);
+      res.setHeader('content-disposition', `attachment; filename="${safeName(id || 'final')}.mp4"`);
+      return serveFileRange(req, res, file);
+    }
+
     // ---- media + thumbnails (token allow-list) ----
     if (req.method === 'GET' && (m = p.match(/^\/api\/v1\/preview\/([a-f0-9]+)$/))) {
       const file = previewFor(m[1], u.searchParams.get('start'), u.searchParams.get('duration'));
@@ -704,10 +910,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  server.once('error', e => {
+    if (e && e.code === 'EADDRINUSE') {
+      console.error(`Movie Editor port ${PORT} par pehle se chal raha hai. MOVIE_EDITOR.bat use dobara khol dega; second server ki zaroorat nahi.`);
+      process.exit(2);
+    }
+    console.error('Movie Editor server start nahi hua: ' + String(e && e.message || e));
+    process.exit(1);
+  });
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://127.0.0.1:${PORT}/?token=${TOKEN}`;
     console.log('='.repeat(66));
-    console.log('  RESEARCH-FIRST CLIP TOOL — EDITOR (M5.0-A)');
+    console.log('  RESEARCH-FIRST CLIP TOOL — EDITOR (M5.1)');
     console.log('='.repeat(66));
     console.log(`  ${url}`);
     console.log('  (sirf is computer par — na internet, na account, na key)');
@@ -716,9 +930,10 @@ if (require.main === module) {
     if (OPEN) {
       const o = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
         : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
-      try { spawn(o[0], o[1], { detached: true, stdio: 'ignore' }).unref(); } catch {}
+      try { spawn(o[0], o[1], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch {}
     }
   });
 }
 
-module.exports = { server, projectState, edlForClient, resolveToken, jobId, TOKEN, PORT };
+module.exports = { server, projectState, edlForClient, resolveToken, jobId, TOKEN, PORT, INSTANCE_ID,
+  preflightJob, startJob, stepExitAccepted, expectedArtifact, missingCriticalityCount, criticalityStrategy };

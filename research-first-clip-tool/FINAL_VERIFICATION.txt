@@ -1,0 +1,34 @@
+M5.1.1 FINAL VERIFICATION — 2026-08-05
+============================================================
+
+PASS — clean-media export policy
+  Research overlay text is planning metadata, not an automatic title.
+  New timelines use clean source stills.
+  Cached legacy GRAPHIC timelines are sanitized by the renderer too.
+  Explicit Editor text/template work remains a later milestone.
+
+PASS — real rendered-pixel proof
+  Input: bright green image + legacy kind=graphic + internal hint text.
+  Output centre RGB: 1,254,0 (clean, undimmed green).
+  Manifest asset: VERIFIED_SOURCE_STILL.
+  research_overlay_policy.enabled: false.
+  research_overlay_policy.suppressed_shots: 1.
+
+PASS — M5.1 foundation retained
+  one-click launcher; no updater/old-folder workflow
+  explicit bulk critical review with fingerprint expiry
+  right-click per-shot replacement and Restore Original
+  exact shot start/end/duration labels
+  streaming Export / Save As
+  full voiceover; bounded SRT-short visual extension
+  rapid-navigation UI race protection
+
+PASS — automated suite
+  content/mini:  13 PASS, 0 FAIL
+  regression:   133 PASS, 0 FAIL
+  server/API:    17 PASS, 0 FAIL
+  M5B contract:  21 PASS, 0 FAIL
+  EDL parity:    11 PASS, 0 FAIL
+  total:         195 PASS, 0 FAIL
+
+Original recordings and user media were not modified by verification.
