@@ -1,12 +1,18 @@
-# Research-First Clip Tool — M5.0-A (editor foundation)
+# Research-First Clip Tool — M5.0-A.2 (Movie Editor)
 
-> **M5.0-A — ab ek chalne wala local editor hai.** `START_UI.bat` chalao,
-> browser khul jayega (sirf `127.0.0.1`, na account, na internet, na npm install).
-> Overview · Research Health · Missing Media · Editor — sab ek jagah. "Draft banao"
-> button server ke through asli `draft.mp4` + gap-plan + EDL banata hai. Do addendum
-> fix (expired approval, updater exit code) is release ke pehle commit mein lage.
-> Kya chalta hai / kya baaki: `KNOWN_LIMITATIONS.md`. Acceptance: `docs/M50B_ACCEPTANCE.md`.
-> API: `docs/API_CONTRACT.md` · EDL: `docs/EDL_SCHEMA.md`.
+> **M5.0-A.2 — naya "Movie Editor" design, sab kuch UI se, fresh start.**
+> ZIP unzip karo → `START_UI.bat` → browser khul jayega (sirf `127.0.0.1`, na
+> account, na internet, na npm install). Left sidebar: New Video · Missing Media ·
+> Editor · Queue · Library · Settings (dark/light theme).
+>
+> **New Video** screen se sab: research pack (.json), voiceover (mp3/m4a/wav —
+> auto-detect), clean script (paste ya .txt), aur **auto-SRT** (script+audio se) —
+> koi folder drag nahi. **Fresh start** purana kaam `archive/` mein bhej kar nayi
+> video shuru karta hai. **Research pack chahiye?** button Genspark prompt deta hai.
+> "Build → Editor" server ke through asli `draft.mp4` + gap-plan + EDL banata hai.
+>
+> Kya chalta hai / kya coming-soon: `KNOWN_LIMITATIONS.md`. Guide: `PEHLE_YE_PADHO.txt`.
+> API: `docs/API_CONTRACT.md` · EDL: `docs/EDL_SCHEMA.md` · Acceptance: `docs/M50B_ACCEPTANCE.md`.
 
 ---
 

@@ -23,6 +23,9 @@ DATA/
 # project/ = M5 editor ka EDL, revisions aur cache (user work-product) — repo mein nahi
 project/
 
+# archive/ = "fresh start" ne yahan purana kaam bheja — repo mein nahi
+archive/
+
 # reference-pack ka JSON user ke script ki lines rakhta hai (script_cue_exact)
 # — wo repo mein nahi jayega. ZIP mein bheja jata hai. PADHO.txt commit hoti hai.
 reference-pack/*.json

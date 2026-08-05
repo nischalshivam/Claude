@@ -89,6 +89,15 @@ function req(method, p, { body, token = TOKEN, headers = {} } = {}) {
   });
 }
 
+function rawPost(p, buf) {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port: PORTX, path: p, method: 'POST',
+      headers: { 'x-rfc-token': TOKEN, 'content-length': buf.length } }, res => {
+      const c = []; res.on('data', d => c.push(d)); res.on('end', () => { let j = null; try { j = JSON.parse(Buffer.concat(c).toString()); } catch {} resolve({ status: res.statusCode, json: j }); });
+    });
+    r.on('error', reject); r.write(buf); r.end();
+  });
+}
 const PORTX = 7911;
 app.server.listen(PORTX, '127.0.0.1', async () => {
   try {
@@ -183,6 +192,50 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
     const rjs = await req('GET', '/app.js', { token: null });
     check('T-SRV10 the UI shell is served with the token injected and app.js loads',
       htmlOk && rjs.status === 200, `html=${htmlOk} appjs=${rjs.status}`);
+
+    // ---- M5.0-A.2: in-UI inputs ----
+    // 11. import audio (mp3/m4a/wav auto-detect) + inputs summary shows duration
+    const aud = path.join(TMP, 'vo.m4a'); ff(['-f', 'lavfi', '-i', 'sine=frequency=220:duration=12', '-c:a', 'aac', aud]);
+    const audBuf = fs.readFileSync(aud);
+    let rr = await rawPost(`/api/v1/import?kind=audio&name=vo.m4a`, audBuf);
+    const impOk = rr.status === 200 && rr.json.ok && rr.json.duration > 11;
+    rr = await rawPost(`/api/v1/import?kind=audio&name=bad.txt`, Buffer.from('x'));
+    check('T-SRV11 audio import accepts m4a and reports duration; a non-audio ext is refused',
+      impOk && rr.status === 400, `audio=${impOk} badExt=${rr.status}`);
+
+    // 12. import pack (valid) + reject invalid json
+    const pack = { schema_version: 'scene-research-pack-v1', project_title: 'ImpTest', packs: [] };
+    rr = await rawPost('/api/v1/import?kind=pack&name=p.json', Buffer.from(JSON.stringify(pack)));
+    const packOk = rr.status === 200 && rr.json.ok;
+    rr = await rawPost('/api/v1/import?kind=pack&name=p.json', Buffer.from('{not json'));
+    check('T-SRV12 pack import saves valid JSON and refuses broken JSON',
+      packOk && rr.status === 400 && rr.json.code === 'BAD_JSON', `pack=${packOk} broken=${rr.json && rr.json.code}`);
+
+    // 13. script import + make-srt (script + audio -> estimated srt) + inputs summary
+    await rawPost('/api/v1/import?kind=script&name=script.txt',
+      Buffer.from('The hero enters the arena. Then the lost city appears. Everyone gasps in wonder.'));
+    rr = await req('POST', '/api/v1/make-srt', { body: {} });
+    const srtOk = rr.status === 200 && rr.json.ok && rr.json.cues === 3 && Math.abs(rr.json.total - 12) < 0.5;
+    r = await req('GET', '/api/v1/inputs');
+    const sum = r.json.inputs;
+    check('T-SRV13 make-srt builds an estimated SRT from script+audio; inputs summary reflects it',
+      srtOk && sum.srt && sum.srt.cues === 3 && sum.script === true && sum.audio.duration > 11,
+      `srt=${JSON.stringify(rr.json)} summaryCues=${sum.srt && sum.srt.cues}`);
+
+    // 14. fresh start archives everything (no delete), inputs cleared
+    r = await req('POST', '/api/v1/new-project', { body: {} });
+    const archived = r.status === 200 && r.json.ok && r.json.moved > 0;
+    r = await req('GET', '/api/v1/inputs');
+    const cleared = !r.json.inputs.audio && !r.json.inputs.srt;
+    const archiveExists = fs.existsSync(path.join(PROJ, 'archive'));
+    check('T-SRV14 fresh start archives inputs (moves, never deletes) and clears the project',
+      archived && cleared && archiveExists, `archived=${archived} clearedAudio=${cleared} archiveDir=${archiveExists}`);
+
+    // 15. genspark prompt is served
+    r = await req('GET', '/api/v1/genspark-prompt');
+    check('T-SRV15 the Genspark research-pack prompt is served to the UI',
+      r.status === 200 && r.json.ok && typeof r.json.text === 'string' && r.json.text.length > 200,
+      `len=${r.json && r.json.text && r.json.text.length}`);
 
   } catch (e) {
     check('server-test crashed', false, String(e && e.stack || e).slice(0, 300));

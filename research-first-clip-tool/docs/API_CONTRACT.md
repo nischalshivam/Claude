@@ -21,6 +21,11 @@ Errors hamesha structured:
 |---|---|---|
 | GET | `/api/v1/health` | zinda hai? (token nahi chahiye) |
 | GET | `/api/v1/state` | **canonical** project state (neeche) — UI kabhi khud calculate na kare |
+| GET | `/api/v1/inputs` | in-UI inputs ka summary (pack valid?, audio duration, srt cues, script?) |
+| POST | `/api/v1/import?kind=pack\|audio\|script\|srt&name=<f>` | file body upload → `input/` mein (audio mp3/m4a/wav auto-detect; pack validate) |
+| POST | `/api/v1/make-srt` | clean script (ya pack) + audio se ESTIMATED `voiceover.srt` banao |
+| POST | `/api/v1/new-project` | fresh start — `input/DATA/jobs/project` sab `archive/<ts>` mein (delete kabhi nahi) |
+| GET | `/api/v1/genspark-prompt` | research-pack banane ka Genspark prompt (UI panel ke liye) |
 | GET | `/api/v1/research-health` | pack validation + pack-check report |
 | GET | `/api/v1/missing` | har unresolved gap (stable key, criticality, approval, files, reasons) |
 | POST | `/api/v1/draft` | pack-check (agar stale) + `run.js --draft --redo` — ek job |

@@ -323,6 +323,77 @@ function thumbFor(token, at) {
   return (r.ok && fs.existsSync(out)) ? out : null;
 }
 
+// ---------- in-UI inputs (upload / srt / fresh-start) ----------
+const AUDIO_EXT = new Set(['.mp3', '.m4a', '.wav']);
+function importInput(kind, filename, buf) {
+  const dir = INPUT_DIR();
+  fs.mkdirSync(dir, { recursive: true });
+  const ext = path.extname(String(filename || '')).toLowerCase();
+  if (kind === 'pack') {
+    // pehle validate — toota pack save nahi karna
+    let obj; try { obj = JSON.parse(buf.toString()); } catch { return { ok: false, code: 'BAD_JSON', message: 'ye valid JSON nahi hai' }; }
+    const dest = path.join(dir, 'scene-research.json');
+    const tmp = dest + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(obj, null, 2)); fs.renameSync(tmp, dest);
+    let v = null; try { v = validate.validateFile(dest); } catch {}
+    return { ok: true, saved: 'scene-research.json', valid: v ? v.ok : null, stats: v ? v.stats : null,
+      errors: v && !v.ok ? (v.errors || []).slice(0, 8) : [] };
+  }
+  if (kind === 'audio') {
+    if (!AUDIO_EXT.has(ext)) return { ok: false, code: 'BAD_AUDIO', message: `sirf mp3/m4a/wav (${ext || 'koi ext nahi'})` };
+    // purani voiceover.* hata do taaki loadSpec sahi file uthaye (mp3/m4a/wav koi bhi)
+    for (const e of AUDIO_EXT) { try { fs.rmSync(path.join(dir, 'voiceover' + e), { force: true }); } catch {} }
+    const dest = path.join(dir, 'voiceover' + ext);
+    fs.writeFileSync(dest, buf);
+    const pr = U.probe(dest, { strict: false });
+    if (!pr || !(pr.duration > 0)) { fs.rmSync(dest, { force: true }); return { ok: false, code: 'BAD_AUDIO', message: 'ye audio khul nahi rahi ya lambai pata nahi chali' }; }
+    return { ok: true, saved: 'voiceover' + ext, duration: +pr.duration.toFixed(2) };
+  }
+  if (kind === 'srt') {
+    const dest = path.join(dir, 'voiceover.srt'); fs.writeFileSync(dest, buf);
+    return { ok: true, saved: 'voiceover.srt' };
+  }
+  if (kind === 'script') {
+    const dest = path.join(dir, 'script.txt'); fs.writeFileSync(dest, buf);
+    return { ok: true, saved: 'script.txt', chars: buf.length };
+  }
+  return { ok: false, code: 'BAD_KIND', message: 'kind pack|audio|srt|script hona chahiye' };
+}
+
+function inputsSummary() {
+  const inp = inputInfo();
+  const out = { pack: null, audio: null, srt: null, script: !!(fs.existsSync(path.join(inp.dir, 'script.txt'))) };
+  if (inp.pack) {
+    try { const v = validate.validateFile(inp.pack); out.pack = { valid: v.ok, stats: v.stats, errors: (v.errors || []).slice(0, 6) }; } catch { out.pack = { valid: false }; }
+  }
+  if (inp.audio) { const pr = U.probe(inp.audio, { strict: false }); out.audio = { file: path.basename(inp.audio), duration: pr && pr.duration ? +pr.duration.toFixed(2) : null }; }
+  if (inp.srt) { try { const SUB = require(path.join(ROOT, 'src', 'subtitles.js')); const c = SUB.parseFile(inp.srt); out.srt = { cues: c.length, end: c.length ? +c[c.length - 1].end.toFixed(1) : 0 }; } catch { out.srt = { cues: 0 }; } }
+  return out;
+}
+
+// FRESH START — kuch delete nahi, sab archive/<timestamp> mein le jao
+function newProject() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const arch = path.join(PROJ(), 'archive', stamp);
+  const moved = [];
+  const moveDirContents = (srcName) => {
+    const src = srcName === 'input' ? INPUT_DIR() : srcName === 'jobs' ? U.jobsRoot() : srcName === 'DATA' ? DATA : path.join(PROJ(), srcName);
+    if (!fs.existsSync(src)) return;
+    // input ke andar .gitkeep chhod do
+    fs.mkdirSync(path.join(arch, srcName), { recursive: true });
+    for (const n of fs.readdirSync(src)) {
+      if (srcName === 'input' && n === '.gitkeep') continue;
+      try { fs.renameSync(path.join(src, n), path.join(arch, srcName, n)); moved.push(`${srcName}/${n}`); } catch {}
+    }
+  };
+  for (const s of ['input', 'DATA', 'jobs', 'project']) moveDirContents(s);
+  // output/pack-report.json bhi purana — hata do (archive mein)
+  try {
+    const rep = path.join(ROOT, 'output', 'pack-report.json');
+    if (fs.existsSync(rep)) { fs.mkdirSync(path.join(arch, 'output'), { recursive: true }); fs.renameSync(rep, path.join(arch, 'output', 'pack-report.json')); }
+  } catch {}
+  return { ok: true, archived_to: path.relative(ROOT, arch), moved: moved.length };
+}
+
 // ---------- routes ----------
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -338,13 +409,50 @@ const server = http.createServer(async (req, res) => {
       return serveFileRange(req, res, path.join(__dirname, 'ui', 'app.js'));
     }
     if (req.method === 'GET' && p === '/api/v1/health') {
-      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.0-A', node: process.version });
+      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.0-A.2', node: process.version });
     }
 
     // ---- everything below needs the session token ----
     if (!checkToken(u, req)) return err(res, 'UNAUTHORIZED', 'session token galat/missing', 401);
 
     if (req.method === 'GET' && p === '/api/v1/state') return json(res, projectState());
+
+    // ---- in-UI inputs ----
+    if (req.method === 'GET' && p === '/api/v1/inputs') return json(res, { ok: true, inputs: inputsSummary() });
+
+    if (req.method === 'POST' && p === '/api/v1/import') {
+      const kind = u.searchParams.get('kind');
+      const name = u.searchParams.get('name') || '';
+      const buf = await readBody(req);
+      if (!buf.length) return err(res, 'EMPTY', 'file khaali hai', 400);
+      const r = importInput(kind, name, buf);
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    if (req.method === 'POST' && p === '/api/v1/make-srt') {
+      const inp = inputInfo();
+      if (!inp.audio) return err(res, 'NO_AUDIO', 'pehle voiceover (mp3/m4a/wav) daalo', 400);
+      const scriptFile = fs.existsSync(path.join(inp.dir, 'script.txt')) ? path.join(inp.dir, 'script.txt') : null;
+      if (!scriptFile && !inp.pack) return err(res, 'NO_TEXT', 'clean script ya research pack chahiye', 400);
+      try {
+        const M = require(path.join(ROOT, 'tools', 'make-srt.js'));
+        const r = M.build({ audioFile: inp.audio, scriptFile, packFile: scriptFile ? null : inp.pack, wpm: 150 });
+        const out = path.join(inp.dir, 'voiceover.srt');
+        const tmp = out + '.tmp'; fs.writeFileSync(tmp, M.toSrt(r.cues)); fs.renameSync(tmp, out);
+        return json(res, { ok: true, cues: r.cues.length, total: +r.total.toFixed(1), estimated: true, from: scriptFile ? 'script' : 'pack' });
+      } catch (e) { return err(res, 'MAKE_SRT_FAIL', String(e && e.message || e), 400); }
+    }
+
+    if (req.method === 'POST' && p === '/api/v1/new-project') {
+      if (running && !running.done) return err(res, 'JOB_RUNNING', 'pehle chal raha job rukne do', 409);
+      return json(res, newProject());
+    }
+
+    if (req.method === 'GET' && p === '/api/v1/genspark-prompt') {
+      const f = path.join(ROOT, 'prompts', 'GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt');
+      let text = ''; try { text = fs.readFileSync(f, 'utf8'); } catch { text = 'prompt file nahi mili'; }
+      return json(res, { ok: true, file: 'prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt', text });
+    }
 
     if (req.method === 'GET' && p === '/api/v1/research-health') {
       const inp = inputInfo();

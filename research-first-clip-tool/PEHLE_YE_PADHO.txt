@@ -1,186 +1,91 @@
 =========================================================
-  M4.2.1 — KYA KARNA HAI (8 step, seedhe shabdon mein)
+  MOVIE EDITOR (M5.0-A.2) — SAB KUCH UI SE. FRESH START.
 =========================================================
 
-Do folder hain. Inhe alag rakhna zaroori hai:
-
-  A) NAYA FOLDER  = jo abhi aapne unzip kiya
-     (isme naya code hai. Yahan kaam NAHI karna.)
-
-  B) PURANA FOLDER = jisme aap ab tak kaam kar rahe the
-     (isme aapka input\, jobs\, aur mehnat hai. Kaam YAHIN hoga.)
-
-Purana folder DELETE mat karna. Replace bhi mat karna.
+Ab folder drag karne ki, purane folder dhoondhne ki zaroorat NAHI hai.
+Sab kaam ek hi window (browser) se hoga.
 
 
 ---------------------------------------------------------
-STEP 1 — code update karo
+PEHLI BAAR — 2 STEP
 ---------------------------------------------------------
-NAYE folder mein UPDATE_TOOL.bat par double-click karo.
+1. Is ZIP ko kahin bhi unzip karo (Desktop par nayi jagah — purane folders
+   ko haath mat lagao, unki zaroorat nahi).
 
-Wo khud puchhega: "aapka chalta hua project folder kahan hai?"
-PURANE folder ko uthakar us window mein DRAG kar do, Enter dabao,
-phir "y" likho.
+2. Andar START_UI.bat par double-click karo.
+   Browser apne aap khul jayega: Movie Editor.
 
-Ho gaya. Naya code purane folder mein lag gaya.
-Aapka input\, DATA\ aur jobs\ ko haath nahi laga.
-
-Aakhir mein wo khud check karke dikhayega:
-    version, docs\ aaya ya nahi, aur aapka kaam surakshit hai ya nahi.
-
->> AB SE SAARA KAAM PURANE FOLDER MEIN HOGA. Naya folder chhod do.
+   (Node install hona chahiye — Node 18+. Agar "Node nahi mila" aaye to
+    ek baar nodejs.org se install karke dobara chalao.)
 
 
 ---------------------------------------------------------
-STEP 2 — khoya hua MEDIA wapas laao   (naya, M4.2.1)
+NAYI VIDEO BANANA — 4 CHEEZEIN, SAB UI SE
 ---------------------------------------------------------
-Pichhli baar ek bug ki wajah se aapke 16 DATA folder — jinme aapki
-dhoondhi hui images/videos thi — DATA\_ORPHANED mein chale gaye the.
+Left mein "New Video" par jao. Teen cheezein deni hain:
 
-Ab tool wo khud wapas laa sakta hai. PURANE folder mein cmd kholo:
+  1) RESEARCH PACK (.json)
+     Ye Genspark se banta hai. Nahi hai? Upar "Research pack chahiye?"
+     button dabao — poora prompt milega. Use Genspark mein paste karo,
+     apni script do, jo .json aaye use yahan daal do (drag ya click).
+     Daalte hi tool bata dega: kitne packs, kitne moments — sahi hai ya nahi.
 
-    node tools\recover-orphaned-media.js --dry-run
+  2) VOICEOVER (mp3 / m4a / wav — koi bhi)
+     Apni narration ki audio daalo. Tool khud samajh lega format.
+     Daalte hi uski lambai dikh jayegi.
 
-Ye sirf DIKHAYEGA ki kya kahan jayega. Kuch nahi badlega.
-Theek lage to:
+  3) CLEAN SCRIPT (narration ka text)
+     Poori narration text box mein paste karo → "Script save karo".
+     (ya .txt file daal do)
 
-    node tools\recover-orphaned-media.js --apply
+  Ab TIMING (.srt):
+     - Aapke paas asli .srt hai (TTS/Whisper se)? "Apni .srt daalo" — sabse
+       badhiya, exact timing.
+     - Nahi hai? "Auto-banao (script + audio se)" dabao. Tool anumaan-timing
+       ki .srt bana dega. Draft ke liye kaafi; editor mein theek kar sakte ho.
 
-Zaroori baatein:
-  - aapki koi maujooda file kabhi overwrite nahi hogi
-  - _ORPHANED se kuch delete nahi hoga (copy hota hai)
-  - jo match pakka nahi hai use tool khud nahi lagata — "[SHAYAD]"
-    likh kar report mein daal deta hai, aap khud decide karo
-  - poori report: output\orphan-recovery-report.json
-
-
----------------------------------------------------------
-STEP 3 — khoya hua EVIDENCE wapas laao
----------------------------------------------------------
-Ye tab hi karna jab aapke paas purana M3.6.1 wala folder abhi bhi ho.
-
-    node tools\merge-pack.js input\scene-research.json "C:\...\researchfirstcliptoolM3.6.1\research-first-clip-tool\input\scene-research.json"
-
-Ye sirf DIKHAYEGA. Kuch badlega nahi.
-
-Kitna badhna chahiye? Iska koi FIX number nahi hai (pichhli baar maine
-"68 hona chahiye" likh diya tha — wo galat tha). Ye ek UNION hai, aur
-kitna badhega ye aapke abhi wale pack par depend karta hai.
-
-Bas ye aakhri line dekho:
-
-    [THEEK HAI] Kuch khoya nahi, aur N nayi validated cheezein aayi hain.
-
-Aisa dikhe to wahi command dobara --apply laga kar chalao.
-"[RUKO] Kuch evidence GHAT gaya" dikhe to --apply MAT chalana, mujhe
-output\pack-merge-report.json bhej dena.
-
-Purana folder ab nahi hai? Ye step chhod do. Kuch tootega nahi.
+Sab hara (✓) dikhne lage to upar "Build → Editor" dabao.
+Tool pehle pack check karega, phir poori draft video banayega. Progress
+neeche live dikhega.
 
 
 ---------------------------------------------------------
-STEP 4 — pack check
+DRAFT KE BAAD
 ---------------------------------------------------------
-START_HERE.bat -> option 2
+- "Editor" tab: har shot, preview, aur neeche timeline. Kisi shot par click
+  karo — right side uski poori detail + trim/crop.
 
-"5 check fail" jaisa message aana normal hai — ghabrana nahi.
-Wo raw research pack ka score hai, final video ka nahi.
+- "Missing Media" tab: jahan tool ko footage nahi mila (aksar wo movie jo
+  internet par hai hi nahi), wahan apni image/video daalo — drag & drop.
+  Zaroori (laal) beats par "approve" ka tick lagao.
 
-
----------------------------------------------------------
-STEP 5 — DRAFT banao   (ye sabse bada step hai)
----------------------------------------------------------
-START_HERE.bat -> D
-
-Ab ye poori video bana dega aur kabhi beech mein rukega nahi.
-Jahan tool ko koi footage nahi mila, wahan laal card aayega:
-"MISSING 001", "MISSING 002" ...
-
-Ye draft.mp4 hai. Ise dekh lo — pata chal jayega kahan kya kami hai.
-
-Ek nayi baat (M4.2.1): agar aapka voiceover aur SRT ki lambai mein
-2 second se zyada ka farak hua, to tool YAHIN saaf-saaf ruk jayega
-aur batayega ki kya theek karna hai. Pehle wo 30 second tak chup-chaap
-kaat deta tha — yaani aapki narration ka hissa gayab ho sakta tha.
+- Sab bhar jaaye to "Export" (editor ke upar) — final video ban jayegi.
 
 
 ---------------------------------------------------------
-STEP 6 — DATA folder kholo
+AGLI NAYI VIDEO
 ---------------------------------------------------------
-Purane folder mein ab ek folder hoga: DATA\
-
-Andar aise folder milenge:
-    DATA\MISSING_001__02m03s-02m24s__P03_M01\
-
-Har folder mein:
-    WHAT_IS_MISSING.txt   <- YEHI PEHLE PADHO
-    media\                <- files yahan daalni hain
-
-WHAT_IS_MISSING.txt mein likha hoga:
-    - video mein kis waqt ki baat hai
-    - wahan narration kya keh rahi hai
-    - kya dikhna chahiye, kya nahi
-    - Google/YouTube par kya search karo
+Upar "Fresh start" dabao — abhi ka sab kaam archive\ mein chala jayega
+(delete kuch nahi hota), aur aap nayi script/voiceover daal sakte ho.
+Purane folders dhoondhne ki koi zaroorat nahi.
 
 
 ---------------------------------------------------------
-STEP 7 — apni images/videos daalo
+ABHI KYA COMING SOON HAI (imaandari se)
 ---------------------------------------------------------
-Search karke jo mile, use us folder ke media\ mein copy kar do.
+- Queue (5-10 video ek saath) — aa raha hai. Abhi ek waqt mein ek video.
+- Library (apni downloaded movies index karna) — abhi sourcing research-pack
+  se hoti hai (wahi aapka flow hai).
+- "Look" ke presets (Cinematic/Tense…) — Content Lock ke baad lagenge (M5.1).
+  Abhi chun ke rakh sakte ho, effect abhi nahi lagta.
+- Editor ke crop/trim EDL mein save hote hain; final render mein wo M5.0-B se
+  judenge. Missing-media (upload/approve) abhi bhi final ko affect karta hai.
 
-Order set karna ho to naam ke aage number lagao:
-    01_pehli.jpg
-    02_doosri.mp4
-    03_teesri.jpg
-
-Kuch folder par likha hoga "YE BEAT ZAROORI HAI (HARD_EVIDENCE)".
-Aise folder mein ek khaali file bhi banani hai:
-    APPROVE_MEDIA.txt
-(Right-click -> New -> Text Document -> naam badal do)
-
-Ye isliye ki zaroori beat par tool aapse ek saaf HAAN maangta hai.
-
-NAYA (M4.2.1): ab wo HAAN us waqt ke media se BANDH jati hai.
-Baad mein aap us folder ki file badal do, order badal do ya naya
-voiceover laga do — to tool khud bolega:
-
-    "manzoori expire ho gayi — media badal gaya, dobara dekh kar haan do"
-
-Aur APPROVE_MEDIA.txt ka naam APPROVAL_EXPIRED.txt kar dega (andar wajah
-likhi hogi). Ye jaan-boojh kar hai: purani haan naye visual par chipkani
-nahi chahiye.
-
-Dashboard chahiye to: START_UI.bat  (browser khul jayega, drag-drop
-kar sakte ho, wahan approve ka tick bhi hai)
+Poori list: KNOWN_LIMITATIONS.md
 
 
 ---------------------------------------------------------
-STEP 8 — final video
+AGAR KUCH RUKE
 ---------------------------------------------------------
-START_HERE.bat -> option 8
-
-Downloads dobara nahi honge — sirf naye hisse banenge.
-final.mp4 mil jayegi. Uske saath shot-review.html kholna —
-har shot ka frame ek page par dikhta hai.
-
-Check karne layak ek cheez:
-    jobs\<naam>\render-manifest.json -> "duration" block
-Usme audio, timeline aur rendered — teeno ka asli number likha hoga
-aur teeno lagbhag ek jaise hone chahiye.
-
-
----------------------------------------------------------
-AGAR KAHIN RUK JAYE
----------------------------------------------------------
-Screen par jo likha hai wo padhna — usme aage ka raasta hota hai.
-Phir bhi na chale to jobs\<naam>\run.log bhej dena.
-
-
----------------------------------------------------------
-POORI CHECKLIST (har step par kya dikhna chahiye)
----------------------------------------------------------
-docs\M421_ACCEPTANCE.md
-
-Usme har step ke saath likha hai ki screen par exactly kya aana
-chahiye. Kahin alag dikhe to wahin ruk kar wo line bhej dena —
-guess karne ki zaroorat nahi.
+Screen par jo likha hai wo padho. Progress log neeche hota hai.
+Phir bhi na chale to wo log mujhe bhej dena.

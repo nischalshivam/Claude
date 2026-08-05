@@ -1,3 +1,36 @@
+# KNOWN LIMITATIONS — M5.0-A.2 (imaandar list)
+
+## M5.0-A.2 — naya "Movie Editor" design + sab UI se
+
+Ab UI wahi design language use karta hai jo aapko pasand tha (sidebar, dark/light
+theme, cards, badges). Aur ye sab **UI se** ho jata hai — koi folder drag nahi:
+
+- **In-UI inputs**: research pack (.json), voiceover (mp3/m4a/wav — auto-detect),
+  clean script (paste ya .txt) — sab New Video screen se upload. (server-test T-SRV11..13)
+- **Auto-SRT**: script + audio se estimated `voiceover.srt`. (T-SRV13)
+- **Fresh start**: purana sab `archive/<ts>` mein move (delete kabhi nahi), naya
+  project shuru. (T-SRV14)
+- **Genspark prompt** UI panel + `/genspark-prompt`. (T-SRV15)
+
+### Iski honest seemayein
+- **Auto-SRT anumaan-timing hai**, asli transcription nahi. Offline Whisper (model
+  download) is tool ke zero-install waade ko todta hai, isliye nahi rakha. Timing
+  ±kuch second ho sakti hai — draft ke liye theek, editor mein fine-tune. **Aapke
+  paas asli .srt (TTS/Whisper) ho to wahi daalo — tool usi ko lega.**
+- **Library screen** abhi coming-soon. Design mein wo "apni movies index karo"
+  wali thi; is tool ki sourcing abhi research-pack (Genspark/online) se hoti hai —
+  wahi aapka asli flow hai. Local-movie indexing alag engine hai, baad mein.
+- **Queue** abhi coming-soon (design + placeholder maujood). Batch (5-10 video)
+  aage aayega; abhi ek waqt mein ek project.
+- **"Look" presets** (Cinematic/Tense/Documentary) abhi sirf chun ke rakhne ke
+  liye — effect Content Lock ke baad (M5.1) lagega.
+- **UI browser-test**: main is environment mein browser nahi chala sakta, isliye
+  API poori tarah test ki (server-test 15/0) aur ek live draft server ke through
+  chalaya. Visual layout design se milaya, par pixel-level browser QA aapke saath
+  pehli baar hoga — kuch bhi ajeeb dikhe to batana, turant theek karunga.
+
+---
+
 # KNOWN LIMITATIONS — M5.0-A (imaandar list)
 
 Ye woh cheezein hain jo M5.0-A mein JAAN-BOOJH kar abhi nahi ki gayi, ya jo aage
