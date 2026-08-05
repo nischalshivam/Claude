@@ -1,0 +1,10 @@
+  [PASS] P-1 draft creates a gap request for the missing film beat  — exit=0 gap=MISSING_001__00m06s-00m12s__M2
+  [PASS] P-1b after adding one image, the gap becomes a manual still shot  — exit=0 manual=true
+  [PASS] P-2 EDL edit is recorded as applied in the render manifest (parity ok)  — exit=0 parity={"edl_revision":2,"planned_edits":1,"applied_edits":1,"ok":true}
+  [PASS] P-3 crop_x=0 (+scale2) actually renders the LEFT half — centre pixel is RED  — rgb=253,0,0
+  [PASS] P-4 crop_x=1 (+scale2) actually renders the RIGHT half — centre pixel is BLUE  — rgb=0,0,255
+  [PASS] P-5 editing framing never changed narration timing (rendered ~ audio)  — rendered=12 audio=12
+
+==============================================================
+  EDL PARITY SUMMARY: 6 PASS, 0 FAIL
+==============================================================

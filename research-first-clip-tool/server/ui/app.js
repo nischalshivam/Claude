@@ -28,7 +28,10 @@ async function upload(kind, file) {
 }
 const mediaUrl = t => `/api/v1/media/${t}?token=${TOKEN}`;
 const thumbUrl = (t, s = 0) => `/api/v1/thumb/${t}?t=${s}&token=${TOKEN}`;
+const previewUrl = (t, s = 0, d = 6) => `/api/v1/preview/${t}?start=${Math.max(0, s)}&duration=${Math.max(.25, d)}&token=${TOKEN}`;
 function toast(msg, kind = '') { const t = $('#toast'); t.innerHTML = ''; t.append(el('div', { class: `toast ${kind}` }, msg)); setTimeout(() => { t.innerHTML = ''; }, kind === 'bad' ? 6500 : 3500); }
+function downloadText(name, text) { const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })), download: name }); document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
+async function copyText(text, ok = 'copy ho gaya') { try { await navigator.clipboard.writeText(text || ''); toast(ok, 'ok'); } catch { toast('clipboard permission nahi mili', 'bad'); } }
 
 const STATE_BADGE = {
   NO_INPUTS: 'b-bad', INPUTS_INVALID: 'b-bad', READY_TO_RESEARCH: 'b-warn', READY_TO_DRAFT: 'b-busy',
@@ -243,13 +246,41 @@ function attachJobStream() {
 async function viewMissing() {
   const v = $('#view'); v.className = ''; v.innerHTML = '';
   const box = el('div', { class: 'wrap' }); v.append(box);
-  topBar('Missing Media', 'Jo footage internet par nahi mila — apni image/video daalo. Audio kabhi nahi badlega.', [el('button', { class: 'btn', onclick: refreshView }, 'Refresh')]);
+  topBar('Missing Media', 'Jo footage internet par nahi mila — apni image/video daalo. Audio kabhi nahi badlega.', [
+    el('button', { class: 'btn', onclick: () => openResearchKit('stage1') }, 'ChatGPT prompt 1'),
+    el('button', { class: 'btn', onclick: () => openResearchKit('stage2') }, 'ChatGPT prompt 2'),
+    el('button', { class: 'btn', onclick: refreshView }, 'Refresh')]);
   const { data } = await api('/missing');
+  box.append(el('div', { class: 'card evidence-help' },
+    el('h3', {}, 'HARD EVIDENCE ka matlab'),
+    el('p', { class: 'hint', style: 'margin:4px 0 0' }, 'Narration koi factual ya scene-specific claim kar rahi hai. Yahan generic character photo ya random B-roll kaafi nahi: literal event, person ya object dikhna chahiye. Isi liye tool human approval maangta hai. NORMAL scenes mein ye extra tick nahi aata.')));
+  box.append(el('div', { class: 'research-actions' },
+    el('button', { class: 'btn primary', onclick: () => openResearchKit('note') }, 'Missing-scenes note dekho / copy'),
+    el('button', { class: 'btn', onclick: downloadResearchNote }, 'Note .txt download'),
+    el('button', { class: 'btn', onclick: syncEditor }, 'Media editor mein lagao')));
   if (!data.requests || !data.requests.length) {
     box.append(el('div', { class: 'card' }, el('p', {}, STATE && STATE.artifacts && STATE.artifacts.gap_plan ? 'Koi khaali jagah nahi — sab bhar chuka.' : 'Abhi koi request nahi. Pehle New Video se Draft banao.')));
     return;
   }
   for (const r of data.requests) box.append(missingCard(r));
+}
+async function getResearchKit() { const { data } = await api('/missing/research-kit'); return data || {}; }
+async function openResearchKit(which) {
+  const data = await getResearchKit();
+  const text = which === 'stage1' ? data.stage1_prompt : which === 'stage2' ? data.stage2_prompt : data.note;
+  const title = which === 'stage1' ? 'Prompt 1 — clean-script research map' : which === 'stage2' ? 'Prompt 2 — missing-scenes exact research' : 'Missing scenes — ready-to-copy note';
+  const v = $('#view'); v.className = ''; v.innerHTML = ''; const box = el('div', { class: 'wrap' }); v.append(box);
+  topBar(title, 'Isse seedha ChatGPT chat mein copy kar sakte ho.', [el('button', { class: 'btn', onclick: () => setView('missing') }, '← Missing Media')]);
+  box.append(el('div', { class: 'card' },
+    el('div', { class: 'research-actions' }, el('button', { class: 'btn primary', onclick: () => copyText(text) }, 'Poora copy karo'), el('button', { class: 'btn', onclick: () => downloadText(which + '.txt', text) }, '.txt download')),
+    el('pre', { class: 'log', style: 'max-height:65vh' }, text || 'abhi note nahi bana')));
+}
+async function downloadResearchNote() { const d = await getResearchKit(); downloadText('MISSING_MEDIA_RESEARCH_NOTE.txt', d.note || ''); }
+async function syncEditor() {
+  const { ok, data } = await api('/edl/sync-manual', { method: 'POST', body: '{}' });
+  if (!ok) return toast(data.message || 'pehle draft banao', 'bad');
+  toast(`${data.applied || 0} missing ranges editor mein update ho gaye`, 'ok');
+  await refreshState(); setView('editor');
 }
 function missingCard(r) {
   const card = el('div', { class: 'card' });
@@ -273,7 +304,23 @@ function missingCard(r) {
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); uploadMedia(r.request_key, [...e.dataTransfer.files], drop); };
   card.append(drop);
-  if (r.files && r.files.length) card.append(el('div', { class: 'small mt muted' }, 'files: ' + r.files.map(f => f.file + (f.duration ? ` (${f.duration.toFixed(1)}s)` : '')).join(', ')));
+  if (r.files && r.files.length) {
+    const grid = el('div', { class: 'media-grid' });
+    r.files.forEach((f, i) => {
+      const item = el('div', { class: 'media-item' });
+      if (f.token) item.append(f.type === 'VIDEO'
+        ? el('video', { src: previewUrl(f.token, f.trim_start_sec || 0, Math.min(12, f.duration || 6)), controls: 'controls', muted: 'muted', preload: 'metadata' })
+        : el('img', { src: mediaUrl(f.token), loading: 'lazy' }));
+      item.append(el('div', { class: 'media-meta' }, el('b', { title: f.file }, `${i + 1}. ${f.file}`), f.duration ? `${f.duration.toFixed(1)}s video` : `${f.width || '?'}×${f.height || '?'} image`));
+      item.append(el('div', { class: 'media-actions' },
+        el('button', { class: 'btn', disabled: i === 0 ? 'disabled' : null, onclick: () => moveMedia(r, i, -1) }, '↑'),
+        el('button', { class: 'btn', disabled: i === r.files.length - 1 ? 'disabled' : null, onclick: () => moveMedia(r, i, 1) }, '↓'),
+        el('button', { class: 'btn danger', onclick: () => removeMedia(r.request_key, f.file) }, 'Remove')));
+      grid.append(item);
+    });
+    card.append(grid);
+    card.append(el('div', { class: 'small mt muted' }, `${r.files.length} file: tool inhe isi order mein poore ${r.range.duration_sec.toFixed(1)}s gap par barabar baantega. Ek file ho to wahi poora gap bharegi.`));
+  }
 
   const reuse = el('input', { type: 'checkbox' }); if (r.allow_reuse) reuse.checked = true;
   reuse.onchange = () => api(`/requests/${encodeURIComponent(r.request_key)}/override`, { method: 'POST', body: JSON.stringify({ allow_reuse: reuse.checked }) }).then(refreshView);
@@ -297,13 +344,32 @@ async function uploadMedia(key, files, drop) {
     const d = await r.json().catch(() => ({})); if (!d.ok) toast(f.name + ': ' + (d.message || 'fail'), 'bad'); }
   await refreshView(); await refreshState();
 }
+async function moveMedia(r, index, delta) {
+  const files = r.files.map((f, i) => ({ file: f.file, relative_path: f.file, order: i, trim_start_sec: f.trim_start_sec, trim_end_sec: f.trim_end_sec }));
+  const j = index + delta; if (j < 0 || j >= files.length) return;
+  [files[index], files[j]] = [files[j], files[index]]; files.forEach((f, i) => { f.order = i; });
+  const { data } = await api(`/requests/${encodeURIComponent(r.request_key)}/override`, { method: 'POST', body: JSON.stringify({ files }) });
+  if (!data.ok) return toast(data.message || 'order save nahi hua', 'bad');
+  refreshView();
+}
+async function removeMedia(key, file) {
+  if (!confirm(`${file} ko is scene se hataana hai? File recoverable .trash mein jayegi.`)) return;
+  const { ok, data } = await api(`/requests/${encodeURIComponent(key)}/media/${encodeURIComponent(file)}`, { method: 'DELETE' });
+  if (!ok) return toast(data.message || 'remove fail', 'bad');
+  toast('media hata di — .trash se recover ho sakti hai', 'ok'); refreshView(); refreshState();
+}
 
 // ===================== EDITOR =====================
 let EDL = null, SEL = null;
+const PLAYER = { time: 0, playing: false, raf: 0, audio: null, media: null, shotId: null, startedAt: 0, startedTime: 0 };
 const ORIGIN_COLOR = { AUTO_EXACT: 'var(--ok)', AUTO_CONTEXT: 'var(--busy)', AUTO_STILL: 'var(--accent)', AUTO_MONTAGE: 'var(--busy)', AUTO_GRAPHIC: 'var(--warn)', USER: 'var(--warn)', MISSING: 'var(--bad)', UNKNOWN: 'var(--faint)' };
 async function viewEditor() {
+  stopPlayer(false);
   const v = $('#view'); v.className = 'editorwrap'; v.innerHTML = '';
-  $('#top').innerHTML = ''; topBar('Editor', null, [el('button', { class: 'btn primary', onclick: () => runJob('final'), disabled: STATE && STATE.can_export ? null : 'disabled' }, 'Export')]);
+  $('#top').innerHTML = ''; topBar('Editor', 'Voiceover-synced content preview · Space = play/pause · ←/→ = 2s seek', [
+    el('button', { class: 'btn', onclick: () => setView('missing') }, 'Missing Media'),
+    el('button', { class: 'btn', onclick: syncEditor }, 'Refresh media'),
+    el('button', { class: 'btn primary', onclick: () => runJob('final'), disabled: STATE && STATE.can_export ? null : 'disabled' }, 'Export')]);
   const { ok, data, status } = await api('/edl');
   if (!ok || !data.edl) {
     v.className = ''; v.innerHTML = '';
@@ -314,16 +380,25 @@ async function viewEditor() {
   if (!SEL || !shots.find(s => s.shot_id === SEL)) SEL = shots[0] && shots[0].shot_id;
   const sel = shots.find(s => s.shot_id === SEL);
 
-  const left = el('div', { class: 'ed-col l' }, el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Shots (' + shots.length + ')'));
-  for (const s of shots) left.append(el('div', { class: 'rowline', style: 'cursor:pointer;' + (s.shot_id === SEL ? 'background:var(--raised);' : ''), onclick: () => { SEL = s.shot_id; viewEditor(); } },
+  const left = el('div', { class: 'ed-col l', id: 'shotList' }, el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Shots (' + shots.length + ')'));
+  for (const s of shots) left.append(el('div', { class: 'rowline shot-row', 'data-shot': s.shot_id, style: 'cursor:pointer;' + (s.shot_id === SEL ? 'background:var(--raised);' : ''), onclick: () => seekEditor(s.timeline.start) },
     el('span', { class: 'k' }, s.display_label || s.slot_id.replace('SLOT_', '#')),
     el('span', { style: 'color:' + (ORIGIN_COLOR[s.provenance.origin] || 'var(--muted)') }, (s.provenance.origin || '').replace('AUTO_', '').toLowerCase() || '?')));
 
-  const center = el('div', { class: 'ed-center' }); const prev = el('div', { class: 'preview' }); center.append(prev); renderPreview(prev, sel);
-  const right = el('div', { class: 'ed-col r insp' }, el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Inspector')); right.append(inspector(sel));
+  const center = el('div', { class: 'ed-center' });
+  const prev = el('div', { class: 'preview', id: 'masterPreview' }, el('div', { class: 'preview-stage', id: 'previewStage' }));
+  const back = el('button', { class: 'round', title: 'Previous shot', onclick: prevShot }, '◀');
+  const play = el('button', { class: 'round main', id: 'playBtn', title: 'Play / Pause', onclick: togglePlayer }, '▶');
+  const next = el('button', { class: 'round', title: 'Next shot', onclick: nextShot }, '▶|');
+  const scrub = el('input', { type: 'range', id: 'masterScrub', min: '0', max: String(EDL.duration_sec || 0), step: '0.01', value: String(Math.min(PLAYER.time, EDL.duration_sec || 0)) });
+  scrub.oninput = () => seekEditor(+scrub.value, true);
+  const transport = el('div', { class: 'transport' }, back, play, next, el('span', { class: 'timecode', id: 'timecode' }), scrub);
+  center.append(prev, transport);
+  const right = el('div', { class: 'ed-col r insp', id: 'inspectorPanel' }, el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Inspector'), inspector(sel));
   const top = el('div', { class: 'ed-top' }, left, center, right);
   const tl = el('div', { class: 'ed-tl' }, timelineTracks(shots));
   v.append(el('div', { class: 'ed' }, top, tl));
+  initEditorPlayer();
 }
 function renderPreview(prev, s) {
   prev.innerHTML = '';
@@ -335,6 +410,89 @@ function renderPreview(prev, s) {
     if (s.asset.source_in) vid.addEventListener('loadedmetadata', () => { try { vid.currentTime = s.asset.source_in; } catch {} }); prev.append(vid);
   } else prev.append(el('img', { src: mediaUrl(tok) }));
 }
+function shotAt(t) {
+  const shots = EDL && EDL.tracks && EDL.tracks.video_main || [];
+  return shots.find(s => t >= s.timeline.start - .001 && t < s.timeline.end - .001) || shots[shots.length - 1] || null;
+}
+function stopPlayer(resetButton = true) {
+  PLAYER.playing = false; cancelAnimationFrame(PLAYER.raf); PLAYER.raf = 0;
+  if (PLAYER.audio) { try { PLAYER.audio.pause(); } catch {} }
+  if (PLAYER.media && PLAYER.media.tagName === 'VIDEO') { try { PLAYER.media.pause(); } catch {} }
+  if (resetButton && $('#playBtn')) $('#playBtn').textContent = '▶';
+}
+function initEditorPlayer() {
+  const vo = EDL.tracks.voiceover && EDL.tracks.voiceover[0];
+  PLAYER.audio = vo && vo.path_token ? new Audio(mediaUrl(vo.path_token)) : null;
+  if (PLAYER.audio) { PLAYER.audio.preload = 'auto'; PLAYER.audio.addEventListener('ended', () => { PLAYER.time = EDL.duration_sec; stopPlayer(); updatePlayerUI(true); }); }
+  PLAYER.time = Math.max(0, Math.min(PLAYER.time || 0, EDL.duration_sec || 0));
+  updatePlayerUI(true);
+}
+function mountShot(s) {
+  const stage = $('#previewStage'); if (!stage) return;
+  stage.innerHTML = ''; PLAYER.media = null; PLAYER.shotId = s && s.shot_id;
+  if (!s) return stage.append(el('div', { class: 'muted' }, 'koi shot nahi'));
+  const wrap = $('#masterPreview');
+  wrap.querySelectorAll('.prov,.proxy-note').forEach(n => n.remove());
+  wrap.append(el('div', { class: 'prov' }, s.provenance.origin + (s.provenance.scope_relation ? ' · ' + s.provenance.scope_relation : '')));
+  const tok = s.asset && s.asset.path_token;
+  if (!tok) return stage.append(el('div', { class: 'muted' }, s.missing ? `${s.display_label || 'MISSING'} — Missing Media mein file daalo` : 'is shot ka media nahi'));
+  const tr = s.transform || {};
+  const style = `object-fit:${tr.fit === 'fit' || tr.fit === 'original' ? 'contain' : 'cover'};object-position:${(tr.crop_x == null ? .5 : tr.crop_x) * 100}% ${(tr.crop_y == null ? .5 : tr.crop_y) * 100}%;transform:scale(${tr.scale || 1}) rotate(${tr.rotation || 0}deg);opacity:${tr.opacity == null ? 1 : tr.opacity}`;
+  if (s.asset.type === 'video') {
+    const d = Math.max(.25, s.timeline.end - s.timeline.start);
+    const vid = el('video', { src: previewUrl(tok, s.asset.source_in || 0, d), muted: 'muted', playsinline: 'playsinline', preload: 'auto', style });
+    vid.addEventListener('canplay', () => { if (PLAYER.playing) vid.play().catch(() => {}); });
+    vid.addEventListener('error', () => { stage.innerHTML = ''; stage.append(el('div', { class: 'muted' }, 'Browser preview proxy nahi bani — source/render log check karo')); });
+    stage.append(vid); PLAYER.media = vid;
+    wrap.append(el('div', { class: 'proxy-note' }, 'browser-safe shot proxy'));
+  } else { const img = el('img', { src: mediaUrl(tok), style }); stage.append(img); PLAYER.media = img; }
+}
+function updatePlayerUI(forceMount = false) {
+  if (!EDL) return;
+  const total = EDL.duration_sec || 0; PLAYER.time = Math.max(0, Math.min(PLAYER.time, total));
+  const s = shotAt(PLAYER.time);
+  if (forceMount || (s && s.shot_id !== PLAYER.shotId)) mountShot(s);
+  if (s) { SEL = s.shot_id; updateSelectionUI(s); }
+  const scrub = $('#masterScrub'); if (scrub) scrub.value = String(PLAYER.time);
+  const tc = $('#timecode'); if (tc) tc.textContent = `${clockFine(PLAYER.time)} / ${clockFine(total)}`;
+  const ph = $('#timelinePlayhead'); if (ph) ph.style.left = `${PLAYER.time * +(ph.dataset.zoom || 6)}px`;
+  if (PLAYER.media && PLAYER.media.tagName === 'VIDEO' && s) {
+    const local = Math.max(0, PLAYER.time - s.timeline.start);
+    if (Math.abs((PLAYER.media.currentTime || 0) - local) > .35) { try { PLAYER.media.currentTime = local; } catch {} }
+  }
+}
+function updateSelectionUI(s) {
+  document.querySelectorAll('.shot-row').forEach(n => { n.style.background = n.dataset.shot === s.shot_id ? 'var(--raised)' : ''; });
+  document.querySelectorAll('.timeline-shot').forEach(n => n.classList.toggle('sel', n.dataset.shot === s.shot_id));
+  const p = $('#inspectorPanel'); if (p && p.dataset.shot !== s.shot_id) { p.dataset.shot = s.shot_id; p.innerHTML = ''; p.append(el('div', { class: 'tlbl', style: 'width:auto;margin-bottom:8px' }, 'Inspector'), inspector(s)); }
+}
+function clockFine(t) { t = Math.max(0, t || 0); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}.${Math.floor((t % 1) * 10)}`; }
+function seekEditor(t, keepPlaying = false) {
+  PLAYER.time = Math.max(0, Math.min(+t || 0, EDL.duration_sec || 0));
+  if (PLAYER.audio) { try { PLAYER.audio.currentTime = PLAYER.time; } catch {} }
+  PLAYER.startedAt = performance.now(); PLAYER.startedTime = PLAYER.time;
+  updatePlayerUI(true);
+  if (!keepPlaying && !PLAYER.playing) stopPlayer();
+}
+function togglePlayer() { PLAYER.playing ? pausePlayer() : playPlayer(); }
+function playPlayer() {
+  if (!EDL || PLAYER.time >= EDL.duration_sec - .02) PLAYER.time = 0;
+  PLAYER.playing = true; PLAYER.startedAt = performance.now(); PLAYER.startedTime = PLAYER.time;
+  if ($('#playBtn')) $('#playBtn').textContent = '❚❚';
+  if (PLAYER.audio) { PLAYER.audio.currentTime = PLAYER.time; PLAYER.audio.play().catch(() => {}); }
+  if (PLAYER.media && PLAYER.media.tagName === 'VIDEO') PLAYER.media.play().catch(() => {});
+  tickPlayer();
+}
+function pausePlayer() { if (PLAYER.audio && !PLAYER.audio.paused) PLAYER.time = PLAYER.audio.currentTime; stopPlayer(); updatePlayerUI(); }
+function tickPlayer() {
+  if (!PLAYER.playing) return;
+  PLAYER.time = PLAYER.audio && !PLAYER.audio.paused ? PLAYER.audio.currentTime : PLAYER.startedTime + (performance.now() - PLAYER.startedAt) / 1000;
+  if (PLAYER.time >= EDL.duration_sec) { PLAYER.time = EDL.duration_sec; stopPlayer(); updatePlayerUI(); return; }
+  updatePlayerUI(); PLAYER.raf = requestAnimationFrame(tickPlayer);
+}
+function prevShot() { const ss = EDL.tracks.video_main, at = shotAt(PLAYER.time), pos = ss.findIndex(s => at && s.shot_id === at.shot_id), i = Math.max(0, pos - 1); seekEditor(ss[i].timeline.start); }
+function nextShot() { const ss = EDL.tracks.video_main, at = shotAt(PLAYER.time), pos = ss.findIndex(s => at && s.shot_id === at.shot_id), i = Math.min(ss.length - 1, Math.max(0, pos + 1)); seekEditor(ss[i].timeline.start); }
+
 function inspector(s) {
   const box = el('div', {}); if (!s) return box;
   const L = (k, val) => el('div', { class: 'rowline' }, el('span', { class: 'k' }, k), el('span', { class: 'small' }, val == null || val === '' ? '—' : String(val)));
@@ -365,15 +523,24 @@ function inspector(s) {
 function timelineTracks(shots) {
   const box = el('div', {});
   box.append(el('div', { class: 'legend' }, ...[['exact', 'AUTO_EXACT'], ['context', 'AUTO_CONTEXT'], ['still', 'AUTO_STILL'], ['user', 'USER'], ['missing', 'MISSING'], ['graphic', 'AUTO_GRAPHIC']].map(([n, o]) => el('span', {}, el('i', { style: 'background:' + ORIGIN_COLOR[o] }), n))));
-  const strip = el('div', { class: 'strip' });
   const total = EDL.duration_sec || shots.reduce((a, s) => Math.max(a, s.timeline.end), 0) || 1;
-  for (const s of shots) { const w = Math.max(20, Math.round((s.timeline.end - s.timeline.start) / total * 1200));
-    const clip = el('div', { class: 'clip' + (s.shot_id === SEL ? ' sel' : ''), style: `width:${w}px;background-color:${ORIGIN_COLOR[s.provenance.origin] || '#333'}` });
+  const zoom = total > 1200 ? 4 : total > 600 ? 6 : 9;
+  const width = Math.max(1200, Math.ceil(total * zoom));
+  const canvas = el('div', { class: 'timeline-canvas', style: `width:${width}px` });
+  const tick = total > 900 ? 60 : total > 300 ? 30 : 10;
+  for (let t = 0; t <= total; t += tick) canvas.append(el('div', { class: 'ruler-mark', style: `left:${t * zoom}px` }, clock(t)));
+  for (const s of shots) { const w = Math.max(8, Math.round((s.timeline.end - s.timeline.start) * zoom));
+    const clip = el('div', { class: 'timeline-shot' + (s.shot_id === SEL ? ' sel' : ''), 'data-shot': s.shot_id,
+      style: `left:${s.timeline.start * zoom}px;width:${w}px;background-color:${ORIGIN_COLOR[s.provenance.origin] || '#333'}` });
     if (s.asset && s.asset.path_token) clip.style.backgroundImage = `url(${thumbUrl(s.asset.path_token, s.asset.source_in || 0)})`;
     clip.append(el('div', { class: 'tg' }, s.display_label ? s.display_label.replace('MISSING ', 'M') : clock(s.timeline.start)));
-    clip.onclick = () => { SEL = s.shot_id; viewEditor(); }; strip.append(clip); }
-  box.append(el('div', { class: 'trow' }, el('div', { class: 'tlbl' }, 'Shots'), strip));
-  box.append(el('div', { class: 'trow' }, el('div', { class: 'tlbl' }, 'Voice'), el('div', { class: 'small muted', style: 'padding:8px' }, 'voiceover master (locked) · ' + clock(total))));
+    clip.onclick = e => { e.stopPropagation(); seekEditor(s.timeline.start); }; canvas.append(clip); }
+  canvas.onclick = e => { const r = canvas.getBoundingClientRect(); seekEditor((e.clientX - r.left) / zoom); };
+  canvas.append(el('div', { class: 'playhead', id: 'timelinePlayhead', 'data-zoom': String(zoom), style: `left:${PLAYER.time * zoom}px` }));
+  const scroll = el('div', { class: 'timeline-scroll' }, canvas);
+  box.append(el('div', { class: 'trow' }, el('div', { class: 'tlbl' }, 'Shots'), scroll));
+  const voice = el('div', { class: 'voice-bar', style: `width:${width}px` });
+  box.append(el('div', { class: 'trow' }, el('div', { class: 'tlbl' }, 'Voice'), el('div', { class: 'timeline-scroll' }, voice)));
   return box;
 }
 async function patchShot(shot_id, op) {
@@ -418,6 +585,12 @@ function refreshView() { return (VIEWS[VIEW] || viewNewVideo)(); }
 function setView(v) { VIEW = v; renderNav(); refreshView(); }
 function setTheme(t) { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('rfc-theme', t); } catch {} }
 $('#themeBtn').onclick = () => setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+window.addEventListener('keydown', e => {
+  if (VIEW !== 'editor' || /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '')) return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlayer(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); seekEditor(PLAYER.time - 2, PLAYER.playing); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); seekEditor(PLAYER.time + 2, PLAYER.playing); }
+});
 
 (async function init() {
   try { setTheme(localStorage.getItem('rfc-theme') || 'dark'); } catch {}

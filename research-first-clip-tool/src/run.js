@@ -36,6 +36,7 @@ const manual = require('./manual.js');
 const effectivegate = require('./effectivegate.js');
 const readiness = require('./readiness.js');
 const timebase = require('./timebase.js');
+const edlMod = require('./edl.js');
 
 // ---------- console tee -> run.log ----------
 const logLines = [];
@@ -279,7 +280,13 @@ async function main() {
   //  se final par jaate ho, to timeline/render/report DOBARA banne chahiye.
   //  Warna wahi purani timeline reuse ho jati hai aur aapka daala hua media
   //  kabhi lagta hi nahi — asli test mein yahi hua tha.
-  const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production'].join('|'));
+  // EDL edit signature bhi isme — warna editor mein crop/trim badalne par final
+  // run timeline stage ko "pehle ho chuka" samajh kar skip kar deta tha aur edit
+  // kabhi render nahi hota tha (P0-A ka asli bug).
+  let edlSig = 'none';
+  try { const projRoot = process.env.RFC_PROJECT_DIR ? path.resolve(process.env.RFC_PROJECT_DIR) : U.ROOT;
+    edlSig = edlMod.editSignature(edlMod.read(projRoot)); } catch {}
+  const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production', edlSig].join('|'));
   if (!flag('redo') && st.render_sig && st.render_sig !== renderSig) {
     U.log('   aapka media ya mode badla hai — timeline/render dobara banega (downloads waise ke waise rahenge)');
     for (const k of ['timeline', 'render', 'report']) delete (st.done || {})[k];
@@ -396,6 +403,19 @@ async function main() {
           fs.writeFileSync(U.p(spec.id, 'gap-plan.json'), JSON.stringify(gp, null, 2));
           spec.gapPlan = gp;
         }
+        // 4.5 P0-A: editor mein kiye gaye crop/scale/fit/trim ko is timeline par
+        //     chipka do (SIRF wahi shots jinpar user ne edit kiya). Isse final
+        //     render mein bhi wahi dikhega jo editor preview mein tha. EDL sirf
+        //     tab lagti hai jab wo isi project/job ki ho.
+        try {
+          const projRoot = process.env.RFC_PROJECT_DIR ? path.resolve(process.env.RFC_PROJECT_DIR) : U.ROOT;
+          const savedEdl = edlMod.read(projRoot);
+          if (savedEdl && (!savedEdl.source_job || savedEdl.source_job === spec.id)) {
+            const rec = edlMod.reconcile(savedEdl, tl.slots);
+            if (rec.applied) { tl.edl_revision = rec.revision; U.ok(`editor ke ${rec.applied} edit (crop/scale/trim) is render par lagaye`); }
+          }
+        } catch (e) { U.warn('EDL reconcile skip: ' + e.message.slice(0, 80)); }
+
         fs.writeFileSync(U.p(spec.id, 'timeline.json'), JSON.stringify(tl, null, 2));
 
         // 5. PRODUCTION mein ek bhi khaali slot = export nahi. Draft mein aage badho.

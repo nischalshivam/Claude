@@ -1,3 +1,15 @@
+# Research-First Clip Tool — M5.0-B (Movie Editor + real export parity)
+
+> **M5.0-B — editor ab sach mein pro hai, aur uske edits final video mein jaate hain.**
+> GPT/Codex ka editor patch adopt kiya (verify karke) + uska bacha hua P0 khud fix:
+> voiceover-master play/pause/scrub/playhead, 18s-gap = 1 file poora bhare, aur
+> **P0-A EDL→render parity** — editor ka crop/scale/fit/trim ab `final.mp4` mein
+> sach mein lagta hai (pixel-verified). Missing Media par scene-wise research note
+> + 2 ChatGPT prompts. Tests: regression 133/0, content 13/0, server 15/0, m5b 8/0,
+> parity 6/0. Kya baaki: `KNOWN_LIMITATIONS.md`. Chalao: `START_UI.bat`.
+
+---
+
 # Research-First Clip Tool — M5.0-A.2 (Movie Editor)
 
 > **M5.0-A.2 — naya "Movie Editor" design, sab kuch UI se, fresh start.**

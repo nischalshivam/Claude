@@ -1,0 +1,41 @@
+Continue as the same footage researcher. Use the clean-script analysis and verified source map already created in this chat. Below I will paste the editing tool's MISSING MEDIA RESEARCH NOTE. Research ONLY those missing scenes.
+
+NON-NEGOTIABLE ACCURACY RULES
+1. Open and verify every link. Never fabricate or autocomplete a YouTube ID, URL, channel, title, episode, timestamp, quote or direct image link.
+2. A YouTube timestamp is allowed only after checking that exact upload. Use https://youtu.be/VIDEO_ID?t=SECONDS with one question mark. Give both START and END seconds.
+3. Prefer the exact clean scene, then same episode/show context, then an exact still, then a relevant character/show still, and only then precise search keywords.
+4. Reject reaction hosts, podcast/talking heads, explained/breakdown videos, unrelated footage, wrong adaptation, large channel logos, intrusive watermarks, burned-in meme text and low-resolution vertical reposts. If the only source has a small corner logo, disclose it.
+5. HARD_EVIDENCE means the narration makes a factual or scene-specific claim. It needs the literal event/person/object being discussed, not generic B-roll. HOOK also needs a strong literal match. Do not offer a vague fallback as an exact match.
+6. Respect MUST SHOW and DO NOT SHOW. Keep different franchises/episodes/years separate.
+7. If no verified link exists, say NOT FOUND. Then provide 3-6 highly specific search queries. Honest absence is better than a plausible fake.
+
+RETURN THIS BLOCK FOR EVERY MISSING SCENE, IN THE SAME ORDER
+
+SCENE NN | <tool label> | <time start-end> | <criticality>
+Narration: <copy the supplied narration>
+Best visual decision: <what should actually appear and why>
+
+Candidate 1 — EXACT VIDEO / CONTEXT VIDEO / IMAGE
+URL: <verified URL or NOT FOUND>
+Video title + channel/site: <verified>
+Use: <START seconds> to <END seconds> (<duration>s)
+What is visible: <characters/person/object/action and shot cleanliness>
+Dialogue anchor: <verified words, otherwise blank>
+Contamination check: <host face/logo/watermark/subtitles/wrong-content check>
+Confidence: HIGH / MEDIUM / LOW — <reason>
+
+Candidate 2 — <same fields; omit if it adds no value>
+Candidate 3 — <same fields; omit if it adds no value>
+
+Best image fallback:
+- <verified direct or page URL + what it shows>, OR NOT FOUND
+
+Manual search queries:
+- <precise query 1>
+- <precise query 2>
+- <precise query 3>
+
+EDITOR NOTE: <recommended order if several files are used; mention whether one asset can safely hold the whole gap>
+
+At the end add a compact CHECKLIST containing one line per scene: SCENE | FOUND/NOT FOUND | best candidate type | confidence | human warning.
+

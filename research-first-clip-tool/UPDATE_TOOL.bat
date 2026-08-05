@@ -112,7 +112,7 @@ for %%D in (src server tools lib prompts schemas tests docs smoke-test reference
     echo   updated: %%D\
   )
 )
-for %%F in (START_HERE.bat REPAIR.bat CHECK.bat CHECKPACK.bat PREVIEW.bat START.bat START_UI.bat UPDATE_TOOL.bat package.json README.md PEHLE_YE_PADHO.txt KNOWN_LIMITATIONS.md BUILD_INFO.json RAW-TEST-LOG.txt RAW-REGRESSION-LOG.txt RAW-SERVER-LOG.txt) do (
+for %%F in (START_HERE.bat REPAIR.bat CHECK.bat CHECKPACK.bat PREVIEW.bat START.bat START_UI.bat UPDATE_TOOL.bat package.json README.md PEHLE_YE_PADHO.txt KNOWN_LIMITATIONS.md BUILD_INFO.json RAW-TEST-LOG.txt RAW-REGRESSION-LOG.txt RAW-SERVER-LOG.txt RAW-M5B-LOG.txt RAW-EDL-PARITY-LOG.txt) do (
   if exist "%SRC%\%%F" copy /Y "%SRC%\%%F" "%DST%\%%F" >nul & echo   updated: %%F
 )
 REM config.json sirf tab jab wahan hai hi nahi - aapki settings nahi udaani

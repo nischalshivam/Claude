@@ -64,10 +64,13 @@ function buildFromJob(jobId, opts = {}) {
   const gap = readJson(U.p(jobId, 'gap-plan.json'));
   if (!man && !tl) throw new Error(`job ${jobId} mein na render-manifest, na timeline — pehle draft banao`);
 
-  const shots = (man && man.shots) || (tl && tl.slots) || [];
+  // Newly uploaded manual media can be reflected in the editor immediately
+  // through a live timeline override, without waiting for a full render.
+  const liveTl = opts.timelineOverride || null;
+  const shots = (liveTl && liveTl.slots) || (man && man.shots) || (tl && tl.slots) || [];
   const dur = (man && man.duration) || {};
-  const total = (dur.audio || dur.timeline || (tl && tl.total) || 0);
-  const previewOffset = (man && man.preview_offset) || (tl && tl.preview_offset) || 0;
+  const total = (liveTl && liveTl.total) || dur.audio || dur.timeline || (tl && tl.total) || 0;
+  const previewOffset = (liveTl && liveTl.preview_offset) || (man && man.preview_offset) || (tl && tl.preview_offset) || 0;
 
   // gap-plan se request_key ranges (jahan user media chahiye)
   const gapRequests = (gap && gap.requests) || [];
@@ -214,6 +217,9 @@ function patch(root, body) {
     if (op.trim) {
       for (const k of Object.keys(op.trim)) if (ASSET_TRIM_KEYS.has(k)) s.asset[k] = op.trim[k];
     }
+    // Ye shot ab USER ne edit kiya — final render isi flag ko dekh kar parity
+    // lagata hai (auto clip ke natural source_in ko galti se "edit" na maane).
+    s.user_edited = true;
     touched.push(op.shot_id);
   }
   const v = validate(edl);
@@ -232,16 +238,24 @@ function rebuild(root, jobId, opts = {}) {
   const fresh = buildFromJob(jobId, opts);
   const old = read(root);
   if (old && old.tracks && old.tracks.video_main) {
-    const oldByKey = {};
-    for (const s of old.tracks.video_main) {
-      const k = s.request_key || s.slot_id;
-      oldByKey[k] = s;
-    }
-    for (const s of fresh.tracks.video_main) {
-      const k = s.request_key || s.slot_id;
+    // A single missing request commonly expands to several shots. Keying only
+    // by request_key made every fresh shot inherit the LAST shot's crop/trim.
+    // Preserve per-asset occurrence instead: request/slot + asset + ordinal.
+    const keyed = shots => {
+      const seen = {}, out = [];
+      for (const s of shots) {
+        const base = `${s.request_key || s.slot_id}|${(s.asset && (s.asset.sha256 || s.asset.asset_id || s.asset.path_token)) || 'none'}`;
+        const n = seen[base] || 0; seen[base] = n + 1;
+        out.push([`${base}|${n}`, s]);
+      }
+      return out;
+    };
+    const oldByKey = Object.fromEntries(keyed(old.tracks.video_main));
+    for (const [k, s] of keyed(fresh.tracks.video_main)) {
       const o = oldByKey[k];
       if (o) {
         s.transform = { ...s.transform, ...o.transform };
+        if (o.user_edited) s.user_edited = true;   // user edit rebuild mein bhi bacha rahe
         if (o.asset && s.asset) {
           if (o.asset.source_in != null) s.asset.source_in = o.asset.source_in;
           if (o.asset.source_out != null) s.asset.source_out = o.asset.source_out;
@@ -251,6 +265,89 @@ function rebuild(root, jobId, opts = {}) {
     fresh.revision = old.revision + 1;   // reload bhi ek naya revision
   }
   return writeAtomic(root, fresh);
+}
+
+// ============================================================
+//  P0-A: EDL -> RENDER PARITY (M5.0-B)
+//  Editor mein kiye gaye crop/scale/fit/trim ab FINAL render tak pahunchte hain.
+//  Pehle EDL sirf preview thi; edl.js khud kehta tha "render EDL se M5.0-B mein
+//  judega". Ab judta hai.
+//
+//  Milane ka tareeka WAHI occurrence-key hai jo rebuild() use karta hai:
+//    (request_key | asset-identity | ordinal)
+//  taaki ek hi request ke kai shots apna-apna crop/trim rakhein — display
+//  number se kabhi nahi.
+// ============================================================
+const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.001;
+// Ek shot "edited" TABHI hai jab user ne use PATCH kiya ho (user_edited flag).
+// Pehle iska andaza source_in>0 se lagta tha — par auto clip ka source_in
+// naturally >0 hota hai (wo source mein us waqt se shuru hota hai), edit nahi.
+// Us false-positive se un-edited context clip bhi "edited" gina jata tha.
+function shotIsEdited(sh) {
+  if (sh.user_edited) return true;
+  // backward-compat: purani EDL bina flag ke — sirf transform (default se alag)
+  const t = sh.transform || {};
+  return (t.fit && t.fit !== 'fill') || !near(t.scale, 1) || !near(t.crop_x, 0.5) || !near(t.crop_y, 0.5) || !near(t.rotation, 0);
+}
+function occKey(base, seen) { const n = seen[base] || 0; seen[base] = n + 1; return `${base}|${n}`; }
+function edlShotBase(sh) { return `${sh.request_key || sh.slot_id}|${(sh.asset && (sh.asset.sha256 || sh.asset.asset_id || sh.asset.path_token)) || 'none'}`; }
+function slotAssetPath(s) { return s.media_file || s.image || s.video || (Array.isArray(s.images) && s.images[0]) || null; }
+function slotBase(s) {
+  const rk = s.manual_request_key || ('SLOT_' + (s.i != null ? String(s.i).padStart(4, '0') : 'x'));
+  const p = slotAssetPath(s);
+  const assetId = s.manual_sha256 || (p ? ('ASSET_' + sha1(p).slice(0, 12)) : 'none');
+  return `${rk}|${assetId}`;
+}
+
+/**
+ * Saved EDL ke edits ko timeline slots par chipka do (render se pehle).
+ * SIRF wahi shots jinpar user ne sach mein edit kiya (default se alag) —
+ * warna un-edited stills ka Ken Burns waisa ka waisa rahega.
+ * @returns {{ applied, revision, edits:[] }}
+ */
+function reconcile(edl, slots) {
+  if (!edl || !edl.tracks || !Array.isArray(edl.tracks.video_main)) return { applied: 0, edits: [] };
+  const seenE = {}, edited = {};
+  for (const sh of edl.tracks.video_main) {
+    const k = occKey(edlShotBase(sh), seenE);
+    if (shotIsEdited(sh)) edited[k] = {
+      transform: sh.transform || {},
+      source_in: Number((sh.asset && sh.asset.source_in) || 0),
+      source_out: sh.asset ? sh.asset.source_out : null,
+      shot_id: sh.shot_id,
+    };
+  }
+  const seenS = {}, applied = [];
+  for (const s of slots) {
+    const e = edited[occKey(slotBase(s), seenS)];
+    if (!e) continue;
+    s.edl_transform = e.transform;
+    if (e.source_in > 0) s.edl_source_in = e.source_in;
+    if (e.source_out != null) s.edl_source_out = e.source_out;
+    s.edl_shot_id = e.shot_id;
+    applied.push({ i: s.i, shot_id: e.shot_id, fit: e.transform.fit, scale: e.transform.scale,
+      crop_x: e.transform.crop_x, crop_y: e.transform.crop_y, source_in: e.source_in, source_out: e.source_out });
+  }
+  return { applied: applied.length, revision: edl.revision, edits: applied };
+}
+
+/**
+ * SIRF user ke edits ka sthir signature. render_sig isme daalta hai taaki
+ * editor mein crop/trim badalne par final render dobara bane (aur reconcile
+ * chale) — par sirf rebuild se rev badalne par nahi. Revision se NAHI banate
+ * kyunki rebuild har baar rev badha deta hai bina kisi asli edit ke.
+ */
+function editSignature(edl) {
+  if (!edl || !edl.tracks || !Array.isArray(edl.tracks.video_main)) return 'none';
+  const seen = {};
+  const bits = [];
+  for (const sh of edl.tracks.video_main) {
+    const base = edlShotBase(sh); const n = seen[base] || 0; seen[base] = n + 1;
+    if (!shotIsEdited(sh)) continue;
+    const t = sh.transform || {}, a = sh.asset || {};
+    bits.push(`${base}|${n}|${t.fit || 'fill'}|${t.scale}|${t.crop_x}|${t.crop_y}|${t.rotation}|${a.source_in}|${a.source_out}`);
+  }
+  return bits.length ? sha1(bits.sort().join('||')) : 'none';
 }
 
 // approval status EDL par live chadhao (readiness se) — store mein nahi rakhte,
@@ -265,5 +362,5 @@ function withApproval(edl, statusByKey) {
 
 module.exports = {
   SCHEMA, buildFromJob, rebuild, read, writeAtomic, validate, patch, withApproval,
-  projectRoot, edlPath, revDir,
+  reconcile, shotIsEdited, editSignature, projectRoot, edlPath, revDir,
 };

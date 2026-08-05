@@ -1,3 +1,41 @@
+# KNOWN LIMITATIONS — M5.0-B (imaandar list)
+
+## M5.0-B — pro editor + EDL→render parity
+
+Is release ne GPT/Codex ke editor patch ko adopt kiya (verify karke, blindly
+nahi) aur uska sabse bada bacha hua P0 khud fix kiya:
+
+**Ab SACH mein chalta hai (asli test se proven):**
+- **Editor player**: voiceover-master play/pause, scrub, timecode, moving
+  playhead, prev/next shot, Space/arrow keys, browser-safe proxy (MKV/AV1/VP9
+  ke liye) — Codex ka, adopt kiya.
+- **18s gap = 1 file poora bhare; 10 file = 10 barabar shot**; chhoti video loop
+  ho kar poora gap bharti hai. (m5b-contract 8/0)
+- **P0-A EDL→render parity (main naya fix)**: editor mein kiya crop/scale/fit/
+  trim ab FINAL `final.mp4` mein sach mein lagta hai — pehle sirf preview mein
+  dikhta tha. Pixel-verified: `crop_x=0`→baayaan half, `crop_x=1`→daayaan half;
+  timing kabhi nahi badalti; `render-manifest.json` mein `edl_parity` block +
+  har shot par `edl_applied`. Mismatch par final BLOCK hota hai. (edl-parity 6/0)
+- **Missing-scenes note** (scene-wise, ready-to-copy) + **2 ChatGPT prompts**
+  (Stage1 script map, Stage2 missing-scene research — Stage2 note ke saath
+  auto-bhara) Missing Media page par.
+- **Recoverable remove** (`.trash`), media ordering, "Media editor mein lagao"
+  (bina full render ke sync).
+
+**Abhi bhi seemayein (aage):**
+- Multi-shot ke aage full timeline drag/split/ripple — abhi slot-locked edit.
+- Style templates/transitions/effects — Content Lock ke baad (M5.1). Abhi koi
+  transition/effect nahi.
+- Offline Whisper (asli transcription) optional mode — abhi auto-SRT estimated hi
+  hai (real .srt daalo to wahi jeetega).
+- Streaming upload/proxy worker-queue (bade uploads abhi RAM mein aate hain).
+- Queue aur real multi-project Library abhi placeholder.
+- UI browser-test: is environment mein browser nahi chala sakta; API + parity
+  asli ffmpeg se test kiye (server 15/0, m5b 8/0, parity 6/0, regression 133/0,
+  content 13/0). Screen par kuch ajeeb dikhe to batana.
+
+---
+
 # KNOWN LIMITATIONS — M5.0-A.2 (imaandar list)
 
 ## M5.0-A.2 — naya "Movie Editor" design + sab UI se

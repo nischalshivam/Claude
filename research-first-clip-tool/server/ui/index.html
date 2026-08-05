@@ -113,10 +113,26 @@ pre.log{background:#05070b;border:1px solid var(--border);border-radius:10px;pad
 .preview{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
 .preview video,.preview img{max-width:100%;max-height:100%;background:#000}
 .prov{position:absolute;top:10px;left:10px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;background:#000a;color:#fff}
+.preview-stage{position:absolute;inset:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000;border-radius:8px}
+.preview-stage video,.preview-stage img{width:100%;height:100%;display:block}
+.transport{height:58px;display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--border);background:var(--surface)}
+.transport .round{width:34px;height:34px;border-radius:50%;border:1px solid var(--border-strong);background:var(--raised);color:var(--text);cursor:pointer}
+.transport .round.main{background:var(--accent);border-color:var(--accent);color:#fff}
+.transport input[type=range]{flex:1;min-width:80px}
+.timecode{font:12px 'Cascadia Code',Consolas,monospace;color:var(--muted);min-width:112px;text-align:center}
+.proxy-note{position:absolute;right:10px;bottom:10px;background:#000b;color:#ddd;border-radius:6px;padding:3px 7px;font-size:10px}
 .ed-tl{background:var(--surface);border-top:1px solid var(--border);overflow:auto;padding:8px 12px}
 .trow{display:flex;align-items:center;gap:8px;margin:4px 0}
 .tlbl{width:64px;flex:none;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
 .strip{display:flex;gap:2px;flex:1;overflow-x:auto;padding-bottom:4px}
+.timeline-scroll{overflow-x:auto;overflow-y:hidden;flex:1;border-radius:6px;background:var(--bg)}
+.timeline-canvas{position:relative;height:64px;min-width:100%;background:linear-gradient(to bottom,var(--line) 1px,transparent 1px)}
+.timeline-shot{position:absolute;top:15px;height:44px;border:2px solid transparent;border-radius:5px;overflow:hidden;cursor:pointer;background-position:center;background-size:cover}
+.timeline-shot.sel{border-color:#fff}.timeline-shot .tg{font-size:8.5px;font-weight:700;background:#000b;color:#fff;padding:1px 4px;border-radius:3px;position:absolute;left:2px;top:2px}
+.ruler-mark{position:absolute;top:0;height:12px;border-left:1px solid var(--border-strong);font-size:8px;color:var(--faint);padding-left:2px}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;z-index:7;pointer-events:none;box-shadow:0 0 0 1px #0008}
+.voice-bar{position:relative;height:28px;background:linear-gradient(90deg,var(--accent-soft),var(--busy-soft));border:1px solid var(--busy-line);border-radius:5px;overflow:hidden}
+.voice-bar:after{content:'VOICEOVER  LOCKED';position:absolute;left:8px;top:5px;font-size:9px;font-weight:700;color:var(--busy)}
 .clip{height:46px;border-radius:5px;flex:none;min-width:20px;border:2px solid transparent;position:relative;overflow:hidden;cursor:pointer;background-size:cover;background-position:center}
 .clip.sel{border-color:#fff}
 .clip .tg{position:absolute;left:2px;top:2px;font-size:8.5px;font-weight:700;background:#000a;color:#fff;padding:0 4px;border-radius:3px}
@@ -124,6 +140,14 @@ pre.log{background:#05070b;border:1px solid var(--border);border-radius:10px;pad
 .legend i{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px;vertical-align:-1px}
 .insp .rowline .k{max-width:110px}
 .slider{width:100%}
+.research-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.evidence-help{border-left:3px solid var(--bad);background:var(--bad-soft)}
+.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px;margin-top:10px}
+.media-item{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--bg)}
+.media-item img,.media-item video{display:block;width:100%;height:86px;object-fit:cover;background:#000}
+.media-meta{padding:7px;font-size:10.5px;color:var(--muted);overflow:hidden}
+.media-meta b{display:block;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.media-actions{display:flex;gap:4px;padding:0 7px 7px}.media-actions button{padding:3px 7px;font-size:10px}
 </style>
 </head>
 <body>

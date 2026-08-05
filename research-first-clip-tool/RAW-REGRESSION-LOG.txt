@@ -89,15 +89,15 @@
   [PASS] T-M48 the final export is blocked while any gap is still waiting for media  — exit=3 reason=NEEDS_HUMAN_MEDIA
   [PASS] T-M49 user media is validated, ordered naturally (01,02,10) and the corrupt file is refused with a reason  — files=01_first.mp4,02_second.jpg,10_last.jpg invalid=[{"file":"broken.mp4","problem":"ye video khul nahi rahi — kharab/adhoori file lagti hai"}]
   [PASS] T-M410 with valid media in every gap the project reaches HYBRID_READY  — ready=true states=READY
-  [PASS] T-M411 user media unblocks the final render and fills exactly the missing ranges  — exit=0 userShots=2 leftoverCards=0
+  [PASS] T-M411 user media unblocks the final render and fills exactly the missing ranges  — exit=0 userShots=3 leftoverCards=0
   [PASS] T-M412 user media is labelled USER_APPROVED and never as researched exact footage  — rel=USER_APPROVED status=SUCCESS
   [PASS] T-M413 the final video length still matches the narration (manual media never shifts audio)  — final=18.00s expected~18s
-  [PASS] T-M414 no user asset repeats on two adjacent shots while another asset is available  — shots=2 dup=false seq=2
+  [PASS] T-M414 no user asset repeats on two adjacent shots while another asset is available  — shots=3 dup=false seq=3
   [PASS] T-M415 a media path outside its own request folder is refused  — inside=true outside=false
   [PASS] T-M411A draft finishes even when HOOK/HARD_EVIDENCE beats have no evidence (the real 897s bug)  — exit=0 placeholders=3 requests=1 total=24
   [PASS] T-M411B every placeholder label has exactly one DATA request and vice versa  — placeholderLabels=MISSING 001 requests=MISSING 001 folders=1
   [PASS] T-M411C copying files is not enough for a critical beat — explicit approval is required  — approved=0 finalExit=3
-  [PASS] T-M411D approved user media resolves a HARD_EVIDENCE gap and the final render succeeds  — approved=1 exit=0 userShots=4 leftover=0
+  [PASS] T-M411D approved user media resolves a HARD_EVIDENCE gap and the final render succeeds  — approved=1 exit=0 userShots=3 leftover=0
   [PASS] T-M411E the manifest keeps which file, from which request, with which hash  — sample={"r":"MISSING_001__2fdaa11d","f":"01_a.jpg","h":true}
   [PASS] T-M411F going from draft to final does not wipe the job or re-download anything  — wipe=false downloaded=false
   [PASS] T-M411G a 40-second run of missing shots is split into requests of at most 30 seconds  — requests=2 longest=30 covered=40

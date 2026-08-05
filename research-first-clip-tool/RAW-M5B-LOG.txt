@@ -1,0 +1,9 @@
+PASS one image fills 18s
+PASS ten assets exactly tile 18s
+PASS one short video fills 18s
+PASS explicit reuse creates pacing shots
+PASS same-request shots preserve independent EDL edits
+PASS short manual video render is loop-safe
+PASS CHATGPT_STAGE1_TOPIC_AND_SOURCE_MAP_PROMPT.txt forbids invented sources
+PASS CHATGPT_STAGE2_MISSING_SCENE_RESEARCH_PROMPT.txt forbids invented sources
+M5B CONTRACT: 8 PASS / 0 FAIL

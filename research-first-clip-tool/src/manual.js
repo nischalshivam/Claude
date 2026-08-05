@@ -160,17 +160,19 @@ function buildShotsForRequest(req, media, opts = {}) {
   const cfg = opts.cfg || {};
   const shotsCfg = cfg.shots || {};
   const target = shotsCfg.targetSeconds || 5;
-  const maxStill = Math.min(7.5, shotsCfg.maxStillSeconds || 7.5);
   const a = req.range.start_sec, b = req.range.end_sec;
   const dur = b - a;
   if (!media.length) return { shots: [], short: dur, used: [] };
 
   // kitne shots — har shot ~target second
-  let n = Math.max(1, Math.round(dur / target));
-  const perShot = dur / n;
-  if (perShot > maxStill) n = Math.ceil(dur / maxStill);
-
   const allowReuse = !!opts.allow_reuse;
+  // Human-fill contract: the file count is the edit decision. One supplied
+  // asset fills the complete request; N supplied assets divide it into N
+  // equal, gap-free shots. Reuse is an optional pacing mode, not a coverage
+  // prerequisite.
+  const n = allowReuse
+    ? Math.max(media.length, Math.max(1, Math.round(dur / target)))
+    : media.length;
   const rkey = requestKey(req);
   const shots = [];
   const used = new Set();
@@ -188,11 +190,11 @@ function buildShotsForRequest(req, media, opts = {}) {
     for (let t = 0; t < media.length; t++) {
       const cand = media[(vi + t) % media.length];
       if (media.length > 1 && cand.file === lastFile) continue;
-      if (!allowReuse && used.has(cand.file) && used.size < media.length) continue;
+      if (!allowReuse && used.has(cand.file)) continue;
       pick = cand; vi = (vi + t + 1) % media.length; break;
     }
     if (!pick) {
-      if (!allowReuse) return { shots, short: +(b - s0).toFixed(3), used: [...used] };  // media kam pad gaya
+      if (!allowReuse) break; // defensive only: n === media.length
       pick = media[vi % media.length]; vi++;
     }
     used.add(pick.file); lastFile = pick.file;
@@ -222,7 +224,8 @@ function buildShotsForRequest(req, media, opts = {}) {
   // duplicate to pehle se roka hua hai, par "3 file 20 second par" ka matlab
   // hai ki wahi visual do baar dikhega. User ko ye pata hona chahiye.
   const reused = Math.max(0, shots.length - used.size);
-  return { shots, short: 0, used: [...used], reused };
+  const coveredTo = shots.length ? shots[shots.length - 1].end : a;
+  return { shots, short: +Math.max(0, b - coveredTo).toFixed(3), used: [...used], reused };
 }
 
 /** Poora DATA folder padho aur har request ka status batao. */

@@ -47,6 +47,48 @@ const escFont = p => p.replace(/\\/g, '/').replace(/:/g, '\\:');
 
 const CARD_BG = { text: '0x1a1a1a', graphic: '0x102a43', needs_source: '0x4a1010', needs_review: '0x3a2b08' };
 
+// ============================================================
+//  P0-A: EDL edit ko ffmpeg filter graph mein badlo (M5.0-B).
+//  Editor mein jo crop/scale/fit user ne kiya, wahi final render par lagta hai.
+//  filter_complex use karte hain (blur ke split ke liye) — output label [vout].
+//  Ye SIRF tab lagta hai jab slot par edl_transform ho (yaani user ne edit
+//  kiya); warna purana behaviour (Ken Burns / fill) waisa ka waisa.
+// ============================================================
+function transformGraph(t, W, H, FPS) {
+  t = t || {};
+  const fit = t.fit || 'fill';
+  const scale = Math.min(8, Math.max(0.1, Number(t.scale) || 1));
+  const cx = Math.min(1, Math.max(0, t.crop_x == null ? 0.5 : Number(t.crop_x)));
+  const cy = Math.min(1, Math.max(0, t.crop_y == null ? 0.5 : Number(t.crop_y)));
+  const tail = `fps=${FPS},setsar=1`;
+  if (fit === 'blur') {
+    return `[0:v]split=2[bg][fg];` +
+      `[bg]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=24:2,eq=brightness=-0.12[bgb];` +
+      `[fg]scale=${W}:${H}:force_original_aspect_ratio=decrease,scale=trunc(iw*${scale}/2)*2:trunc(ih*${scale}/2)*2[fgs];` +
+      `[bgb][fgs]overlay=(W-w)/2:(H-h)/2,${tail}[vout]`;
+  }
+  if (fit === 'fit' || fit === 'original') {
+    const s = fit === 'original' ? Math.min(1, scale) : scale;
+    return `[0:v]scale=${W}:${H}:force_original_aspect_ratio=decrease,scale=trunc(iw*${s}/2)*2:trunc(ih*${s}/2)*2,` +
+      `crop='min(iw,${W})':'min(ih,${H})',pad=${W}:${H}:(${W}-iw)/2:(${H}-ih)/2:black,${tail}[vout]`;
+  }
+  // fill (default cover + zoom + positioned crop)
+  return `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,scale=trunc(iw*${scale}/2)*2:trunc(ih*${scale}/2)*2,` +
+    `crop=${W}:${H}:(iw-${W})*${cx}:(ih-${H})*${cy},${tail}[vout]`;
+}
+// EDL-edited slot ke liye ek segment (video/context/still teeno). null agar fail.
+function renderEdlSlot(kind, srcAbs, s, dur, cfg, W, H, FPS, seg) {
+  const g = transformGraph(s.edl_transform, W, H, FPS);
+  const seek = s.edl_source_in != null ? s.edl_source_in : (s.media_start || 0);
+  const enc = ['-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
+    '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an', seg];
+  let args;
+  if (kind === 'still') args = ['-loop', '1', '-framerate', String(FPS), '-i', srcAbs, '-t', dur.toFixed(3), '-filter_complex', g, '-map', '[vout]', ...enc];
+  else if (kind === 'context_video') args = ['-stream_loop', '-1', '-ss', String(seek), '-i', srcAbs, '-t', dur.toFixed(3), '-filter_complex', g, '-map', '[vout]', ...enc];
+  else args = ['-ss', String(seek), '-i', srcAbs, '-t', dur.toFixed(3), '-filter_complex', g, '-map', '[vout]', ...enc];
+  return U.ffmpeg(args, { timeout: 300000 });
+}
+
 // Slot ka asset path job-relative bhi ho sakta hai (clips/, cache/) aur
 // ROOT-relative ya absolute bhi (local_file wale sources). Ek hi jagah resolve
 // karo, warna ek valid local source "missing" lagta hai aur shot chupchap card
@@ -155,7 +197,19 @@ module.exports = function render(spec, cfg, st, tl) {
         : s.kind === 'montage' ? (imagesAbs.length >= 2 ? imagesAbs : null) : imageAbs;
       if (!have) missingReason = `planned ${s.kind} asset (${PLANNED_MEDIA[s.kind]}) nahi mila: ${s.video || s.media_file || s.image || (s.images || []).join(',') || '(none)'}`;
     }
-    if (missingReason) {
+    // ---- P0-A: user ne is shot par editor mein crop/scale/fit/trim kiya? ----
+    // Pehle wahi lagao (final render mein bhi wahi dikhe jo preview mein tha).
+    // Fail ho to default framing par saaf-saaf gir jao — galat frame chup-chaap nahi.
+    let edlDone = false;
+    if (!missingReason && s.edl_transform && (s.kind === 'video' || s.kind === 'context_video' || s.kind === 'still')) {
+      const srcAbs = s.kind === 'still' ? imageAbs : (s.kind === 'context_video' ? mediaAbs : videoAbs);
+      const er = renderEdlSlot(s.kind, srcAbs, s, dur, cfg, W, H, FPS, seg);
+      if (er && er.ok) { r = er; edlDone = true; }
+      else { U.warn(`EDL edit shot ${s.i} render fail — default framing par gir raha hoon`); s.edl_transform = null; }
+    }
+    if (edlDone) {
+      /* r set by renderEdlSlot; manifest neeche EDL provenance likhega */
+    } else if (missingReason) {
       r = null;                                  // fallback state machine neeche chalegi
     } else if (s.kind === 'video') {
       // M2: shot planner guarantee karta hai ki video slot clip se lamba na ho,
@@ -173,7 +227,10 @@ module.exports = function render(spec, cfg, st, tl) {
       // CONTEXT VIDEO: already-downloaded approved source se chalta hua tukda
       // (exact scene ka daawa nahi — report mein CONTEXT_VIDEO). Still se behtar,
       // aur koi naya download nahi.
-      r = U.ffmpeg(['-ss', String(s.media_start || 0), '-i', mediaAbs, '-t', dur.toFixed(3), '-an',
+      // Manual media is allowed to fill the complete requested gap. If the
+      // supplied video is shorter than that gap, loop it deterministically
+      // instead of producing a short segment and drifting away from voiceover.
+      r = U.ffmpeg(['-stream_loop', '-1', '-ss', String(s.media_start || 0), '-i', mediaAbs, '-t', dur.toFixed(3), '-an',
         '-vf', `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=${FPS},setsar=1`,
         '-c:v', 'libx264', '-preset', cfg.render.preset || 'veryfast', '-crf', String(cfg.render.crf || 21),
         '-pix_fmt', 'yuv420p', '-r', String(FPS), seg], { timeout: 300000 });
@@ -352,6 +409,11 @@ module.exports = function render(spec, cfg, st, tl) {
       // manual provenance — kaunsi file, kis request se, kis hash ki
       manual: !!s.manual, manual_request_key: s.manual_request_key || null, manual_request_id: s.manual_request_id || null,
       manual_sha256: s.manual_sha256 || null, manual_file: s.manual_file || null,
+      // P0-A: editor edit jo SACH mein render hui (parity proof)
+      edl_applied: !!s.edl_transform, edl_shot_id: s.edl_shot_id || null,
+      edl_transform: s.edl_transform || null,
+      edl_source_in: s.edl_source_in != null ? s.edl_source_in : null,
+      edl_source_out: s.edl_source_out != null ? s.edl_source_out : null,
       missing_label: s.missing_label || null });
     listLines.push(`file '${seg.replace(/'/g, "'\\''")}'`);
     n++;
@@ -473,10 +535,21 @@ module.exports = function render(spec, cfg, st, tl) {
     }
   }
 
+  // ---- P0-A parity: kitne EDL edits laganay the vs kitne SACH mein lage ----
+  const plannedEdits = tl.slots.filter(s => s.edl_transform || s.edl_source_in != null).length;
+  const appliedEdits = manifest.filter(m => m.edl_applied).length;
+  const edlParity = { edl_revision: (tl.edl_revision != null ? tl.edl_revision : null),
+    planned_edits: plannedEdits, applied_edits: appliedEdits, ok: plannedEdits === appliedEdits };
+  if (mode === 'production' && !spec.isPreview && !edlParity.ok) {
+    throw new Error(`EDL parity fail: ${plannedEdits} edits laganay the par ${appliedEdits} lage. ` +
+      'Final export rok raha hoon — render-manifest.json ka edl_parity dekho.');
+  }
+
   fs.writeFileSync(U.p(id, 'render-manifest.json'), JSON.stringify({
     total: tl.total, mode, is_draft: mode === 'draft',
     // har number asli file se — koi null nahi, koi andaza nahi
     duration: durInfo,
+    edl_parity: edlParity,
     // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
     // waqt chahiye, isliye offset yahin likh dete hain.
     preview_offset: spec.previewOffset || 0,

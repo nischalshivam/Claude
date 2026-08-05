@@ -73,7 +73,7 @@ function jobArtifacts(id) {
 // ---------- media index: token -> absolute path (allow-list) ----------
 //  Browser ko sirf token milta hai. Server yahi token allow-list ke against
 //  resolve karta hai — DATA aur maujooda job ke andar hi, kahin aur nahi.
-const MEDIA_EXT = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.jpg', '.jpeg', '.png', '.webp']);
+const MEDIA_EXT = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.mp3', '.m4a', '.wav']);
 const sha1 = s => crypto.createHash('sha1').update(String(s)).digest('hex');
 function walkMedia(dir, roots, out, depth = 0) {
   if (depth > 6) return;
@@ -87,7 +87,9 @@ function walkMedia(dir, roots, out, depth = 0) {
 }
 function mediaIndex() {
   const out = {};
-  const roots = [DATA];
+  // Voiceover is a first-class editor track, so the current input directory
+  // belongs to the same token allow-list as DATA and job media.
+  const roots = [DATA, INPUT_DIR()];
   const id = jobId();
   if (id) { try { roots.push(U.jobDir(id)); } catch {} }
   for (const r of roots) { try { if (fs.existsSync(r)) walkMedia(r, roots, out); } catch {} }
@@ -253,6 +255,88 @@ function safeName(name) {
   return base.replace(/[^A-Za-z0-9._ -]/g, '_').replace(/^\.+/, '').slice(0, 120) || `file_${Date.now()}`;
 }
 
+function currentProjectTitle() {
+  const inp = inputInfo();
+  try {
+    const p = JSON.parse(fs.readFileSync(inp.pack, 'utf8'));
+    return p.project_title || p.topic || p.title || jobId() || 'Untitled video essay';
+  } catch { return jobId() || 'Untitled video essay'; }
+}
+
+function missingPayload() {
+  const { ev } = evalReadiness();
+  return { ok: true, state: ev.state, can_export: ev.can_export,
+    requests: (ev.requests || []).map(r => {
+      const q = (() => { try { return JSON.parse(fs.readFileSync(path.join(r.dir, 'request.json'), 'utf8')); } catch { return {}; } })();
+      return { request_key: r.request_key, label: r.label, folder: r.folder, criticality: r.criticality,
+        range: r.range, narration: r.narration_exact, media_status: r.media_status,
+        approval_required: r.approval_required, approval_status: r.approval_status, approval_reason: r.approval_reason,
+        approved_at: r.approved_at, allow_reuse: r.allow_reuse, short_seconds: r.short_seconds,
+        blocking: r.blocking, reasons: r.reasons, notes: r.notes || [],
+        must_show: q.must_show || [], must_not_show: q.must_not_show || [], search_queries: q.search_queries || [],
+        visual_brief: q.visual_brief || q.what_is_missing || q.description || '',
+        files: r.files.map((f, order) => {
+          const abs = path.join(r.dir, 'media', f.file);
+          return { file: f.file, type: f.type, token: fs.existsSync(abs) ? sha1(abs) : null,
+            order, duration: f.duration, width: f.width, height: f.height, warnings: f.warnings,
+            trim_start_sec: f.trim_start_sec, trim_end_sec: f.trim_end_sec };
+        }) };
+    }) };
+}
+
+function buildMissingNote(payload) {
+  const reqs = (payload.requests || []).filter(r => r.media_status !== 'VALID' || r.blocking);
+  const total = reqs.reduce((n, r) => n + Number((r.range || {}).duration_sec || 0), 0);
+  const lines = [
+    'MISSING MEDIA RESEARCH NOTE',
+    `PROJECT: ${currentProjectTitle()}`,
+    `MISSING SCENES: ${reqs.length}`,
+    `TOTAL UNFILLED TIME: ${total.toFixed(1)} seconds`,
+    '',
+    'RULE: Return only real, opened resources. Never invent a URL, video ID, timestamp, image URL, episode, quote or source.',
+    '',
+  ];
+  reqs.forEach((r, i) => {
+    const rg = r.range || {};
+    lines.push(`SCENE ${String(i + 1).padStart(2, '0')} | ${r.label || r.request_key}`);
+    lines.push(`TIME: ${Number(rg.start_sec || 0).toFixed(1)}s - ${Number(rg.end_sec || 0).toFixed(1)}s (${Number(rg.duration_sec || 0).toFixed(1)}s)`);
+    lines.push(`CRITICALITY: ${r.criticality || 'NORMAL'}${r.approval_required ? ' - human approval required' : ''}`);
+    lines.push(`NARRATION: ${r.narration || ''}`);
+    lines.push(`WHAT TO SHOW: ${(r.must_show || []).join(' | ') || r.visual_brief || 'Use narration to infer the most literal, relevant visual.'}`);
+    lines.push(`DO NOT SHOW: ${(r.must_not_show || []).join(' | ') || 'reaction hosts, unrelated show/movie, large channel logo, watermark, subtitles covering the subject'}`);
+    lines.push(`WHY MISSING: ${(r.reasons || []).join(' | ') || r.media_status || 'source unavailable'}`);
+    lines.push(`SEARCH QUERIES: ${(r.search_queries || []).join(' | ') || '(researcher must create precise queries)'}`);
+    lines.push(`CURRENT FILES: ${(r.files || []).map(f => f.file).join(' | ') || 'none'}`);
+    lines.push('');
+  });
+  return lines.join('\n').trim() + '\n';
+}
+
+function readPrompt(name) {
+  try { return fs.readFileSync(path.join(ROOT, 'prompts', name), 'utf8'); }
+  catch { return ''; }
+}
+
+function researchKit() {
+  const payload = missingPayload();
+  const note = buildMissingNote(payload);
+  const stage1 = readPrompt('CHATGPT_STAGE1_TOPIC_AND_SOURCE_MAP_PROMPT.txt');
+  const stage2Base = readPrompt('CHATGPT_STAGE2_MISSING_SCENE_RESEARCH_PROMPT.txt');
+  return { ok: true, title: currentProjectTitle(), note, stage1_prompt: stage1,
+    stage2_prompt: `${stage2Base.trim()}\n\n--- MISSING SCENES FROM THE TOOL ---\n${note}` };
+}
+
+function syncManualEdl() {
+  const id = jobId();
+  if (!id) return { ok: false, code: 'NO_JOB' };
+  let tl = null;
+  try { tl = JSON.parse(fs.readFileSync(U.p(id, 'timeline.json'), 'utf8')); } catch {}
+  if (!tl || !Array.isArray(tl.slots)) return { ok: false, code: 'NO_DRAFT' };
+  const applied = manual.applyToTimeline(tl, DATA, cfg);
+  const edl = edlMod.rebuild(PROJ(), id, { projectId: 'current', timelineOverride: applied.tl });
+  return { ok: true, applied: applied.applied, edl };
+}
+
 // ---------- EDL ----------
 function edlForClient() {
   const id = jobId();
@@ -267,6 +351,11 @@ function edlForClient() {
   // browser ko raw path mat do — sirf token
   const safe = JSON.parse(JSON.stringify(edl));
   for (const s of safe.tracks.video_main) if (s.asset) delete s.asset.path;
+  const inp = inputInfo();
+  safe.tracks.voiceover = inp.audio ? [{
+    track_id: 'VOICEOVER_MASTER', path_token: sha1(inp.audio),
+    start: 0, end: safe.duration_sec, locked: true,
+  }] : [];
   return safe;
 }
 
@@ -287,7 +376,8 @@ function checkToken(u, req) {
 }
 
 const CT = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav' };
 
 function serveFileRange(req, res, file) {
   let st; try { st = fs.statSync(file); } catch { res.writeHead(404); return res.end('not found'); }
@@ -321,6 +411,31 @@ function thumbFor(token, at) {
     : ['-ss', String(at || 0), '-i', src, '-vf', 'scale=320:-2', '-frames:v', '1', out];
   const r = U.ffmpeg(args);
   return (r.ok && fs.existsSync(out)) ? out : null;
+}
+
+// Browser-safe, shot-sized proxy. yt-dlp may deliver MKV/AV1/VP9 files that
+// FFmpeg can render but Chromium cannot preview. A short cached H.264 proxy
+// removes the black-player problem without transcoding an entire episode.
+function previewFor(token, start, duration) {
+  const src = resolveToken(token);
+  if (!src) return null;
+  if (['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(src).toLowerCase())) return src;
+  const st = fs.statSync(src);
+  const a = Math.max(0, Math.min(24 * 3600, Number(start) || 0));
+  const d = Math.max(0.25, Math.min(90, Number(duration) || 6));
+  const sig = sha1(`${src}|${st.size}|${st.mtimeMs}|${a.toFixed(3)}|${d.toFixed(3)}`);
+  const dir = path.join(edlMod.projectRoot(PROJ()), 'cache', 'previews');
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, `${sig}.mp4`);
+  if (fs.existsSync(out) && fs.statSync(out).size > 1024) return out;
+  const tmp = out + '.tmp.mp4';
+  try { fs.rmSync(tmp, { force: true }); } catch {}
+  const r = U.ffmpeg(['-stream_loop', '-1', '-ss', a.toFixed(3), '-i', src, '-t', d.toFixed(3), '-an',
+    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,fps=30,setsar=1',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '29', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', tmp], { timeout: 120000 });
+  if (!r.ok || !fs.existsSync(tmp) || fs.statSync(tmp).size <= 1024) { try { fs.rmSync(tmp, { force: true }); } catch {} return src; }
+  fs.renameSync(tmp, out);
+  return out;
 }
 
 // ---------- in-UI inputs (upload / srt / fresh-start) ----------
@@ -409,7 +524,7 @@ const server = http.createServer(async (req, res) => {
       return serveFileRange(req, res, path.join(__dirname, 'ui', 'app.js'));
     }
     if (req.method === 'GET' && p === '/api/v1/health') {
-      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.0-A.2', node: process.version });
+      return json(res, { ok: true, name: 'research-first-clip-tool', ui: 'M5.0-B', node: process.version });
     }
 
     // ---- everything below needs the session token ----
@@ -463,19 +578,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/v1/missing') {
-      const { ev } = evalReadiness();
-      return json(res, { ok: true, state: ev.state, can_export: ev.can_export,
-        requests: (ev.requests || []).map(r => {
-          const q = (() => { try { return JSON.parse(fs.readFileSync(path.join(r.dir, 'request.json'), 'utf8')); } catch { return {}; } })();
-          return { request_key: r.request_key, label: r.label, folder: r.folder, criticality: r.criticality,
-            range: r.range, narration: r.narration_exact, media_status: r.media_status,
-            approval_required: r.approval_required, approval_status: r.approval_status, approval_reason: r.approval_reason,
-            approved_at: r.approved_at, allow_reuse: r.allow_reuse, short_seconds: r.short_seconds,
-            blocking: r.blocking, reasons: r.reasons, notes: r.notes || [],
-            must_show: q.must_show || [], must_not_show: q.must_not_show || [], search_queries: q.search_queries || [],
-            files: r.files.map(f => ({ file: f.file, type: f.type, token: null, duration: f.duration, width: f.width, height: f.height, warnings: f.warnings })) };
-        }) });
+      return json(res, missingPayload());
     }
+    if (req.method === 'GET' && p === '/api/v1/missing/research-kit') return json(res, researchKit());
 
     if (req.method === 'POST' && p === '/api/v1/draft') { const r = startJob('draft'); return json(res, r, r.ok ? 200 : 409); }
     if (req.method === 'POST' && p === '/api/v1/export') { const r = startJob('final'); return json(res, r, r.ok ? 200 : 409); }
@@ -513,13 +618,34 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(dest, buf);
       const info = manual.inspectFile(dest);
       if (!info.ok) { fs.rmSync(dest, { force: true }); return err(res, 'BAD_MEDIA', info.problem, 400); }
-      return json(res, { ok: true, file: name, type: info.type });
+      const sync = syncManualEdl();
+      return json(res, { ok: true, file: name, type: info.type, editor_synced: sync.ok });
+    }
+    if (req.method === 'DELETE' && (m = p.match(/^\/api\/v1\/requests\/([^/]+)\/media\/([^/]+)$/))) {
+      const key = decodeURIComponent(m[1]);
+      const hit = findRequest(key);
+      if (!hit) return err(res, 'NO_REQUEST', 'ye request nahi mili', 404);
+      const name = safeName(decodeURIComponent(m[2]));
+      const src = path.join(hit.dir, 'media', name);
+      if (!U.isInside(path.join(hit.dir, 'media'), src) || !fs.existsSync(src)) return err(res, 'NO_MEDIA', 'file nahi mili', 404);
+      const trash = path.join(DATA, '.trash', hit.key); fs.mkdirSync(trash, { recursive: true });
+      fs.renameSync(src, path.join(trash, `${Date.now()}_${name}`));
+      approval.revoke(DATA, hit.key);
+      const sync = syncManualEdl();
+      return json(res, { ok: true, recoverable: true, editor_synced: sync.ok });
     }
     if (req.method === 'POST' && (m = p.match(/^\/api\/v1\/requests\/([^/]+)\/override$/))) {
       const body = JSON.parse((await readBody(req, 1e6)).toString() || '{}');
       const patch = {};
       if ('allow_reuse' in body) patch.allow_reuse = !!body.allow_reuse;
-      return json(res, setOverride(decodeURIComponent(m[1]), patch));
+      if (Array.isArray(body.files)) patch.files = body.files.map((f, i) => ({
+        relative_path: safeName(f.relative_path || f.file), order: Number.isFinite(+f.order) ? +f.order : i,
+        trim_start_sec: f.trim_start_sec == null ? null : Math.max(0, +f.trim_start_sec),
+        trim_end_sec: f.trim_end_sec == null ? null : Math.max(0, +f.trim_end_sec),
+      }));
+      const out = setOverride(decodeURIComponent(m[1]), patch);
+      const sync = syncManualEdl();
+      return json(res, { ...out, editor_synced: sync.ok });
     }
     if (req.method === 'POST' && (m = p.match(/^\/api\/v1\/requests\/([^/]+)\/approve$/))) {
       return json(res, setOverride(decodeURIComponent(m[1]), { approved: true }));
@@ -547,8 +673,18 @@ const server = http.createServer(async (req, res) => {
       edlMod.rebuild(PROJ(), id, { projectId: 'current' });
       return json(res, { ok: true, edl: edlForClient() });
     }
+    if (req.method === 'POST' && p === '/api/v1/edl/sync-manual') {
+      const r = syncManualEdl();
+      if (!r.ok) return err(res, r.code, r.code === 'NO_DRAFT' ? 'pehle draft banao' : 'project nahi mila', 400);
+      return json(res, { ok: true, applied: r.applied, edl: edlForClient() });
+    }
 
     // ---- media + thumbnails (token allow-list) ----
+    if (req.method === 'GET' && (m = p.match(/^\/api\/v1\/preview\/([a-f0-9]+)$/))) {
+      const file = previewFor(m[1], u.searchParams.get('start'), u.searchParams.get('duration'));
+      if (!file) return err(res, 'NO_MEDIA', 'preview media nahi mila', 404);
+      return serveFileRange(req, res, file);
+    }
     if (req.method === 'GET' && (m = p.match(/^\/api\/v1\/media\/([a-f0-9]+)$/))) {
       const file = resolveToken(m[1]);
       if (!file) return err(res, 'NO_MEDIA', 'media nahi mila', 404);

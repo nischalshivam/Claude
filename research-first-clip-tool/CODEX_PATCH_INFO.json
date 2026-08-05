@@ -1,0 +1,29 @@
+{
+  "version": "M5.0-B-codex-preview.1",
+  "based_on": "M5.0-A.2",
+  "date": "2026-08-05",
+  "implemented": [
+    "voiceover-master editor play/pause/scrub/seek",
+    "moving timeline playhead and proportional shot tracks",
+    "browser-safe on-demand video preview proxy",
+    "one-or-many manual assets exactly tile a missing range",
+    "manual media thumbnails, ordering and recoverable removal",
+    "live manual-media sync into the editor EDL",
+    "HARD_EVIDENCE help",
+    "copy/download missing-scenes research note",
+    "two ChatGPT missing-footage research prompts",
+    "per-shot EDL edit preservation for multi-shot requests"
+  ],
+  "verified": {
+    "javascript_syntax": "PASS",
+    "manual_gap_contract": "PASS: 1 image, 10 images, 1 short video, reuse pacing",
+    "browser_ui": "PASS: editor rendered, play advanced voiceover and video, pause worked, prompts opened",
+    "edl_multi_shot_preservation": "PASS: distinct 1.2 and 2.0 scale values survived rebuild"
+  },
+  "not_yet_production_complete": [
+    "EDL crop/scale/trim edits are still not applied by the final FFmpeg renderer",
+    "automatic SRT is estimated timing, not speech transcription",
+    "style presets, Queue and Library remain placeholders",
+    "full upstream regression suite could not run in this sandbox because its child ffmpeg spawn was denied"
+  ]
+}
