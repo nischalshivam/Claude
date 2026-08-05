@@ -43,6 +43,7 @@ const STATE_BADGE = {
 function badge(state) { return el('span', { class: 'badge ' + (STATE_BADGE[state] || 'b-busy') }, el('span', { class: 'dot' }), state); }
 
 let STATE = null, VIEW = 'newvideo', PRESET = 'auto', START_ERROR = null, VIEW_EPOCH = 0;
+let STYLE_CAT = null, STYLE_CHOICE = null; // M5.2-TX transitions/animations
 
 async function refreshState() {
   const { data } = await api('/state'); STATE = data;
@@ -129,13 +130,8 @@ async function viewNewVideo(epoch = ++VIEW_EPOCH) {
 
   box.append(src);
 
-  // ---- Look (visual only for now) ----
-  const look = el('div', { class: 'card' }, el('h3', {}, 'Look'), el('p', { class: 'hint' }, 'Ye Content Lock ke BAAD lagega (M5.1). Abhi sirf chun ke rakh lo.'));
-  const pg = el('div', { class: 'presetgrid' });
-  for (const [id, t, d] of [['auto', 'Auto', 'tool khud tay kare'], ['cinematic', 'Cinematic', 'gehra, filmy'], ['tense', 'Tense', 'tez, kasa hua'], ['documentary', 'Documentary', 'saaf, shaant']])
-    pg.append(el('div', { class: 'preset' + (PRESET === id ? ' sel' : ''), onclick: () => { PRESET = id; viewNewVideo(); } }, el('div', { class: 't' }, t), el('div', { class: 'd' }, d)));
-  look.append(pg);
-  box.append(look);
+  // ---- Transitions & Animations (option 1: yahin, video banne se pehle) ----
+  box.append(styleCard('newvideo'));
 
   // ---- readiness strip ----
   box.append(readinessStrip());
@@ -503,6 +499,7 @@ async function viewEditor(epoch = ++VIEW_EPOCH) {
   $('#top').innerHTML = ''; topBar('Editor', 'Voiceover-synced content preview · Space = play/pause · ←/→ = 2s seek', [
     el('button', { class: 'btn', onclick: () => setView('missing') }, 'Missing Media'),
     el('button', { class: 'btn', onclick: syncEditor }, 'Refresh media'),
+    el('button', { class: 'btn', onclick: () => setView('style') }, '🎬 Transitions'),
     el('button', { class: 'btn primary', onclick: exportFinal,
       disabled: STATE && (STATE.can_export || STATE.media_state === 'NEEDS_CRITICAL_APPROVAL') ? null : 'disabled' }, 'Export / Save As')]);
   const { ok, data, status } = await api('/edl');
@@ -728,7 +725,93 @@ async function viewSettings(epoch = ++VIEW_EPOCH) {
 }
 
 // ===================== shell wiring =====================
-const VIEWS = { newvideo: viewNewVideo, missing: viewMissing, editor: viewEditor, queue: viewQueue, library: viewLibrary, settings: viewSettings };
+// ===================== TRANSITIONS & ANIMATIONS (M5.2-TX) =====================
+// Do jagah se set hoti hai: New Video (option 1, video banne se pehle) aur
+// Editor -> "🎬 Transitions" (option 2, clips lag jaane + lock ke baad). Dono
+// ek hi project/style.json likhte hain, isliye jo aakhri bar chuna wahi final
+// export mein lagta hai. "None" = bilkul koi transition/motion nahi.
+async function viewStyle(epoch = ++VIEW_EPOCH) {
+  const v = $('#view'); v.className = ''; v.innerHTML = '';
+  topBar('Transitions & Animations', 'Clips lag gaye? Ab yahan variation chuno — final export mein yahi lagega.', [
+    el('button', { class: 'btn', onclick: () => setView('editor') }, '← Editor'),
+    el('button', { class: 'btn primary', onclick: exportFinal,
+      disabled: STATE && (STATE.can_export || STATE.media_state === 'NEEDS_CRITICAL_APPROVAL') ? null : 'disabled' }, 'Export / Save As')]);
+  if (epoch !== VIEW_EPOCH || VIEW !== 'style') return;
+  const box = el('div', { class: 'wrap' }); v.append(box);
+  box.append(styleCard('editor'));
+  box.append(el('div', { class: 'card' },
+    el('h3', {}, 'Ye kaise kaam karta hai'),
+    el('ul', { class: 'small muted', style: 'line-height:1.8;padding-left:18px' },
+      el('li', {}, 'Har video par transitions/motion VARY hote hain (seeded) — 2 video ek jaise repetitive nahi lagenge.'),
+      el('li', {}, 'Timing kabhi nahi badalti: transitions shot ke andar hi lagti hain, voiceover kabhi chhoti nahi hoti.'),
+      el('li', {}, '"Shuffle variety" dabao to wahi pack naye combination ke saath — jab tak pasand na aaye.'),
+      el('li', {}, 'Final export ke baad player mein final.mp4 chala kar transitions dekh sakte ho.'),
+      el('li', {}, '"None" chuna to bilkul saaf cuts — koi transition/motion nahi.'))));
+}
+
+function packShort(label) { const i = (label || '').indexOf('—'); return i < 0 ? { t: label, d: '' } : { t: label.slice(0, i).trim(), d: label.slice(i + 1).trim() }; }
+
+function styleCard(context) {
+  const card = el('div', { class: 'card', id: 'styleCard' });
+  card.append(el('h3', {}, 'Transitions & Animations'),
+    el('p', { class: 'hint' }, context === 'editor'
+      ? 'Variation chuno — final export mein yahi transitions/motion lagenge. "None" = kuch nahi.'
+      : 'Yahin chun lo (ya draft ke baad Editor → 🎬 Transitions se badlo). "None" = koi transition/motion nahi.'));
+  const grid = el('div', { class: 'presetgrid', id: 'stylePacks' }, el('p', { class: 'small muted' }, 'load ho raha…'));
+  const ctl = el('div', { class: 'mt', id: 'styleCtl' });
+  card.append(grid, ctl);
+  loadStyle();
+  return card;
+}
+
+async function loadStyle() {
+  const { ok, data } = await api('/style');
+  const grid = $('#stylePacks'), ctl = $('#styleCtl');
+  if (!grid) return;
+  if (!ok || !data || !data.catalog) { grid.innerHTML = ''; grid.append(el('p', { class: 'small muted' }, 'style load nahi hui')); return; }
+  STYLE_CAT = data.catalog; STYLE_CHOICE = data.choice || { pack: 'none', enabled: false, intensity: 1, seed: 1 };
+  renderStylePacks();
+}
+
+function renderStylePacks() {
+  const grid = $('#stylePacks'), ctl = $('#styleCtl');
+  if (!grid || !STYLE_CAT) return;
+  grid.innerHTML = '';
+  for (const p of STYLE_CAT.packs) {
+    const sel = STYLE_CHOICE.enabled ? STYLE_CHOICE.pack === p.id : p.id === 'none';
+    const s = packShort(p.label);
+    grid.append(el('div', { class: 'preset' + (sel ? ' sel' : ''), onclick: () => setStyle(p.id) },
+      el('div', { class: 't' }, s.t), el('div', { class: 'd' }, s.d)));
+  }
+  if (!ctl) return;
+  ctl.innerHTML = '';
+  if (STYLE_CHOICE.enabled) {
+    const val = (STYLE_CHOICE.intensity != null ? STYLE_CHOICE.intensity : 1).toFixed(2);
+    ctl.append(el('div', { class: 'small muted', style: 'margin-bottom:6px' }, `Motion strength: ${val}  ·  variety seed: ${STYLE_CHOICE.seed}`));
+    const rng = el('input', { type: 'range', min: '0.3', max: '1.5', step: '0.1', value: String(STYLE_CHOICE.intensity || 1), style: 'width:220px;vertical-align:middle' });
+    rng.onchange = () => setStyle(STYLE_CHOICE.pack, { intensity: parseFloat(rng.value) });
+    ctl.append(rng, el('span', {}, '  '),
+      el('button', { class: 'btn', style: 'margin-left:10px', onclick: () => setStyle(STYLE_CHOICE.pack, { seed: (STYLE_CHOICE.seed || 1) + 1 }) }, '🔀 Shuffle variety'));
+  } else {
+    ctl.append(el('div', { class: 'small muted' }, 'Abhi OFF — koi transition ya motion nahi lagega. Upar se koi pack chuno ya "None" hi rehne do.'));
+  }
+}
+
+async function setStyle(pack, extra = {}) {
+  const cur = STYLE_CHOICE || { seed: 1, transition_ms: 450, intensity: 1 };
+  const body = { pack, enabled: pack !== 'none',
+    seed: extra.seed != null ? extra.seed : (cur.seed || 1),
+    transition_ms: cur.transition_ms || 450,
+    intensity: extra.intensity != null ? extra.intensity : (cur.intensity || 1) };
+  const { ok, data } = await api('/style', { method: 'POST', body: JSON.stringify(body) });
+  if (ok && data.choice) {
+    STYLE_CHOICE = data.choice;
+    toast(pack === 'none' ? 'Transitions OFF — saaf cuts' : 'Style set: ' + packShort((STYLE_CAT.packs.find(p => p.id === pack) || {}).label || pack).t, 'ok');
+    renderStylePacks();
+  } else toast((data && data.message) || 'style save nahi hui', 'bad');
+}
+
+const VIEWS = { newvideo: viewNewVideo, missing: viewMissing, editor: viewEditor, style: viewStyle, queue: viewQueue, library: viewLibrary, settings: viewSettings };
 function refreshView() { return (VIEWS[VIEW] || viewNewVideo)(); }
 function setView(v) { VIEW = v; renderNav(); refreshView(); }
 function setTheme(t) { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('rfc-theme', t); } catch {} }

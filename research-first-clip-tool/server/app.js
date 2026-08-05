@@ -33,6 +33,7 @@ const readiness = require(path.join(ROOT, 'src', 'readiness.js'));
 const approval = require(path.join(ROOT, 'src', 'approval.js'));
 const timebase = require(path.join(ROOT, 'src', 'timebase.js'));
 const edlMod = require(path.join(ROOT, 'src', 'edl.js'));
+const styleMod = require(path.join(ROOT, 'src', 'style.js'));
 const validate = require(path.join(ROOT, 'src', 'validate.js'));
 
 const DATA = U.dataRoot();
@@ -844,6 +845,24 @@ const server = http.createServer(async (req, res) => {
       const r = syncManualEdl();
       if (!r.ok) return err(res, r.code, r.code === 'NO_DRAFT' ? 'pehle draft banao' : 'project nahi mila', 400);
       return json(res, { ok: true, applied: r.applied, edl: edlForClient() });
+    }
+
+    // ---- M5.2-TX: Transitions + Animations style ----
+    // Catalog (packs/animations/transitions) + current chosen style. Ye choice
+    // dono jagah se set hoti hai: New Video page (video banane se pehle) ya
+    // Editor "Lock -> Style" panel (final se pehle). project/style.json canonical.
+    if (req.method === 'GET' && p === '/api/v1/style') {
+      return json(res, { ok: true, catalog: styleMod.catalog(), choice: styleMod.loadChoice(PROJ()) });
+    }
+    if (req.method === 'POST' && p === '/api/v1/style') {
+      const body = JSON.parse((await readBody(req, 1e5)).toString() || '{}');
+      // "none" ya enabled:false => koi transition/motion nahi (user ka off option)
+      const saved = styleMod.saveChoice(PROJ(), {
+        pack: String(body.pack || 'none'),
+        enabled: body.enabled !== false && String(body.pack || 'none') !== 'none',
+        seed: body.seed, transition_ms: body.transition_ms, intensity: body.intensity,
+      });
+      return json(res, { ok: true, choice: saved });
     }
 
     // Right-click -> Change Clip. Binary upload validate hota hai, project ke

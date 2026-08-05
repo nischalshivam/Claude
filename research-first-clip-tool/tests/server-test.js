@@ -268,6 +268,28 @@ app.server.listen(PORTX, '127.0.0.1', async () => {
       r.status === 200 && r.json.ok && typeof r.json.text === 'string' && r.json.text.length > 200,
       `len=${r.json && r.json.text && r.json.text.length}`);
 
+    // 16. M5.2-TX transitions/animations style API
+    r = await req('GET', '/api/v1/style');
+    const cat = r.json && r.json.catalog;
+    const hasNone = cat && cat.packs && cat.packs.some(p => p.id === 'none');
+    const hasAuto = cat && cat.packs && cat.packs.some(p => p.id === 'auto');
+    check('T-SRV18 style catalog lists packs (incl none + auto) and the current choice',
+      r.status === 200 && r.json.ok && hasNone && hasAuto && (cat.packs.length >= 8)
+        && r.json.choice && r.json.choice.enabled === false,
+      `packs=${cat && cat.packs && cat.packs.length} none=${hasNone} auto=${hasAuto} choice=${r.json && JSON.stringify(r.json.choice)}`);
+
+    r = await req('POST', '/api/v1/style', { body: { pack: 'cinematic', seed: 5, intensity: 1.1 } });
+    const setOk = r.json && r.json.choice && r.json.choice.pack === 'cinematic' && r.json.choice.enabled === true;
+    const persist = require(path.join(ROOT, 'src', 'style.js')).loadChoice(process.env.RFC_PROJECT_DIR);
+    check('T-SRV19 setting a style pack enables it and persists to project/style.json',
+      r.status === 200 && setOk && persist.pack === 'cinematic' && persist.enabled === true,
+      `set=${setOk} persistPack=${persist.pack} enabled=${persist.enabled}`);
+
+    r = await req('POST', '/api/v1/style', { body: { pack: 'none' } });
+    const offOk = r.json && r.json.choice && r.json.choice.enabled === false && r.json.choice.pack === 'none';
+    check('T-SRV20 choosing "none" turns transitions off (user opt-out)',
+      r.status === 200 && offOk, `choice=${r.json && JSON.stringify(r.json.choice)}`);
+
   } catch (e) {
     check('server-test crashed', false, String(e && e.stack || e).slice(0, 300));
   } finally {

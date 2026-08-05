@@ -28,6 +28,7 @@ const info = {
     'RAW-SERVER-LOG.txt': hash('RAW-SERVER-LOG.txt'),
     'RAW-M5B-LOG.txt': hash('RAW-M5B-LOG.txt'),
     'RAW-EDL-PARITY-LOG.txt': hash('RAW-EDL-PARITY-LOG.txt'),
+    'RAW-STYLE-PARITY-LOG.txt': hash('RAW-STYLE-PARITY-LOG.txt'),
   },
   canonical_prompt_sha256: hash('prompts/STAGE1_SOURCES_AND_BEATS_PROMPT.txt'),
   oneshot_prompt_sha256: hash('prompts/GENSPARK_M2_5_ONE_SHOT_SCENE_RESEARCH_PROMPT.txt'),

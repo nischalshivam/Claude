@@ -1,0 +1,19 @@
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (4 segments, 8.0s, 640x360)
+  [PASS] S-1 baseline (no style) renders and style block reports none/0  — dur=8 style={"pack":"none","enabled":false,"styled_shots":0}
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+   style pass: "transitions_only" — 4/4 shots par transition/motion laga (durations unchanged).
+  [OK]   render: final.mp4 (4 segments, 8.0s, 640x360)
+  [PASS] S-2 style pass applies transitions to the final render (styled_shots > 0)  — style={"pack":"transitions_only","styled":4}
+  [PASS] S-3 DURATION INVARIANT: styled total == baseline total (narration never drifts)  — base=8 styled=8 total=8
+  [PASS] S-4 each boundary shows its assigned transition colour (dip_black=dark, white/flash=bright, blur=green)  — b0:dip_black=0,0,0 b1:flash=255,255,255 b2:blur_dissolve=1,202,0
+  [PASS] S-5 mid-shot still shows the source media (green) — style never erased the clip  — rgb=1,202,0
+  [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
+  [OK]   render: final.mp4 (4 segments, 8.0s, 640x360)
+  [PASS] S-6 pack=none/disabled applies nothing (styled_shots 0) and keeps the same length  — styled=0 dur=8
+  [PASS] S-7 plan is reproducible (same seed) and varied (adjacent animations rarely repeat)  — reproducible=true adjacentRepeats=0/7
+  [PASS] S-8 each boundary uses the same transition on both sides (seamless dip)  — ok=true
+
+==============================================================
+  STYLE PARITY SUMMARY: 8 PASS, 0 FAIL
+==============================================================

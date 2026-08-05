@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const U = require('./util.js');
+const styleMod = require('./style.js');
 
 const FONT_CANDIDATES = [
   '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
@@ -440,6 +441,40 @@ module.exports = function render(spec, cfg, st, tl) {
   }
   if (!n) throw new Error('koi segment render nahi hua');
 
+  // ---- M5.2-TX: Transitions + Animations "style pass" ----
+  // Poori tarah NON-DESTRUCTIVE: pehle render ho chuke per-shot segments par,
+  // concat se THEEK pehle. style === none (default) => kuch nahi hota, output
+  // waisa ka waisa. Har effect duration-exact hai (per-segment fade/blur/zoom),
+  // isliye timeline/narration kabhi drift nahi karta. Sirf FINAL production
+  // export par chalta hai (draft diagnostic saaf rahe, preview tez rahe).
+  let styleResult = null;
+  const styleChoice = styleMod.loadChoice();
+  if (production && !spec.isPreview && styleChoice.enabled) {
+    try {
+      const orderedSegs = listLines.map(line => {
+        const m = line.match(/^file '(.*)'$/);
+        return m ? m[1].replace(/'\\''/g, "'") : null;
+      });
+      if (orderedSegs.every(Boolean) && orderedSegs.length === tl.slots.length) {
+        const res = styleMod.applyStyle(tl.slots, orderedSegs, styleChoice, cfg, W, H, FPS);
+        // listLines ko styled files par point karao (jahan style laga)
+        for (let k = 0; k < res.files.length; k++) {
+          listLines[k] = `file '${res.files[k].replace(/'/g, "'\\''")}'`;
+        }
+        styleResult = { pack: res.pack, seed: res.seed, transition_ms: res.transition_ms,
+          intensity: res.intensity, styled_shots: res.styledCount, total_shots: res.files.length,
+          shots: res.applied };
+        U.log(`   style pass: "${styleChoice.pack}" — ${res.styledCount}/${res.files.length} shots par transition/motion laga (durations unchanged).`);
+      } else {
+        U.warn('style pass skip: segment list plan se align nahi hui — plain concat hoga.');
+      }
+    } catch (e) {
+      // fail-safe: style se render kabhi na ruke — plain concat par gir jao
+      U.warn('style pass skip (error): ' + String(e.message || e).slice(0, 120));
+      styleResult = { pack: styleChoice.pack, error: String(e.message || e).slice(0, 160), styled_shots: 0 };
+    }
+  }
+
   // concat
   const listFile = U.p(id, 'segments', 'list.txt');
   fs.writeFileSync(listFile, listLines.join('\n'));
@@ -621,6 +656,9 @@ module.exports = function render(spec, cfg, st, tl) {
       suppressed_shots: manifest.filter(m => m.research_overlay_suppressed).length,
       source: 'config.render.burnResearchOverlayText',
     },
+    // M5.2-TX: kaunsi transitions/animations lagi (ya none). Duration-exact —
+    // ye block sirf proof ke liye hai; master ki lambai isse nahi badalti.
+    style: styleResult || { pack: styleChoice.enabled ? styleChoice.pack : 'none', enabled: !!styleChoice.enabled, styled_shots: 0 },
     // preview mein timeline 0 se shuru hoti hai; gap planner ko ASLI audio ka
     // waqt chahiye, isliye offset yahin likh dete hain.
     preview_offset: spec.previewOffset || 0,

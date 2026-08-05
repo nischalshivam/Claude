@@ -300,11 +300,16 @@ async function main() {
   // run timeline stage ko "pehle ho chuka" samajh kar skip kar deta tha aur edit
   // kabhi render nahi hota tha (P0-A ka asli bug).
   let edlSig = 'none';
+  let styleSig = 'style:none';
   try { const projRoot = process.env.RFC_PROJECT_DIR ? path.resolve(process.env.RFC_PROJECT_DIR) : U.ROOT;
-    edlSig = edlMod.editSignature(edlMod.read(projRoot)); } catch {}
+    edlSig = edlMod.editSignature(edlMod.read(projRoot));
+    // M5.2-TX: transitions/animations choice bhi render_sig mein — style badle
+    // to timeline/render dobara bane (warna resume par purana bina-style master
+    // rehta). editSignature ki tarah, ye acquisition/download ko touch nahi karta.
+    styleSig = require('./style.js').signature(projRoot); } catch {}
   const overlayPolicy = !!(cfg.render && cfg.render.burnResearchOverlayText === true);
   const renderSig = U.hashStr([manual.fingerprint(DATA_ROOT), (cfg.output && cfg.output.mode) || 'production', edlSig,
-    `research-overlay=${overlayPolicy}`].join('|'));
+    styleSig, `research-overlay=${overlayPolicy}`].join('|'));
   if (!flag('redo') && st.render_sig && st.render_sig !== renderSig) {
     U.log('   aapka media ya mode badla hai — timeline/render dobara banega (downloads waise ke waise rahenge)');
     for (const k of ['timeline', 'render', 'report']) delete (st.done || {})[k];
