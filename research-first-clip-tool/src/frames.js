@@ -26,34 +26,44 @@ const VID_EXT = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
 
 function backgroundsDir(root) { return path.join(style.baseRoot(root), 'backgrounds'); }
 
-// backgrounds/ se images + videos padho. Nahi mile to khali (blur fallback).
+// backgrounds/ (aur uske SUBFOLDERS — Images/, Videos/, kuch bhi) se saare
+// image + video files padho. User aksar Images/Videos subfolders me rakhta hai
+// (Drive jaisa) — isliye recursive walk zaroori hai. Nahi mile to khali (blur).
+function walkMedia(dir, out, depth) {
+  if (depth > 5) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  for (const ent of entries) {
+    if (ent.name.startsWith('.')) continue;
+    const p = path.join(dir, ent.name);
+    let isDir = ent.isDirectory(), isFile = ent.isFile();
+    if (!isDir && !isFile) { try { const s = fs.statSync(p); isDir = s.isDirectory(); isFile = s.isFile(); } catch { continue; } }
+    if (isDir) { walkMedia(p, out, depth + 1); continue; }
+    if (!isFile) continue;
+    const e = path.extname(ent.name).toLowerCase();
+    if (!IMG_EXT.has(e) && !VID_EXT.has(e)) continue;
+    let sz = 0; try { sz = fs.statSync(p).size; } catch {}
+    if (sz < 512) continue;
+    if (IMG_EXT.has(e)) out.images.push(p); else out.videos.push(p);
+  }
+}
 function loadBackgrounds(root) {
   const dir = backgroundsDir(root);
-  const images = [], videos = [];
-  try {
-    for (const f of fs.readdirSync(dir).sort()) {
-      if (f.startsWith('.')) continue;
-      const p = path.join(dir, f);
-      let st; try { st = fs.statSync(p); } catch { continue; }
-      if (!st.isFile() || st.size < 512) continue;
-      const e = path.extname(f).toLowerCase();
-      if (IMG_EXT.has(e)) images.push(p);
-      else if (VID_EXT.has(e)) videos.push(p);
-    }
-  } catch {}
-  const all = [...images.map(p => ({ type: 'image', path: p })), ...videos.map(p => ({ type: 'video', path: p }))];
-  return { dir, images, videos, all };
+  const out = { images: [], videos: [] };
+  walkMedia(dir, out, 0);
+  out.images.sort(); out.videos.sort();
+  const all = [...out.images.map(p => ({ type: 'image', path: p })), ...out.videos.map(p => ({ type: 'video', path: p }))];
+  return { dir, images: out.images, videos: out.videos, all };
 }
 
-// background folder ka fingerprint (add/remove/replace -> render_sig badle)
+// background folder ka fingerprint (add/remove/replace -> render_sig badle) — recursive
 function backgroundsSignature(root) {
-  const dir = backgroundsDir(root);
-  try {
-    const parts = fs.readdirSync(dir).sort().filter(f => !f.startsWith('.')).map(f => {
-      try { const s = fs.statSync(path.join(dir, f)); return `${f}:${s.size}:${Math.round(s.mtimeMs)}`; } catch { return f; }
-    });
-    return parts.join('|');
-  } catch { return ''; }
+  const b = loadBackgrounds(root);
+  const parts = [...b.images, ...b.videos].map(p => {
+    try { const s = fs.statSync(p); return `${path.basename(p)}:${s.size}:${Math.round(s.mtimeMs)}`; } catch { return p; }
+  });
+  return parts.sort().join('|');
 }
 
 // ---------- seeded PRNG ----------

@@ -5,7 +5,8 @@ background, baaki fullscreen. Editor/render untouched.
 
 **Ab SACH mein chalta hai (real ffmpeg + pixel se proven — frames-test 7/0):**
 - **Bada frame** (~85% width) + rounded/sharp corners (auto-vary) + soft shadow.
-- **Backgrounds folder** (images + videos) se auto-rotate; khali ho to blur-self.
+- **Backgrounds folder** (images + videos) se auto-rotate; **subfolders bhi**
+  (Images/ Videos/ — recursive) padha jaata hai; khali ho to blur-self. (frames F-8)
 - **Occasional accent**: default 12 framed shots/video (0–20), video length se
   farak nahi. Spread (kabhi 2 adjacent nahi), non-repeat style+background.
 - **Duration-exact**: framed lagne se total length kabhi nahi badalti. (frames F-2)

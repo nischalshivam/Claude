@@ -31,12 +31,16 @@ const renderStage = require(path.join(ROOT, 'src', 'render.js'));
 const results = [];
 const check = (n, ok, d = '') => { results.push({ n, ok: !!ok }); console.log(`  [${ok ? 'PASS' : 'FAIL'}] ${n}${d ? '  — ' + d : ''}`); };
 
-// clip = GREEN still; backgrounds = RED + BLUE images + a RED video (non-green)
+// clip = GREEN still; backgrounds = RED + BLUE images + a RED video (non-green).
+// IMPORTANT: backgrounds ko SUBFOLDERS (Images/ Videos/) me rakha — jaisa user
+// rakhta hai (Drive jaisa). Ye recursive-discovery bug ko pakadta hai.
+const imgSub = path.join(BGDIR, 'Images'), vidSub = path.join(BGDIR, 'Videos');
+fs.mkdirSync(imgSub, { recursive: true }); fs.mkdirSync(vidSub, { recursive: true });
 const green = path.join(FIX, 'green.png');
 ff(['-f', 'lavfi', '-i', 'color=0x00CC00:s=640x360:d=1', '-frames:v', '1', green]);
-ff(['-f', 'lavfi', '-i', 'color=0xCC0000:s=1280x720:d=1', '-frames:v', '1', path.join(BGDIR, 'red.png')]);
-ff(['-f', 'lavfi', '-i', 'color=0x1030CC:s=1280x720:d=1', '-frames:v', '1', path.join(BGDIR, 'blue.png')]);
-ff(['-f', 'lavfi', '-i', 'color=0xCC0000:s=640x360:r=30:d=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', '3', path.join(BGDIR, 'redvid.mp4')]);
+ff(['-f', 'lavfi', '-i', 'color=0xCC0000:s=1280x720:d=1', '-frames:v', '1', path.join(imgSub, 'red.png')]);
+ff(['-f', 'lavfi', '-i', 'color=0x1030CC:s=1280x720:d=1', '-frames:v', '1', path.join(imgSub, 'blue.png')]);
+ff(['-f', 'lavfi', '-i', 'color=0xCC0000:s=640x360:r=30:d=3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-t', '3', path.join(vidSub, 'redvid.mp4')]);
 
 const NSHOT = 10, SHOT = 2.0, TOTAL = NSHOT * SHOT, W = 640, H = 360, FPS = 30;
 const audio = path.join(FIX, 'vo.m4a');
@@ -117,6 +121,14 @@ function run() {
   const uniq = new Set(combos);
   check('F-5 each framed shot uses a distinct frame-style/background combo',
     uniq.size === combos.length, `combos=${combos.join('  ')}`);
+
+  // F-8: subfolders (Images/ Videos/) se asli backgrounds use hue (blur-self NAHI)
+  const usedBgs = framedShots.map(s => s.bg);
+  const realBgUsed = usedBgs.length > 0 && usedBgs.every(b => b !== 'blur-self') &&
+    usedBgs.some(b => /red\.png|blue\.png|redvid\.mp4/.test(b));
+  check('F-8 backgrounds in subfolders (Images/ Videos/) are discovered and actually used',
+    style.backgrounds.images === 2 && style.backgrounds.videos === 1 && realBgUsed,
+    `found={img:${style.backgrounds.images},vid:${style.backgrounds.videos}} used=${usedBgs.join(',')}`);
 
   // framed_count = 0 -> none
   styleMod.saveChoice(undefined, { pack: 'cinematic', enabled: true, seed: 3, framed_count: 0 });

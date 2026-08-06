@@ -8,6 +8,7 @@
   [PASS] F-3 PIXEL: framed shot center = clip (green), margin = background (non-green)  — i2:C1,202,0/M184,0,0 i6:C0,200,1/M0,28,183
   [PASS] F-4 framed shots are spread across the video (never two adjacent)  — indices=2,6
   [PASS] F-5 each framed shot uses a distinct frame-style/background combo  — combos=sharp_thin_lg|red.png  round_soft_xl|blue.png
+  [PASS] F-8 backgrounds in subfolders (Images/ Videos/) are discovered and actually used  — found={img:2,vid:1} used=red.png,blue.png
   [WARN] is ffmpeg build mein drawtext filter nahi — text cards solid-color (text report mein hai). Windows ffmpeg mein text aayega.
    style pass: "cinematic" — 10/10 shots styled (durations unchanged).
   [OK]   render: final.mp4 (10 segments, 20.0s, 640x360)
@@ -18,5 +19,5 @@
   [PASS] F-7 empty backgrounds folder falls back to blur-self (framed still works)  — framed=2 bg=blur-self,blur-self
 
 ==============================================================
-  FRAMES SUMMARY: 7 PASS, 0 FAIL
+  FRAMES SUMMARY: 8 PASS, 0 FAIL
 ==============================================================
