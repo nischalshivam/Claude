@@ -29,3 +29,8 @@ archive/
 # reference-pack ka JSON user ke script ki lines rakhta hai (script_cue_exact)
 # — wo repo mein nahi jayega. ZIP mein bheja jata hai. PADHO.txt commit hoti hai.
 reference-pack/*.json
+
+# user ke framed-shot backgrounds — repo me nahi (README/.gitkeep chhod kar)
+backgrounds/*
+!backgrounds/README.txt
+!backgrounds/.gitkeep

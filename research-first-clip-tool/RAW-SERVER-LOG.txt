@@ -15,9 +15,9 @@
   [PASS] T-SRV15 make-srt builds an estimated SRT from script+audio; inputs summary reflects it  — srt={"ok":true,"cues":3,"total":12,"estimated":true,"from":"script"} summaryCues=3
   [PASS] T-SRV16 fresh start archives inputs (moves, never deletes) and clears the project  — archived=true clearedAudio=true archiveDir=true
   [PASS] T-SRV17 the Genspark research-pack prompt is served to the UI  — len=28425
-  [PASS] T-SRV18 style catalog lists packs (incl none + auto) and the current choice  — packs=8 none=true auto=true choice={"enabled":false,"pack":"none","seed":1,"transition_ms":450,"intensity":1}
+  [PASS] T-SRV18 style catalog lists packs (incl none + auto) and the current choice  — packs=8 none=true auto=true choice={"enabled":false,"pack":"none","seed":1,"transition_ms":450,"intensity":1,"framed_count":12}
   [PASS] T-SRV19 setting a style pack enables it and persists to project/style.json  — set=true persistPack=cinematic enabled=true
-  [PASS] T-SRV20 choosing "none" turns transitions off (user opt-out)  — choice={"enabled":false,"pack":"none","seed":1,"transition_ms":450,"intensity":1}
+  [PASS] T-SRV20 choosing "none" turns transitions off (user opt-out)  — choice={"enabled":false,"pack":"none","seed":1,"transition_ms":450,"intensity":1,"framed_count":0}
 
 ================================================================
   SERVER TEST SUMMARY: 20 PASS, 0 FAIL

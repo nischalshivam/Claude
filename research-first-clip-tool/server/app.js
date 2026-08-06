@@ -852,7 +852,9 @@ const server = http.createServer(async (req, res) => {
     // dono jagah se set hoti hai: New Video page (video banane se pehle) ya
     // Editor "Lock -> Style" panel (final se pehle). project/style.json canonical.
     if (req.method === 'GET' && p === '/api/v1/style') {
-      return json(res, { ok: true, catalog: styleMod.catalog(), choice: styleMod.loadChoice(PROJ()) });
+      let bg = { images: 0, videos: 0 };
+      try { const b = require(path.join(ROOT, 'src', 'frames.js')).loadBackgrounds(PROJ()); bg = { images: b.images.length, videos: b.videos.length, dir: b.dir }; } catch {}
+      return json(res, { ok: true, catalog: styleMod.catalog(), choice: styleMod.loadChoice(PROJ()), backgrounds: bg });
     }
     if (req.method === 'POST' && p === '/api/v1/style') {
       const body = JSON.parse((await readBody(req, 1e5)).toString() || '{}');
@@ -861,6 +863,7 @@ const server = http.createServer(async (req, res) => {
         pack: String(body.pack || 'none'),
         enabled: body.enabled !== false && String(body.pack || 'none') !== 'none',
         seed: body.seed, transition_ms: body.transition_ms, intensity: body.intensity,
+        framed_count: body.framed_count,
       });
       return json(res, { ok: true, choice: saved });
     }

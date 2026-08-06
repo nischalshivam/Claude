@@ -35,7 +35,9 @@ function baseRoot(root) {
 function projectRoot(root) { return path.join(baseRoot(root), 'project'); }
 function stylePath(root) { return path.join(projectRoot(root), 'style.json'); }
 
-const DEFAULT_CHOICE = { enabled: false, pack: 'none', seed: 1, transition_ms: 450, intensity: 1.0 };
+const DEFAULT_CHOICE = { enabled: false, pack: 'none', seed: 1, transition_ms: 450, intensity: 1.0, framed_count: 12 };
+// packs jinke saath framed-background layout by-default aata hai (accent):
+const FRAMED_DEFAULT_PACKS = new Set(['auto', 'cinematic', 'energetic', 'soft']);
 
 function clamp(x, lo, hi) { x = Number(x); if (!isFinite(x)) return lo; return Math.max(lo, Math.min(hi, x)); }
 
@@ -46,7 +48,12 @@ function normalizeChoice(j) {
   const seed = Math.max(1, Math.floor(Number(j.seed) || 1));
   const transition_ms = Math.round(clamp(j.transition_ms != null ? j.transition_ms : 450, 120, 1200));
   const intensity = clamp(j.intensity != null ? j.intensity : 1.0, 0.3, 1.5);
-  return { enabled, pack, seed, transition_ms, intensity };
+  // framed-background layout: poori video me sirf ~N baar (accent), 0..20.
+  // Agar user ne explicit value di to wahi; warna pack ke hisaab se default.
+  let framed_count;
+  if (j.framed_count != null) framed_count = Math.round(clamp(j.framed_count, 0, 20));
+  else framed_count = (enabled && FRAMED_DEFAULT_PACKS.has(pack)) ? 12 : 0;
+  return { enabled, pack, seed, transition_ms, intensity, framed_count };
 }
 
 function loadChoice(root) {
@@ -65,7 +72,10 @@ function saveChoice(root, choice) {
 function signature(root) {
   const c = loadChoice(root);
   if (!c.enabled) return 'style:none';
-  return 'style:' + U.hashStr([c.pack, c.seed, c.transition_ms, c.intensity].join('|'));
+  // framed_count + backgrounds folder fingerprint bhi — background badle to re-render
+  let bgSig = '';
+  try { bgSig = require('./frames.js').backgroundsSignature(root); } catch {}
+  return 'style:' + U.hashStr([c.pack, c.seed, c.transition_ms, c.intensity, c.framed_count, bgSig].join('|'));
 }
 
 // ---------- seeded PRNG (reproducible variety) ----------
@@ -219,11 +229,9 @@ function buildPlan(choice, slots) {
   return plan;
 }
 
-// ---------- filter chain for ONE segment ----------
-function buildFilterChain(pl, W, H, FPS, intensity) {
+// ---------- transition-only chain (dip/blur fades) — frames.js bhi reuse karta hai ----------
+function transitionChain(pl) {
   const parts = [];
-  const anim = ANIMATIONS[pl.anim];
-  if (anim && anim.build) parts.push(anim.build(pl.dur, W, H, FPS, intensity));
   const tin = TRANSITIONS[pl.transIn];
   if (tin && pl.transIn !== 'none') {
     const d = Math.max(0.04, pl.dSide * (tin.scale || 1));
@@ -234,6 +242,16 @@ function buildFilterChain(pl, W, H, FPS, intensity) {
     const d = Math.max(0.04, pl.dSide * (tout.scale || 1));
     for (const f of tout.tail(d, pl.dur)) parts.push(f);
   }
+  return parts.length ? parts.join(',') : '';
+}
+
+// ---------- filter chain for ONE segment (animation + transition) ----------
+function buildFilterChain(pl, W, H, FPS, intensity) {
+  const parts = [];
+  const anim = ANIMATIONS[pl.anim];
+  if (anim && anim.build) parts.push(anim.build(pl.dur, W, H, FPS, intensity));
+  const tc = transitionChain(pl);
+  if (tc) parts.push(tc);
   return parts.length ? parts.join(',') : null;
 }
 
@@ -245,31 +263,60 @@ function applyStyle(slots, segFiles, choice, cfg, W, H, FPS) {
   const plan = buildPlan(c, slots.map((s, k) => ({ ...s, i: (segFiles[k] ? s.i : s.i) })));
   const enc = ['-c:v', 'libx264', '-preset', (cfg.render && cfg.render.preset) || 'veryfast',
     '-crf', String((cfg.render && cfg.render.crf) || 21), '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an'];
+  const workDir = segFiles.length ? path.dirname(segFiles[0]) : '.';
+  // M5.3-FR: framed-background layout plan (occasional accent ~N/video)
+  let frames = null, backgrounds = { all: [] }, framedMap = new Map();
+  try {
+    frames = require('./frames.js');
+    backgrounds = frames.loadBackgrounds();
+    framedMap = frames.planFramed(slots, c, backgrounds);
+  } catch (e) { framedMap = new Map(); }
   const outFiles = [];
   const applied = [];
-  let styledCount = 0;
+  let styledCount = 0, framedCount = 0;
   for (let k = 0; k < segFiles.length; k++) {
     const src = segFiles[k];
     const pl = plan[k] || { anim: 'none', transIn: 'none', transOut: 'none', dur: 0, dSide: 0 };
+    const framedOpts = framedMap.get(k);
+    const out = src.replace(/\.mp4$/i, '') + '_sty.mp4';
+
+    // ---- framed-background layout (chosen shots) ----
+    if (framedOpts && frames && fs.existsSync(src)) {
+      const tchain = transitionChain(pl);
+      const fr = frames.composite(src, out, Math.max(0.3, pl.dur || 0), framedOpts, workDir, cfg, W, H, FPS, tchain);
+      if (fr.ok) {
+        outFiles.push(out); styledCount++; framedCount++;
+        applied.push({ i: pl.i, layout: 'framed', frame_style: framedOpts.style.id,
+          bg: framedOpts.bg.type === 'blur' ? 'blur-self' : path.basename(framedOpts.bg.path || ''),
+          bg_type: framedOpts.bg.type, bg_motion: framedOpts.motion,
+          transIn: pl.transIn, transOut: pl.transOut, styled: true });
+        continue;
+      }
+      // framed fail-safe: neeche normal animation path par gir jao
+      applied.push({ i: pl.i, layout: 'framed', styled: false, reason: 'frame-composite-fail', err: fr.err });
+      // (fallthrough to fullscreen animation below)
+    }
+
+    // ---- fullscreen animation + transition (default) ----
     const chain = buildFilterChain(pl, W, H, FPS, c.intensity);
     if (!chain || !fs.existsSync(src)) {
       outFiles.push(src);
-      applied.push({ i: pl.i, anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, styled: false, reason: chain ? 'src-missing' : 'no-effect' });
+      applied.push({ i: pl.i, layout: 'fullscreen', anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, styled: false, reason: chain ? 'src-missing' : 'no-effect' });
       continue;
     }
-    const out = src.replace(/\.mp4$/i, '') + '_sty.mp4';
     const r = U.ffmpeg(['-i', src, '-vf', chain, ...enc, out]);
     if (!r.ok || !fs.existsSync(out)) {
-      // fail-safe: original segment rakho, sach likho
       outFiles.push(src);
-      applied.push({ i: pl.i, anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, styled: false, reason: 'ffmpeg-fail', err: (r.stderr || '').slice(0, 140) });
+      applied.push({ i: pl.i, layout: 'fullscreen', anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, styled: false, reason: 'ffmpeg-fail', err: (r.stderr || '').slice(0, 140) });
       continue;
     }
     outFiles.push(out);
     styledCount++;
-    applied.push({ i: pl.i, anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, dSide: pl.dSide, styled: true, file: path.basename(out) });
+    applied.push({ i: pl.i, layout: 'fullscreen', anim: pl.anim, transIn: pl.transIn, transOut: pl.transOut, dSide: pl.dSide, styled: true, file: path.basename(out) });
   }
-  return { files: outFiles, applied, styledCount, pack: c.pack, seed: c.seed, transition_ms: c.transition_ms, intensity: c.intensity };
+  return { files: outFiles, applied, styledCount, framedCount,
+    backgrounds: { images: (backgrounds.images || []).length, videos: (backgrounds.videos || []).length },
+    pack: c.pack, seed: c.seed, transition_ms: c.transition_ms, intensity: c.intensity, framed_count: c.framed_count };
 }
 
 // ---------- catalog (UI + guide) ----------
@@ -282,8 +329,8 @@ function catalog() {
 }
 
 module.exports = {
-  projectRoot, stylePath, DEFAULT_CHOICE, normalizeChoice,
+  baseRoot, projectRoot, stylePath, DEFAULT_CHOICE, normalizeChoice,
   loadChoice, saveChoice, signature,
-  buildPlan, buildFilterChain, applyStyle, catalog,
+  buildPlan, buildFilterChain, transitionChain, applyStyle, catalog,
   PACKS, ANIMATIONS, TRANSITIONS,
 };

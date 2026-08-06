@@ -1,3 +1,29 @@
+# Known limitations — M5.3-FR (Frame + custom background)
+
+Naya LAYOUT axis (transitions/animations ke UPAR): kuch shots framed + custom
+background, baaki fullscreen. Editor/render untouched.
+
+**Ab SACH mein chalta hai (real ffmpeg + pixel se proven — frames-test 7/0):**
+- **Bada frame** (~85% width) + rounded/sharp corners (auto-vary) + soft shadow.
+- **Backgrounds folder** (images + videos) se auto-rotate; khali ho to blur-self.
+- **Occasional accent**: default 12 framed shots/video (0–20), video length se
+  farak nahi. Spread (kabhi 2 adjacent nahi), non-repeat style+background.
+- **Duration-exact**: framed lagne se total length kabhi nahi badalti. (frames F-2)
+- **Pixel proof**: framed shot ka center = clip, margin = background. (frames F-3)
+- **framed_count=0** => koi framed shot nahi (transitions/motion fir bhi chalein).
+- render manifest me `style.framed_shots` + per-shot `layout/frame_style/bg` proof.
+
+**Abhi bhi seemayein (aage):**
+- **Frame position** abhi center — off-center/split-screen layouts aage.
+- **Frame ka live preview editor me** abhi nahi — final export me dikhta hai
+  (export ke baad final.mp4 player me chalao).
+- **Kaunsa background kis shot par** abhi random-rotate (theme-match nahi) — aapne
+  bhi "auto" chuna. Semantic match (topic ke hisaab se background) aage.
+- Framed shot par per-shot Ken Burns abhi nahi (frame khud accent hai);
+  background par motion hai.
+
+---
+
 # Known limitations — M5.2-TX (Transitions + Animations)
 
 Ye release Codex ki M5.1.1 base ke UPAR ek naya, **poori tarah alag layer**

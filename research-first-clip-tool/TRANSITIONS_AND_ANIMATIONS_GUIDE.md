@@ -1,3 +1,32 @@
+# Frame + Custom Background (M5.3-FR) — occasional accent
+
+Kuch shots ko **chhota "framed"** banaya jaata hai aur unke **peeche aapka custom
+background** (image ya video) chalta hai — baaki poori video normal fullscreen.
+
+**Kaise chalao:**
+1. Apne `backgrounds/` folder me background **images (.jpg/.png)** aur **videos
+   (.mp4/.mov/.webm)** daalo (jitne chaho). Khali chhoda to tool "blur" background
+   use karega (clip ka apna blurred version).
+2. Style screen par **"Frame + background shots"** count set karo (default **12**).
+   Ye poori video me kitni baar framed-shot aayega — 20 min ho ya 40 min, count
+   fixed (occasional accent). **0 = koi framed shot nahi.**
+
+**Tool khud (auto):**
+- **Bada frame** (~85% — background sirf ek border/margin jaisa).
+- Kaunse shots framed banein — tool khud **faila kar** chunta hai (kabhi 2 aas-paas
+  nahi).
+- Har baar **alag frame-style** (rounded/sharp, border, size — auto-vary) + **alag
+  background** (rotate) — 50-60+ combinations, kabhi repetitive nahi.
+- Image backgrounds ko halki motion (slow zoom) bhi mil sakti hai; video backgrounds
+  loop hote hain.
+- **Duration-exact** — framed lagne se lambai kabhi nahi badalti (proven:
+  RAW-FRAMES-LOG.txt). Editor untouched.
+
+Layouts jo ek hi video me mix hote hain: **Fullscreen · Frame+Blur · Frame+Image-BG
+· Frame+Video-BG** — sab transitions/animations ke saath.
+
+---
+
 # Transitions & Animations — poori guide (M5.2-TX)
 
 Ye feature aapki har video ko **alag** dikhata hai — taaki 2 video ek jaise,

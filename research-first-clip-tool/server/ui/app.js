@@ -764,12 +764,14 @@ function styleCard(context) {
   return card;
 }
 
+let STYLE_BG = { images: 0, videos: 0 };
 async function loadStyle() {
   const { ok, data } = await api('/style');
   const grid = $('#stylePacks'), ctl = $('#styleCtl');
   if (!grid) return;
   if (!ok || !data || !data.catalog) { grid.innerHTML = ''; grid.append(el('p', { class: 'small muted' }, 'style load nahi hui')); return; }
   STYLE_CAT = data.catalog; STYLE_CHOICE = data.choice || { pack: 'none', enabled: false, intensity: 1, seed: 1 };
+  STYLE_BG = data.backgrounds || { images: 0, videos: 0 };
   renderStylePacks();
 }
 
@@ -792,6 +794,18 @@ function renderStylePacks() {
     rng.onchange = () => setStyle(STYLE_CHOICE.pack, { intensity: parseFloat(rng.value) });
     ctl.append(rng, el('span', {}, '  '),
       el('button', { class: 'btn', style: 'margin-left:10px', onclick: () => setStyle(STYLE_CHOICE.pack, { seed: (STYLE_CHOICE.seed || 1) + 1 }) }, '🔀 Shuffle variety'));
+
+    // ---- framed-background layout (occasional accent) ----
+    const fc = STYLE_CHOICE.framed_count != null ? STYLE_CHOICE.framed_count : 12;
+    const bgN = (STYLE_BG.images || 0) + (STYLE_BG.videos || 0);
+    ctl.append(el('div', { class: 'mt', style: 'border-top:1px solid var(--line, #333);padding-top:10px' },
+      el('div', { class: 'small', style: 'margin-bottom:4px' }, `Frame + background shots: ${fc} per video`),
+      el('div', { class: 'small muted', style: 'margin-bottom:6px' }, bgN
+        ? `${STYLE_BG.images} image + ${STYLE_BG.videos} video backgrounds mile (backgrounds/ folder). Tool inhe rotate karega.`
+        : 'backgrounds/ folder khali hai — abhi "blur" background lagega. Apne backgrounds folder me daalo (images/videos).')));
+    const frng = el('input', { type: 'range', min: '0', max: '20', step: '1', value: String(fc), style: 'width:220px;vertical-align:middle' });
+    frng.onchange = () => setStyle(STYLE_CHOICE.pack, { framed_count: parseInt(frng.value, 10) });
+    ctl.append(frng, el('span', { class: 'small muted', style: 'margin-left:10px' }, '0 = koi framed shot nahi'));
   } else {
     ctl.append(el('div', { class: 'small muted' }, 'Abhi OFF — koi transition ya motion nahi lagega. Upar se koi pack chuno ya "None" hi rehne do.'));
   }
@@ -802,7 +816,8 @@ async function setStyle(pack, extra = {}) {
   const body = { pack, enabled: pack !== 'none',
     seed: extra.seed != null ? extra.seed : (cur.seed || 1),
     transition_ms: cur.transition_ms || 450,
-    intensity: extra.intensity != null ? extra.intensity : (cur.intensity || 1) };
+    intensity: extra.intensity != null ? extra.intensity : (cur.intensity || 1),
+    framed_count: extra.framed_count != null ? extra.framed_count : cur.framed_count };
   const { ok, data } = await api('/style', { method: 'POST', body: JSON.stringify(body) });
   if (ok && data.choice) {
     STYLE_CHOICE = data.choice;

@@ -463,8 +463,10 @@ module.exports = function render(spec, cfg, st, tl) {
         }
         styleResult = { pack: res.pack, seed: res.seed, transition_ms: res.transition_ms,
           intensity: res.intensity, styled_shots: res.styledCount, total_shots: res.files.length,
-          shots: res.applied };
-        U.log(`   style pass: "${styleChoice.pack}" — ${res.styledCount}/${res.files.length} shots par transition/motion laga (durations unchanged).`);
+          framed_shots: res.framedCount || 0, framed_count_target: res.framed_count || 0,
+          backgrounds: res.backgrounds || { images: 0, videos: 0 }, shots: res.applied };
+        U.log(`   style pass: "${styleChoice.pack}" — ${res.styledCount}/${res.files.length} shots styled` +
+          `${res.framedCount ? ', ' + res.framedCount + ' framed+background' : ''} (durations unchanged).`);
       } else {
         U.warn('style pass skip: segment list plan se align nahi hui — plain concat hoga.');
       }
