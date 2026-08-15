@@ -43,12 +43,18 @@ REM strip surrounding quotes if the path was dragged in
 set VIDEO=%VIDEO:"=%
 
 echo.
-echo   Sirf pehle kitne MINUTE tag karne hain? (sasta test ke liye 15 likho)
+echo   Sirf pehle kitne MINUTE tag karne hain? Sirf NUMBER likho — jaise: 15
 echo   Poori video ke liye khaali chhod ke Enter dabao.
-set /p "MINS=  Minutes: "
+set /p "MINS=  Minutes (number only): "
+
+REM Agar "15 minutes" jaisa kuch type ho jaye (number ke baad extra shabd),
+REM sirf pehla, space se pehle wala hissa lo — taaki ek extra shabd poori
+REM command hi na tod de. Asli sanity check (kya ye sach me number hai)
+REM Python side (cmd_catalog) khud karta hai aur saaf error deta hai.
+if defined MINS for /f "tokens=1" %%A in ("!MINS!") do set "MINS=%%A"
 
 set "ARGS=catalog "%VIDEO%""
-if defined MINS set "ARGS=!ARGS! --minutes !MINS!"
+if defined MINS if not "!MINS!"=="" set "ARGS=!ARGS! --minutes "!MINS!""
 
 echo.
 echo   Chalu ho raha hai... (pehle 'mi gemini' se key check kar lena agar error aaye)

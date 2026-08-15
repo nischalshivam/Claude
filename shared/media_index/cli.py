@@ -497,8 +497,14 @@ def cmd_catalog(a):
         print(f"  video nahi mila: {a.video}")
         return 1
     try:
+        minutes = float(str(a.minutes).strip())
+    except ValueError:
+        print(f"  --minutes ke liye sirf number chahiye, ye mila: {a.minutes!r}")
+        print("  (sirf number likho, jaise: 15 — koi shabd nahi)")
+        return 1
+    try:
         lib = catalog.run(a.video, out_json=a.out or "",
-                          max_minutes=a.minutes, log=print)
+                          max_minutes=minutes, log=print)
     except RuntimeError as exc:
         print(f"  {exc}")
         print("  pehle chalao:  mi gemini   (key + endpoint check)")
@@ -1002,7 +1008,10 @@ def main(argv=None):
     ct.add_argument("video", help="video file ka path")
     ct.add_argument("--out", default="",
                     help="library kahan likhni hai (default: video ke paas .catalog.json)")
-    ct.add_argument("--minutes", type=float, default=0.0,
+    # str, not type=float: a stray word after the number ("15 minutes" typed
+    # into the batch prompt) must produce ONE clear Hindi line from
+    # cmd_catalog, not argparse's generic English "invalid float value".
+    ct.add_argument("--minutes", default="0",
                     help="sirf pehle N minute (sasta test); 0 = poori video")
     ct.set_defaults(func=cmd_catalog)
 
