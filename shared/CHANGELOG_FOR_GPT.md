@@ -11,6 +11,59 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-02 — Catalog layer: the whole title becomes a searchable tagged library
+
+**The strategic pivot.** After two over-engineered attempts (this tool's
+precision solver + a separate "SceneBrain" repo) both failed to hit accuracy,
+a working competitor's method was obtained (a friend's "Westeros Autopilot"
+brief + a course): index the ENTIRE series ONCE into a searchable catalogue of
+tagged shots, then every video reuses it. The engine is not clever — break the
+source into short shots, have a vision model describe each (who / what / shot
+type / clean?), store it beside the exact subtitle timing — and it works
+because most of a character essay needs *a good shot of the right person in the
+right mood* (many acceptable answers), not one exact frame. The few
+"money moments" stay covered by dialogue anchoring. The honest reframe:
+chasing frame-perfect exactness on EVERY shot was the mistake.
+
+**Change.** New `media_index/catalog.py`:
+- `shots_from_cuts` / `fixed_windows` / `detect_cuts` — segment a video into
+  1.5–8s shots from ffmpeg scene-cut detection, falling back to even windows.
+- `tag_messages` / `parse_tags` — ask Gemini to DESCRIBE a shot from real
+  frames (description, tags, characters, action, shot_type, quality, safe),
+  never to locate anything; "unknown" is required over a guessed name (names
+  are claims for the later `cast.py` verification pass, per the friend's
+  brief's "second check confirms the person is actually in the shot").
+- `build_catalog` — the loop, with injectable frame-grab and `ask`, saved
+  after EVERY shot (resume-safe / crash-safe over a 1500-shot film), dialogue
+  attached from subtitle overlap. Output is `catalog.json` (the course's
+  library.json schema): `{id, source, file, start, end, description, tags,
+  characters, action, shot_type, quality, safe, dialogue}`.
+- `real_grab` (best distinct frames via `frames.scan/pick`) + `gemini_ask`
+  (reuses `gemini.call`) + `run` orchestrator with a `max_minutes` cap for a
+  cheap quality check before tagging a whole film.
+- `search` — lexical v1 retrieval over description+tags+dialogue with a
+  decisive character filter. A description embedding is the next upgrade and
+  slots in behind the same function.
+- CLI `mi catalog <video> [--minutes N]` + `catalog.bat` (double-click).
+
+**Why this is not a restart.** It reuses what already works — local movie as
+the only source, subtitle timing, `frames` picker, `cast.py` character
+verification, `gemini.py`. It adds the one missing retrieval signal (a
+language description per shot) that CLIP embeddings could not provide on
+silent scenes.
+
+**Measured.** 16 new catalog tests (segmentation, tag-parse tolerance,
+resume/crash-safety with injected fakes, search). Full related suite green
+(65). Real accuracy awaits the user running it on Joker (2019) and a gold
+pass — deliberately not claimed here.
+
+**Still open (honest):** retrieval is lexical, not yet embedding-based;
+character labels are Gemini claims not yet cross-checked against `cast.py`
+reference photos at catalog time; and the catalogue is not yet wired into the
+build/editor as the primary footage source (next step).
+
+---
+
 ## 2026-08-01 — A dead indexer no longer locks a library for 30 minutes
 
 **Change.** `lockfile.held_by` now checks whether the process that wrote the

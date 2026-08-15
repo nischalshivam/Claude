@@ -441,6 +441,37 @@ def cmd_gemini(a):
     return 0
 
 
+def cmd_catalog(a):
+    """Tag a whole film/episode into a searchable shot library (catalog.json).
+
+    The one-time, best-of-best pass: break the video into shots, have the
+    vision model describe each (who / what / shot type / clean?), store it
+    beside the exact subtitle timing. Every future video reuses it. Start with
+    `--minutes 15` to sanity-check the descriptions cheaply before paying to
+    tag a whole two-hour film.
+    """
+    from . import catalog                                  # noqa: PLC0415
+
+    if not os.path.isfile(a.video):
+        print(f"  video nahi mila: {a.video}")
+        return 1
+    try:
+        lib = catalog.run(a.video, out_json=a.out or "",
+                          max_minutes=a.minutes, log=print)
+    except RuntimeError as exc:
+        print(f"  {exc}")
+        print("  pehle chalao:  mi gemini   (key + endpoint check)")
+        return 1
+    tagged = sum(1 for s in lib.values() if s.description)
+    out = a.out or (os.path.splitext(a.video)[0] + ".catalog.json")
+    print(f"\n  {tagged}/{len(lib)} shots described  →  {out}")
+    named = sorted({c for s in lib.values() for c in s.characters})
+    if named:
+        print(f"  characters seen: {', '.join(named[:20])}")
+    print("  ye library har video me reuse hogi — dobara tag nahi karna.")
+    return 0
+
+
 def cmd_look(a):
     """Index what the footage LOOKS like, so shots can be checked, not guessed.
 
@@ -924,6 +955,15 @@ def main(argv=None):
     ge = sub.add_parser("gemini", parents=[common],
                         help="kya vision model (silent shots ke liye) set hai")
     ge.set_defaults(func=cmd_gemini)
+
+    ct = sub.add_parser("catalog", parents=[common],
+                        help="poori movie/episode ko tag karke searchable library banao")
+    ct.add_argument("video", help="video file ka path")
+    ct.add_argument("--out", default="",
+                    help="library kahan likhni hai (default: video ke paas .catalog.json)")
+    ct.add_argument("--minutes", type=float, default=0.0,
+                    help="sirf pehle N minute (sasta test); 0 = poori video")
+    ct.set_defaults(func=cmd_catalog)
 
     go = sub.add_parser("gold", parents=[common],
                         help="ek build ko haath se label karke asli accuracy naapo")
