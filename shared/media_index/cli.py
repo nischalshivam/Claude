@@ -396,9 +396,30 @@ def cmd_gemini(a):
     from . import gemini                                   # noqa: PLC0415
 
     cfg = gemini.config()
-    print(f"  key      {'set hai' if cfg.key else 'NAHI — settings.txt me gemini_key daalo'}")
-    print(f"  endpoint {cfg.base or 'NAHI — settings.txt me gemini_base daalo'}")
+    # Show the key MASKED (first/last 4 + length) and where it came from. A
+    # valid key that still 401s almost always means the tool is sending a
+    # DIFFERENT string than the one on the dashboard — most often a stale
+    # GEMINI_API_KEY environment variable silently overriding settings.txt.
+    # The mask lets the user compare length + ends against the provider without
+    # ever printing the secret.
+    env_key = os.environ.get("GEMINI_API_KEY")
+    env_base = os.environ.get("GEMINI_BASE_URL")
+    ksrc = "environment variable" if env_key else "settings.txt"
+
+    def _mask(k):
+        return f"{k[:4]}…{k[-4:]}  ({len(k)} chars)" if k else \
+            "NAHI — settings.txt me gemini_key daalo"
+    print(f"  key      {_mask(cfg.key)}   [{ksrc}]")
+    print(f"  endpoint {cfg.base or 'NAHI — settings.txt me gemini_base daalo'}"
+          f"   [{'environment variable' if env_base else 'settings.txt'}]")
     print(f"  model    {cfg.model}")
+    if env_key:
+        print("\n  ⚠️  GEMINI_API_KEY environment variable set hai — ye "
+              "settings.txt ki key ko OVERRIDE kar raha hai.")
+        print("      Agar upar wali key (length/ends) tumhare dashboard wali "
+              "key se NAHI milti, to yahi 401 ki wajah hai — purana env var.")
+        print("      Windows me hatao:  setx GEMINI_API_KEY \"\"   (phir naya "
+              "terminal kholo), ya settings.txt ki key ko env me sahi karo.")
     ok, why = gemini.available()
     if not ok:
         print(f"\n  {why}")
