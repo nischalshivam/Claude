@@ -53,8 +53,18 @@ REM command hi na tod de. Asli sanity check (kya ye sach me number hai)
 REM Python side (cmd_catalog) khud karta hai aur saaf error deta hai.
 if defined MINS for /f "tokens=1" %%A in ("!MINS!") do set "MINS=%%A"
 
+echo.
+echo   (Optional) Character naam consistent karne ke liye ek file de sakte ho —
+echo   ek line ek banda, aliases '=' ke baad. Jaise:
+echo       Arthur = Arthur Fleck, Joker, Joaquin Phoenix
+echo       Murray = Murray Franklin
+echo   File ka path daalo, ya skip karne ke liye Enter dabao:
+set /p "CHARS=  characters.txt (optional): "
+set CHARS=%CHARS:"=%
+
 set "ARGS=catalog "%VIDEO%""
 if defined MINS if not "!MINS!"=="" set "ARGS=!ARGS! --minutes "!MINS!""
+if defined CHARS if not "!CHARS!"=="" set "ARGS=!ARGS! --characters "!CHARS!""
 
 echo.
 echo   Chalu ho raha hai... (pehle 'mi gemini' se key check kar lena agar error aaye)

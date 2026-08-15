@@ -244,6 +244,46 @@ def tag_messages(frames: list, known_characters: list | None = None,
             {"role": "user", "content": content}]
 
 
+def canonicalize(names: list, canon: dict) -> list:
+    """Collapse the model's varied character labels to canonical names.
+
+    Gemini calls the same person "Joaquin Phoenix", "Joker", and "Arthur
+    Fleck" across three shots — an actor name, a persona, a full name. For
+    search to work, one person must have one name. `canon` maps any known
+    alias (lowercased) to the canonical label; an unmapped name is kept as-is
+    (it might be a real minor character), and duplicates are removed in order.
+    """
+    out, seen = [], set()
+    for raw in names:
+        key = re.sub(r"\s+", " ", str(raw).strip().lower())
+        name = canon.get(key, raw)
+        if name.lower() not in seen:
+            out.append(name)
+            seen.add(name.lower())
+    return out
+
+
+def alias_map(people: list) -> dict:
+    """{alias_lower: canonical} for a list of 'Canonical = alias, alias' lines
+    or plain names. `Arthur = Arthur Fleck, Joker, Joaquin Phoenix` teaches
+    the collapse; a bare `Murray` maps only itself."""
+    canon: dict = {}
+    for line in people or []:
+        line = str(line).strip()
+        if not line:
+            continue
+        if "=" in line:
+            name, aliases = line.split("=", 1)
+            name = name.strip()
+            parts = [name] + [a.strip() for a in aliases.split(",")]
+        else:
+            name, parts = line, [line]
+        for a in parts:
+            if a:
+                canon[a.lower()] = name
+    return canon
+
+
 def parse_tags(text: str) -> dict:
     """The model's JSON, made safe. Tolerant of fences and stray prose."""
     raw = (text or "").strip()
@@ -322,6 +362,7 @@ def plan_shots(duration: float, path: str = "") -> list:
 def build_catalog(source: str, file: str, duration: float, out_json: str,
                   grab, ask, cues: list | None = None,
                   known_characters: list | None = None,
+                  canon: dict | None = None,
                   windows: list | None = None, log=lambda *a: None,
                   resume: bool = True) -> dict:
     """Catalogue one video into `out_json`. Returns {id: Shot}.
@@ -330,10 +371,12 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
     window; `ask(messages) -> text` is the model call. Both injected so this
     runs under test with neither ffmpeg nor a network. Saved after every shot,
     so a run interrupted at shot 900 of 1500 resumes there — no frame is
-    described twice, and nothing is lost to a crash.
+    described twice, and nothing is lost to a crash. `canon` collapses the
+    model's varied character labels (actor/persona/name) to one name each.
     """
     library = load_library(out_json) if resume else {}
     slug = _slug(file or source)
+    canon = canon or {}
     windows = windows if windows is not None else plan_shots(duration, file)
     total = len(windows)
     done = 0
@@ -356,6 +399,8 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
             except Exception as exc:
                 log(f"      shot {i} tag failed: {exc}")
                 tags = {}
+        if tags.get("characters"):
+            tags["characters"] = canonicalize(tags["characters"], canon)
         library[shot_id] = Shot(
             id=shot_id, source=source, file=file, start=start, end=end,
             dialogue=line, **{k: tags[k] for k in
@@ -445,8 +490,30 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     if cues:
         log(f"  subtitles: {len(cues)} lines ({kind}) — dialogue will be tagged")
     else:
-        log(f"  subtitles: koi line nahi mili ({kind}) — sirf picture se tag "
-            "hoga. .srt folder me hai to library me subtitle theek karke aao.")
+        # List the subtitle-looking files that ARE beside the video, so a
+        # "none" is not a dead end. If an .srt is sitting right there but not
+        # matched, that is a naming/sync problem to see, not a missing file.
+        folder = os.path.dirname(video_path)
+        subs = []
+        try:
+            subs = [f for f in os.listdir(folder)
+                    if f.lower().endswith((".srt", ".vtt", ".ass", ".ssa"))]
+        except OSError:
+            pass
+        log(f"  subtitles: koi line nahi mili ({kind}) — sirf picture se tag hoga.")
+        if subs:
+            log(f"    (folder me ye subtitle file(s) hain par match nahi hui: "
+                f"{', '.join(subs[:5])} — naam video jaisa rakho ya .en.srt)")
+        else:
+            log("    (folder me koi .srt file hai hi nahi — download karke daalo)")
+
+    # A character list (which may carry aliases, e.g.
+    # "Arthur = Arthur Fleck, Joker, Joaquin Phoenix") both nudges the model
+    # to name the canonical person AND collapses its varied labels afterwards.
+    canon = alias_map(known_characters or [])
+    canon_names = sorted({v for v in canon.values()}) or (known_characters or [])
+    if canon_names:
+        log(f"  characters: {', '.join(canon_names)} (baaki ko 'unknown' rakhega)")
 
     cuts = detect_cuts(video_path)
     windows = (shots_from_cuts(cuts, duration) if cuts
@@ -455,8 +522,8 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     log(f"  {source}: {len(windows)} shots to catalogue — {how}")
     return build_catalog(source, video_path, duration, out_json,
                          real_grab(video_path), gemini_ask(), cues=cues,
-                         known_characters=known_characters, windows=windows,
-                         log=log)
+                         known_characters=canon_names, canon=canon,
+                         windows=windows, log=log)
 
 
 # ---------------------------------------------------------------------------

@@ -78,6 +78,31 @@ class TestParseTags(unittest.TestCase):
         self.assertEqual(catalog.parse_tags("no json here"), {})
 
 
+class TestCharacterCanon(unittest.TestCase):
+
+    def test_alias_lines_map_every_alias_to_one_name(self):
+        canon = catalog.alias_map([
+            "Arthur = Arthur Fleck, Joker, Joaquin Phoenix",
+            "Murray = Murray Franklin",
+            "Penny"])
+        self.assertEqual(canon["joker"], "Arthur")
+        self.assertEqual(canon["joaquin phoenix"], "Arthur")
+        self.assertEqual(canon["arthur fleck"], "Arthur")
+        self.assertEqual(canon["murray franklin"], "Murray")
+        self.assertEqual(canon["penny"], "Penny")
+
+    def test_the_actor_persona_and_name_collapse_to_one(self):
+        canon = catalog.alias_map(["Arthur = Arthur Fleck, Joker, Joaquin Phoenix"])
+        got = catalog.canonicalize(
+            ["Joaquin Phoenix", "Joker", "Arthur Fleck"], canon)
+        self.assertEqual(got, ["Arthur"])
+
+    def test_an_unknown_name_is_kept_not_dropped(self):
+        canon = catalog.alias_map(["Arthur = Joker"])
+        got = catalog.canonicalize(["Joker", "Randall"], canon)
+        self.assertEqual(got, ["Arthur", "Randall"])
+
+
 class TestBuildCatalog(unittest.TestCase):
 
     def setUp(self):

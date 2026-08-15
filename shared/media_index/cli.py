@@ -502,8 +502,22 @@ def cmd_catalog(a):
         print(f"  --minutes ke liye sirf number chahiye, ye mila: {a.minutes!r}")
         print("  (sirf number likho, jaise: 15 — koi shabd nahi)")
         return 1
+
+    # Character list: a file (one person per line, aliases after '=') or an
+    # inline ';'-separated list. Forces one name per person instead of the
+    # actor/persona/full-name mix the model gives on its own.
+    people = []
+    raw_chars = (a.characters or "").strip()
+    if raw_chars:
+        if os.path.isfile(raw_chars):
+            with open(raw_chars, "r", encoding="utf-8-sig") as f:
+                people = [ln.strip() for ln in f if ln.strip()]
+        else:
+            people = [p.strip() for p in raw_chars.split(";") if p.strip()]
+
     try:
         lib = catalog.run(a.video, out_json=a.out or "",
+                          known_characters=people or None,
                           max_minutes=minutes, log=print)
     except RuntimeError as exc:
         print(f"  {exc}")
@@ -1013,6 +1027,10 @@ def main(argv=None):
     # cmd_catalog, not argparse's generic English "invalid float value".
     ct.add_argument("--minutes", default="0",
                     help="sirf pehle N minute (sasta test); 0 = poori video")
+    ct.add_argument("--characters", default="",
+                    help="character naam consistent karne ke liye: file path "
+                         "(ek line ek banda, aliases '=' ke baad) ya inline "
+                         "'Arthur = Arthur Fleck, Joker; Murray = Murray Franklin'")
     ct.set_defaults(func=cmd_catalog)
 
     go = sub.add_parser("gold", parents=[common],
