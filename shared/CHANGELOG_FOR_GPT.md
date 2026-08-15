@@ -11,6 +11,31 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-02 — Stage 2: script → catalogue retrieval (plan.py), working on real data
+
+With the Joker 15-min catalogue complete (descriptions + canonical characters
++ dialogue on 116/182 shots), the retrieval half is in. New `plan.py` matches
+each shot-request from a visual script to a catalogued shot, precision-first:
+(1) **dialogue anchor** — the request quotes a line and a shot's own subtitle
+contains it (the exact "money moment"); (2) **description + character** — the
+visual sentence matched against descriptions/tags, filtered to the named
+person; (3) **none → NEEDS VISUAL** (fail-closed). `mi plan <script>
+<catalog.json>` prints the shot list with the reason for each pick.
+
+Run against the REAL Joker genspark script + the 15-min catalogue: 103/103
+requests placed, and the sampled picks are genuinely right — the makeup-scene
+shots resolved to 66–87s, "man in rust jacket walking down a Gotham street" to
+574s, "old woman in a pink robe" (Penny) to 664s, "clown chasing teenagers
+down an alley" to 184s. Honest caveat: "100% placed" ≠ 100% accurate — a
+15-min catalogue forces some later-scene requests onto whatever is closest, so
+the true number needs the FULL-movie catalogue and a gold pass. Structure and
+signal are validated; accuracy is the next measurement.
+
+Refactor: the stringified-list parser is now `catalog.list_entries`, shared by
+`parse_tags` and `plan.requests_from_beats`. 7 new plan tests.
+
+---
+
 ## 2026-08-02 — Catalog validated on real footage; character names canonicalized
 
 First real run: Joker (2019), first 15 min, 182 scene-cut shots, 175 described

@@ -284,6 +284,26 @@ def alias_map(people: list) -> dict:
     return canon
 
 
+def list_entries(v) -> list:
+    """A field that may be a real list, a stringified list, or a joined string,
+    read back as a list. Visual scripts have carried `characters` all three
+    ways — `["Arthur"]`, `"['Arthur', 'Murray']"`, `"Arthur, Murray"`."""
+    if isinstance(v, (list, tuple)):
+        return [str(x).strip() for x in v if str(x).strip()]
+    text = str(v or "").strip()
+    if not text:
+        return []
+    if text[:1] in "[(" and text[-1:] in ")]":
+        import ast
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, (list, tuple)):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except (ValueError, SyntaxError):
+            pass
+    return [p.strip() for p in re.split(r"[,;]", text) if p.strip()]
+
+
 def parse_tags(text: str) -> dict:
     """The model's JSON, made safe. Tolerant of fences and stray prose."""
     raw = (text or "").strip()
@@ -298,11 +318,7 @@ def parse_tags(text: str) -> dict:
         return {}
 
     def as_list(v):
-        if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
-        if isinstance(v, str) and v.strip():
-            return [p.strip() for p in re.split(r"[,;]", v) if p.strip()]
-        return []
+        return list_entries(v)
 
     chars = [c for c in as_list(obj.get("characters"))
              if c.lower() not in ("unknown", "none", "n/a", "")]

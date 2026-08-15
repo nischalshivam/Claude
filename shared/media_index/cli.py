@@ -533,6 +533,40 @@ def cmd_catalog(a):
     return 0
 
 
+def cmd_plan(a):
+    """Match a script against a catalogue and print the shot list (Stage 2).
+
+    For each shot the script wants, show which catalogued moment it picked and
+    why — a dialogue anchor (exact line), a description+character match, or an
+    honest NEEDS VISUAL gap. This is the retrieval step made visible before any
+    footage is cut.
+    """
+    from . import jobs, catalog, plan                       # noqa: PLC0415
+
+    if not os.path.isfile(a.script):
+        print(f"  script nahi mila: {a.script}")
+        return 1
+    if not os.path.isfile(a.catalog):
+        print(f"  catalog.json nahi mila: {a.catalog}")
+        print("  pehle chalao:  mi catalog <video>   (library banane ke liye)")
+        return 1
+    beats = jobs.read_beats(a.script)
+    library = catalog.load_library(a.catalog)
+    if not library:
+        print("  catalog khaali hai — pehle movie ko catalog karo")
+        return 1
+    pairs, stats = plan.plan(beats, library)
+    icon = {"dialogue": "🗣", "description": "🎬", "none": "▢"}
+    for req, m in pairs:
+        tag = icon.get(m.method, "?")
+        where = f"{m.shot.start:.0f}-{m.shot.end:.0f}s" if m.placed else "—"
+        print(f"  b{req.beat:<3} {tag} {where:<12} {m.why}")
+        print(f"        script: {req.visual[:70]}")
+    print("\n  " + stats.summary())
+    print(f"  {len(library)} shots in the catalogue")
+    return 0
+
+
 def cmd_look(a):
     """Index what the footage LOOKS like, so shots can be checked, not guessed.
 
@@ -1032,6 +1066,12 @@ def main(argv=None):
                          "(ek line ek banda, aliases '=' ke baad) ya inline "
                          "'Arthur = Arthur Fleck, Joker; Murray = Murray Franklin'")
     ct.set_defaults(func=cmd_catalog)
+
+    pl = sub.add_parser("plan", parents=[common],
+                        help="script ko catalog se match karke shot-list dikhao")
+    pl.add_argument("script", help="visual/genspark script (beats + shots)")
+    pl.add_argument("catalog", help="catalog.json (mi catalog se bani)")
+    pl.set_defaults(func=cmd_plan)
 
     go = sub.add_parser("gold", parents=[common],
                         help="ek build ko haath se label karke asli accuracy naapo")
