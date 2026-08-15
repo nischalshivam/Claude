@@ -156,6 +156,22 @@ class TestBuildCatalog(unittest.TestCase):
         self.assertEqual(len(lib), 1)          # a blank entry, not a crash
         self.assertEqual(next(iter(lib.values())).description, "")
 
+    def test_a_characters_file_fixes_already_tagged_shots_on_resume(self):
+        """Supplying names on a resume must relabel existing shots without
+        re-describing a single frame."""
+        pre = {"j__00000": catalog.Shot(
+            "j__00000", "J", "/j.mp4", 0, 5, description="a man",
+            characters=["Joaquin Phoenix", "Joker"])}
+        catalog.save_library(self.out, pre)
+        canon = catalog.alias_map(["Arthur = Arthur Fleck, Joker, Joaquin Phoenix"])
+        asked = []
+        catalog.build_catalog("J", "/j.mp4", 5, self.out,
+                              lambda a, b: [b"x"], self._fake_ask(asked),
+                              canon=canon, windows=[])       # nothing to tag
+        self.assertEqual(asked, [])                          # no re-describe
+        self.assertEqual(catalog.load_library(self.out)["j__00000"].characters,
+                         ["Arthur"])
+
     def test_dialogue_is_attached_from_cues(self):
         cues = [Cue(1000, 4000, "Is it just me?")]
         lib = catalog.build_catalog(

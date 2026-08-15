@@ -377,6 +377,20 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
     library = load_library(out_json) if resume else {}
     slug = _slug(file or source)
     canon = canon or {}
+    # Apply the name map to shots already catalogued on an earlier run too.
+    # Supplying a characters.txt on a resume should fix "Joaquin Phoenix" ->
+    # "Arthur" everywhere immediately, without paying to re-describe a single
+    # frame — the descriptions were already good, only the labels drift.
+    if canon:
+        changed = False
+        for shot in library.values():
+            if shot.characters:
+                fixed = canonicalize(shot.characters, canon)
+                if fixed != shot.characters:
+                    shot.characters = fixed
+                    changed = True
+        if changed:
+            save_library(out_json, library)
     windows = windows if windows is not None else plan_shots(duration, file)
     total = len(windows)
     done = 0

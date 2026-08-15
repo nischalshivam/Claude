@@ -308,6 +308,36 @@ class TestSubtitlesFolderBesideTheVideos(unittest.TestCase):
         finally:
             shutil.rmtree(room, ignore_errors=True)
 
+    def test_brackets_in_the_folder_name_do_not_hide_the_subtitle(self):
+        """A YTS-style folder — 'Joker (2019) [WEBRip] [1080p] [YTS.LT]' — is
+        all glob character classes. An unescaped folder matched nothing and a
+        subtitle sitting right there was declared missing."""
+        room = tempfile.mkdtemp(prefix="brkt_")
+        try:
+            folder = os.path.join(room, "Joker (2019) [WEBRip] [1080p] [YTS.LT]")
+            os.makedirs(folder)
+            stem = "Joker.2019.1080p.WEBRip.x264-[YTS.LT]"
+            open(os.path.join(folder, stem + ".mp4"), "w").close()
+            with open(os.path.join(folder, stem + ".en.srt"), "w") as fh:
+                fh.write("1\n00:00:01,000 --> 00:00:03,000\nHello.\n")
+            got = subtitles.find_sidecar(os.path.join(folder, stem + ".mp4"))
+            self.assertEqual(os.path.basename(got), stem + ".en.srt")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
+    def test_a_lone_movie_takes_a_differently_named_subtitle(self):
+        """One video + one .srt in a folder belong together even when the srt
+        is named after a different release, which is the common case."""
+        room = tempfile.mkdtemp(prefix="solo_")
+        try:
+            open(os.path.join(room, "The Movie.mp4"), "w").close()
+            with open(os.path.join(room, "sub-english-yify.srt"), "w") as fh:
+                fh.write("1\n00:00:01,000 --> 00:00:03,000\nHi.\n")
+            got = subtitles.find_sidecar(os.path.join(room, "The Movie.mp4"))
+            self.assertEqual(os.path.basename(got), "sub-english-yify.srt")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
     def test_a_film_whose_subtitle_names_no_episode_is_untouched(self):
         room = tempfile.mkdtemp(prefix="film_")
         try:

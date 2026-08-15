@@ -267,17 +267,30 @@ def find_sidecar(video_path: str) -> str | None:
         got = _ep_key(name) or _ep_key(parent)
         return want is not None and got == want
 
+    # The FOLDER path must be escaped, not just the stem. A movie release folder
+    # is routinely named "Joker (2019) [WEBRip] [1080p] [YTS.LT]" — every one of
+    # those brackets is a glob character class, so an unescaped folder made the
+    # pattern match nothing and a subtitle sitting right there was declared
+    # missing. This looked exactly like "no subtitles" and cost a real user a
+    # long time. `[Ss]ub*` below stays a deliberate pattern, so only the folder
+    # component is escaped, never the pattern we mean to use.
+    efolder = glob.escape(folder)
     candidates = []
     for ext in SUB_EXT:
         # named after the video -> always trusted
-        candidates += glob.glob(os.path.join(folder, glob.escape(stem) + "*" + ext))
-        candidates += glob.glob(os.path.join(folder, glob.escape(stem), "*" + ext))
+        candidates += glob.glob(os.path.join(efolder, glob.escape(stem) + "*" + ext))
+        candidates += glob.glob(os.path.join(efolder, glob.escape(stem), "*" + ext))
+        # In a folder that holds a single video, any subtitle beside it belongs
+        # to it — subtitles are so often named after a different release that
+        # requiring the name to match the video's is what makes them "vanish".
+        if solo:
+            candidates += glob.glob(os.path.join(efolder, "*" + ext))
         # A shared folder of subtitles -> only when it clearly belongs to this
         # episode. The pattern is deliberately loose: "Subs", "Subtitles",
         # "subtitle" are all the same intention, and a rule that accepted one
         # spelling while silently ignoring another would leave a folder the
         # user plainly labelled sitting unused with no explanation.
-        for p in glob.glob(os.path.join(folder, "[Ss]ub*", "**", "*" + ext),
+        for p in glob.glob(os.path.join(efolder, "[Ss]ub*", "**", "*" + ext),
                            recursive=True):
             if shared_ok(p):
                 candidates.append(p)
