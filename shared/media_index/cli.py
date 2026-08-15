@@ -493,8 +493,9 @@ def cmd_catalog(a):
     """
     from . import catalog                                  # noqa: PLC0415
 
-    if not os.path.isfile(a.video):
-        print(f"  video nahi mila: {a.video}")
+    is_folder = os.path.isdir(a.video)
+    if not is_folder and not os.path.isfile(a.video):
+        print(f"  video/folder nahi mila: {a.video}")
         return 1
     try:
         minutes = float(str(a.minutes).strip())
@@ -516,6 +517,15 @@ def cmd_catalog(a):
             people = [p.strip() for p in raw_chars.split(";") if p.strip()]
 
     try:
+        if is_folder:
+            # A whole series/season: every episode into its own catalog.json.
+            counts = catalog.run_folder(a.video, known_characters=people or None,
+                                        max_minutes=minutes, log=print)
+            done = sum(1 for n in counts.values() if n)
+            print(f"\n  {done}/{len(counts)} episode(s) catalogued — "
+                  f"{sum(counts.values())} shots total")
+            print("  poori series ki library ban gayi — har video reuse karega.")
+            return 0
         lib = catalog.run(a.video, out_json=a.out or "",
                           known_characters=people or None,
                           max_minutes=minutes, log=print)
@@ -1052,8 +1062,8 @@ def main(argv=None):
     ge.set_defaults(func=cmd_gemini)
 
     ct = sub.add_parser("catalog", parents=[common],
-                        help="poori movie/episode ko tag karke searchable library banao")
-    ct.add_argument("video", help="video file ka path")
+                        help="movie/episode/poori-series ko tag karke searchable library banao")
+    ct.add_argument("video", help="ek video file, YA poori series/season ka folder")
     ct.add_argument("--out", default="",
                     help="library kahan likhni hai (default: video ke paas .catalog.json)")
     # str, not type=float: a stray word after the number ("15 minutes" typed
@@ -1070,7 +1080,8 @@ def main(argv=None):
     pl = sub.add_parser("plan", parents=[common],
                         help="script ko catalog se match karke shot-list dikhao")
     pl.add_argument("script", help="visual/genspark script (beats + shots)")
-    pl.add_argument("catalog", help="catalog.json (mi catalog se bani)")
+    pl.add_argument("catalog", help="catalog.json, YA poori series ka folder "
+                                    "(saari catalog.json merge ho jayengi)")
     pl.set_defaults(func=cmd_plan)
 
     go = sub.add_parser("gold", parents=[common],

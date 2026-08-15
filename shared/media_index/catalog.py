@@ -338,7 +338,17 @@ def parse_tags(text: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def load_library(path: str) -> dict:
-    """{id: Shot}. A missing or unreadable file is an empty library."""
+    """{id: Shot}. A missing or unreadable file is an empty library.
+
+    `path` may be a single catalog.json OR a folder — a whole series is many
+    per-episode catalogues, and retrieval has to see all of them at once, so a
+    folder loads and merges every `*.catalog.json` under it.
+    """
+    if os.path.isdir(path):
+        return load_libraries(sorted(
+            os.path.join(r, f)
+            for r, _d, files in os.walk(path)
+            for f in files if f.lower().endswith(".catalog.json")))
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -352,6 +362,15 @@ def load_library(path: str) -> dict:
         except (KeyError, TypeError):
             continue
     return out
+
+
+def load_libraries(paths: list) -> dict:
+    """Merge many catalogues into one {id: Shot}. Shot ids carry a per-file
+    slug, so episodes never collide."""
+    merged = {}
+    for p in paths:
+        merged.update(load_library(p))
+    return merged
 
 
 def save_library(path: str, shots: dict) -> None:
@@ -560,6 +579,34 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
                          real_grab(video_path), gemini_ask(), cues=cues,
                          known_characters=canon_names, canon=canon,
                          windows=windows, log=log)
+
+
+def run_folder(folder: str, known_characters: list | None = None,
+               max_minutes: float = 0.0, log=lambda *a: None) -> dict:
+    """Catalogue every episode under a folder — a whole series in one go.
+
+    Each episode gets its own `<episode>.catalog.json` beside it, so a night
+    that stops at episode 20 of 62 resumes at 20, and an episode already fully
+    catalogued is skipped in seconds. Returns {episode_path: shot_count}. One
+    bad episode is logged and stepped over, never fatal to the rest.
+    """
+    from . import naming
+    videos = list(naming.walk_media(folder))
+    if not videos:
+        raise RuntimeError(f"is folder me koi video nahi mila: {folder}")
+    log(f"  {len(videos)} episode(s) mile — ek-ek karke catalogue honge")
+    out = {}
+    for i, video in enumerate(videos, 1):
+        label = naming.parse(video).label
+        log(f"\n  [{i}/{len(videos)}] {label}")
+        try:
+            lib = run(video, known_characters=known_characters,
+                      max_minutes=max_minutes, log=log)
+            out[video] = sum(1 for s in lib.values() if s.description)
+        except Exception as exc:              # one bad episode never dies a night
+            log(f"      SKIP — {exc}")
+            out[video] = 0
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -32,10 +32,11 @@ echo   ================================================================
 echo     Movie / episode ko tag karke library banao
 echo   ================================================================
 echo.
-echo   Video file ka poora path daalo (drag-and-drop bhi kar sakte ho):
-set /p "VIDEO=  Video: "
+echo   Video file ka path daalo — YA poori series/season ka FOLDER
+echo   (folder doge to us folder ke saare episodes catalogue honge):
+set /p "VIDEO=  Video ya folder: "
 if not defined VIDEO (
-    echo   Koi video nahi diya.
+    echo   Koi video/folder nahi diya.
     pause
     exit /b 1
 )

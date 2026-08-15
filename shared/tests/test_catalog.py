@@ -242,6 +242,33 @@ class TestRealGrab(unittest.TestCase):
         self.assertEqual(seen, [15.0])          # window midpoint
 
 
+class TestMergingLibraries(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="merge_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_folder_of_episode_catalogues_loads_as_one_library(self):
+        for ep in ("s03e01", "s03e02"):
+            d = os.path.join(self.tmp, ep)
+            os.makedirs(d)
+            catalog.save_library(os.path.join(d, "x.catalog.json"), {
+                f"{ep}__00000": catalog.Shot(f"{ep}__00000", ep, "/v.mp4",
+                                             0, 5, description="d")})
+        merged = catalog.load_library(self.tmp)         # a folder, not a file
+        self.assertEqual(len(merged), 2)
+        self.assertIn("s03e01__00000", merged)
+        self.assertIn("s03e02__00000", merged)
+
+    def test_episode_ids_never_collide_across_the_series(self):
+        # same shot index in two episodes -> two distinct ids via the slug
+        a = catalog._slug("Breaking Bad Season 3 Episode 1.mp4") + "__00000"
+        b = catalog._slug("Breaking Bad Season 3 Episode 2.mp4") + "__00000"
+        self.assertNotEqual(a, b)
+
+
 class TestSearch(unittest.TestCase):
 
     def _lib(self):
