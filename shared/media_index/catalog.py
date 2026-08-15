@@ -377,20 +377,26 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
     library = load_library(out_json) if resume else {}
     slug = _slug(file or source)
     canon = canon or {}
-    # Apply the name map to shots already catalogued on an earlier run too.
-    # Supplying a characters.txt on a resume should fix "Joaquin Phoenix" ->
-    # "Arthur" everywhere immediately, without paying to re-describe a single
-    # frame — the descriptions were already good, only the labels drift.
-    if canon:
-        changed = False
-        for shot in library.values():
-            if shot.characters:
-                fixed = canonicalize(shot.characters, canon)
-                if fixed != shot.characters:
-                    shot.characters = fixed
-                    changed = True
-        if changed:
-            save_library(out_json, library)
+    # Backfill cheap fields on shots already catalogued by an earlier run,
+    # without re-describing a single frame. Two things drift onto old shots:
+    # a name map supplied later (Joaquin Phoenix -> Arthur), and dialogue that
+    # was missing because the subtitle had not been found on the first pass.
+    # Both are pure functions of data we already have, so a resume fixes them
+    # for free instead of leaving the first run's gaps frozen in the JSON.
+    changed = False
+    for shot in library.values():
+        if canon and shot.characters:
+            fixed = canonicalize(shot.characters, canon)
+            if fixed != shot.characters:
+                shot.characters = fixed
+                changed = True
+        if cues and not shot.dialogue:
+            line = dialogue_for(cues, shot.start, shot.end)
+            if line:
+                shot.dialogue = line
+                changed = True
+    if changed:
+        save_library(out_json, library)
     windows = windows if windows is not None else plan_shots(duration, file)
     total = len(windows)
     done = 0

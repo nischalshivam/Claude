@@ -172,6 +172,21 @@ class TestBuildCatalog(unittest.TestCase):
         self.assertEqual(catalog.load_library(self.out)["j__00000"].characters,
                          ["Arthur"])
 
+    def test_dialogue_backfills_onto_old_shots_when_the_srt_arrives_later(self):
+        """The first pass ran before the subtitle was found, so old shots have
+        no dialogue. A resume with cues must fill it in — without re-tagging."""
+        pre = {"j__00000": catalog.Shot("j__00000", "J", "/j.mp4", 0.0, 5.0,
+                                        description="a man", dialogue="")}
+        catalog.save_library(self.out, pre)
+        cues = [Cue(1000, 4000, "Is it just me?")]
+        asked = []
+        catalog.build_catalog("J", "/j.mp4", 5, self.out,
+                              lambda a, b: [b"x"], self._fake_ask(asked),
+                              cues=cues, windows=[])
+        self.assertEqual(asked, [])
+        self.assertIn("Is it just me?",
+                      catalog.load_library(self.out)["j__00000"].dialogue)
+
     def test_dialogue_is_attached_from_cues(self):
         cues = [Cue(1000, 4000, "Is it just me?")]
         lib = catalog.build_catalog(
