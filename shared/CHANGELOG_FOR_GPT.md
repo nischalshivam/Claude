@@ -11,6 +11,37 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-02 — Catalog validated on real footage; character names canonicalized
+
+First real run: Joker (2019), first 15 min, 182 scene-cut shots, 175 described
+by Gemini 2.5 Flash. **Descriptions are genuinely strong** — the opening
+dressing-room scene came back as "man in clown makeup applying white makeup at
+a lit vanity", "forces his mouth into a wide painful smile with his fingers
+while a tear runs down his face", shot_type correct (close-up/medium/wide),
+and `safe=false` correctly caught a Warner Bros title-card overlay. The
+approach is validated: language-vs-language beats embeddings on these shots.
+
+Two rough edges fixed:
+1. **Character labels were inconsistent** — the same man came back as "Joaquin
+   Phoenix" (actor), "Joker" (persona), and "Arthur Fleck" (name) across three
+   shots, which would fragment search. New `alias_map` + `canonicalize`
+   collapse them to one canonical name from a `--characters` list (file or
+   inline `Arthur = Arthur Fleck, Joker, Joaquin Phoenix; Murray = ...`), and
+   that list also nudges the model to name only known people, else "unknown".
+2. **Subtitle diagnostic** — dialogue came back empty (subtitle not matched at
+   catalog time). `run` now lists the .srt files actually beside the video, so
+   a present-but-unmatched subtitle is visible instead of a silent "none".
+
+Also fixed a shipped bug: `real_grab` used `tempfile` without importing it, so
+every frame grab failed on the first real run (0/182 described); the injected-
+fake tests never touched `real_grab`. Two new tests now run the real body.
+
+Still open: dialogue signal (subtitle matching at catalog time) and the
+character *verification* pass against reference photos — both feed Stage 2
+(wiring the catalogue into retrieval + build).
+
+---
+
 ## 2026-08-02 — Catalog layer: the whole title becomes a searchable tagged library
 
 **The strategic pivot.** After two over-engineered attempts (this tool's
