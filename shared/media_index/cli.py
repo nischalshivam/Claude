@@ -416,13 +416,33 @@ def cmd_gemini(a):
     ok, detail = gemini.ping(cfg, with_image=False)
     if not ok:
         print(f"       ✗  {detail}")
-        print("\n  Key ya endpoint kaam nahi kar raha. Upar likha error hi "
-              "asli wajah hai.")
-        print("  yunwu ke liye base aksar in me se ek hota hai — ek-ek karke "
-              "try karo:")
-        print("      https://yunwu.ai/v1")
-        print("      https://api.apiplus.org/v1")
-        print("      https://api3.wlai.vip/v1")
+        low = detail.lower()
+        # A 401 / "invalid token" means the endpoint answered and REJECTED the
+        # key — the base is fine, so telling the user to try other bases (the
+        # old advice) sends them the wrong way. An auth failure is a key
+        # problem: re-copy it, check it has balance, check it covers this model.
+        auth = ("401" in detail or "invalid" in low or "token" in low
+                or "令牌" in detail or "无效" in detail or "unauthor" in low)
+        if auth:
+            print("\n  Endpoint to chal raha hai — usne jawab diya. Problem KEY "
+                  "ki hai, base ki nahi (isliye base mat badlo).")
+            print("  '令牌/invalid token' = key reject hui. Ye check karo:")
+            print("   1. Key poori aur sahi copy hui? (aage-peeche space/enter "
+                  "na ho, poori key ho)")
+            print("   2. Us account/key me balance/credit hai? (khaali key 401 "
+                  "deti hai — provider ke dashboard me top-up/activate karo)")
+            print("   3. Ye key 'gemini-2.5-flash' (chat+vision) ke liye allowed "
+                  "hai? (sirf image wali key chat pe kaam nahi karegi)")
+            print("   4. Provider ke docs me jo EXACT base likha hai wahi daalo.")
+            print("\n  Ya koi aur Gemini-capable base use karo:")
+            print("   Google official: https://generativelanguage.googleapis.com/v1beta/openai")
+            print("                    (key AIza... , model gemini-2.5-flash)")
+            print("   yunwu:           https://yunwu.ai/v1")
+        else:
+            print("\n  Endpoint tak baat nahi pahunchi — base URL galat lag raha "
+                  "hai. Ye try karo:")
+            print("      https://yunwu.ai/v1")
+            print("      https://generativelanguage.googleapis.com/v1beta/openai")
         return 1
     print(f"       ✓  jawab: {detail}")
 
