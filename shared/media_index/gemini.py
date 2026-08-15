@@ -101,14 +101,32 @@ class Config:
 
 
 def config() -> Config:
-    """Environment first, then settings.txt. Secrets never come from code."""
+    """settings.txt first, then environment. Secrets never come from code.
+
+    The file is the surface the user edits and reasonably expects to win. An
+    environment variable is the classic silent trap: a stale, short-lived
+    token (a Google `AQ.` key that dies in an hour) left in the shell from an
+    earlier attempt, which then overrides a perfectly good key in the file and
+    fails every request with "invalid token" — a real user lost a long time to
+    exactly this. So the file wins wherever it defines a value, and the
+    environment is only a fallback for whatever the file leaves blank.
+    """
     s = _from_settings()
     return Config(
-        key=os.environ.get("GEMINI_API_KEY") or s.get("gemini_key", ""),
-        base=os.environ.get("GEMINI_BASE_URL") or s.get("gemini_base", ""),
-        model=os.environ.get("GEMINI_MODEL") or s.get("gemini_model")
+        key=s.get("gemini_key") or os.environ.get("GEMINI_API_KEY", ""),
+        base=s.get("gemini_base") or os.environ.get("GEMINI_BASE_URL", ""),
+        model=s.get("gemini_model") or os.environ.get("GEMINI_MODEL")
         or DEFAULT_MODEL,
     )
+
+
+def key_source() -> str:
+    """Where the active key comes from: 'settings.txt' | 'environment' | ''."""
+    if _from_settings().get("gemini_key"):
+        return "settings.txt"
+    if os.environ.get("GEMINI_API_KEY"):
+        return "environment"
+    return ""
 
 
 def available() -> tuple:

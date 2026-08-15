@@ -43,6 +43,30 @@ class TestConfigNeverComesFromCode(unittest.TestCase):
         self.assertTrue(cfg.ok)
         self.assertEqual(cfg.endpoint, "https://x/v1/chat/completions")
 
+    def test_settings_file_beats_a_stale_environment_key(self):
+        """The whole bug: a stale short-lived env token must not override a
+        good key the user put in settings.txt. The file wins."""
+        os.environ["GEMINI_API_KEY"] = "AQ.stale-google-token"
+        orig = gemini._from_settings
+        gemini._from_settings = lambda: {"gemini_key": "sk-from-file",
+                                         "gemini_base": "https://f/v1"}
+        try:
+            cfg = gemini.config()
+            self.assertEqual(cfg.key, "sk-from-file")
+            self.assertEqual(gemini.key_source(), "settings.txt")
+        finally:
+            gemini._from_settings = orig
+
+    def test_environment_is_the_fallback_when_the_file_is_silent(self):
+        os.environ["GEMINI_API_KEY"] = "sk-env-fallback"
+        orig = gemini._from_settings
+        gemini._from_settings = lambda: {}
+        try:
+            self.assertEqual(gemini.config().key, "sk-env-fallback")
+            self.assertEqual(gemini.key_source(), "environment")
+        finally:
+            gemini._from_settings = orig
+
     def test_no_key_is_not_ok_and_says_why(self):
         ok, why = gemini.available()
         self.assertFalse(ok)
