@@ -139,6 +139,53 @@ class TestBuildCatalog(unittest.TestCase):
         self.assertIn("Is it just me?", next(iter(lib.values())).dialogue)
 
 
+class TestRealGrab(unittest.TestCase):
+    """real_grab was never exercised by the injected-fake tests, so a missing
+    `import tempfile` shipped and failed every shot on a real run. These
+    monkeypatch ffmpeg away but run the actual real_grab body."""
+
+    def setUp(self):
+        from media_index import frames as frames_mod
+        from media_index import cutter
+        self._scan, self._pick = frames_mod.scan, frames_mod.pick
+        self._extract = cutter.extract_frame
+        self.frames_mod, self.cutter = frames_mod, cutter
+
+    def tearDown(self):
+        self.frames_mod.scan, self.frames_mod.pick = self._scan, self._pick
+        self.cutter.extract_frame = self._extract
+
+    def test_real_grab_writes_and_reads_jpeg_bytes(self):
+        class C:
+            def __init__(self, t):
+                self.time = t
+        self.frames_mod.scan = lambda path, a, b: [C(a + 0.5), C(a + 1.5)]
+        self.frames_mod.pick = lambda cands, n: cands[:n]
+
+        def fake_extract(path, t, out, width=None):
+            with open(out, "wb") as f:
+                f.write(b"\xff\xd8jpegbytes")
+        self.cutter.extract_frame = fake_extract
+
+        grab = catalog.real_grab("/movie.mp4")
+        out = grab(10.0, 15.0)
+        self.assertTrue(out and all(b.startswith(b"\xff\xd8") for b in out))
+
+    def test_real_grab_falls_back_to_the_midpoint_when_scan_fails(self):
+        def boom(*a, **k):
+            raise RuntimeError("ffmpeg gone")
+        self.frames_mod.scan = boom
+        seen = []
+
+        def fake_extract(path, t, out, width=None):
+            seen.append(t)
+            with open(out, "wb") as f:
+                f.write(b"\xff\xd8x")
+        self.cutter.extract_frame = fake_extract
+        catalog.real_grab("/m.mp4")(10.0, 20.0)
+        self.assertEqual(seen, [15.0])          # window midpoint
+
+
 class TestSearch(unittest.TestCase):
 
     def _lib(self):

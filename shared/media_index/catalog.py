@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 
@@ -433,9 +434,19 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     duration = probe(video_path).duration
     if max_minutes and max_minutes * 60.0 < duration:
         duration = max_minutes * 60.0
-    _kind, _src, cues = subtitles.load_for_video(video_path)
+    kind, _src, cues = subtitles.load_for_video(video_path)
     source = naming.parse(video_path).label
     out_json = out_json or (os.path.splitext(video_path)[0] + ".catalog.json")
+
+    # Say out loud whether the dialogue signal is even present. A catalogue
+    # with zero subtitle lines still works off the descriptions, but the
+    # strongest label a shot can carry is what was said in it — so if this is
+    # 0 it is worth knowing now, not discovering it silently in the JSON.
+    if cues:
+        log(f"  subtitles: {len(cues)} lines ({kind}) — dialogue will be tagged")
+    else:
+        log(f"  subtitles: koi line nahi mili ({kind}) — sirf picture se tag "
+            "hoga. .srt folder me hai to library me subtitle theek karke aao.")
 
     cuts = detect_cuts(video_path)
     windows = (shots_from_cuts(cuts, duration) if cuts
