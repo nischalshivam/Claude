@@ -569,11 +569,32 @@ def cmd_plan(a):
     icon = {"dialogue": "🗣", "description": "🎬", "none": "▢"}
     for req, m in pairs:
         tag = icon.get(m.method, "?")
+        src = os.path.basename(m.shot.file) if m.placed else ""
         where = f"{m.shot.start:.0f}-{m.shot.end:.0f}s" if m.placed else "—"
         print(f"  b{req.beat:<3} {tag} {where:<12} {m.why}")
+        if m.placed:
+            print(f"        from : {m.shot.source}  ({src})")
         print(f"        script: {req.visual[:70]}")
     print("\n  " + stats.summary())
     print(f"  {len(library)} shots in the catalogue")
+
+    # A file to hand back — a long script's shot list does not fit a terminal,
+    # and the JSON is what a review or the next (assembly) step reads.
+    if a.out:
+        rows = [{
+            "beat": req.beat, "method": m.method, "why": m.why,
+            "script_visual": req.visual, "script_dialogue": req.dialogue,
+            "script_characters": req.characters,
+            "picked": None if not m.placed else {
+                "source": m.shot.source, "file": m.shot.file,
+                "start": m.shot.start, "end": m.shot.end,
+                "description": m.shot.description,
+                "characters": m.shot.characters, "dialogue": m.shot.dialogue},
+        } for req, m in pairs]
+        with open(a.out, "w", encoding="utf-8") as f:
+            json.dump({"summary": stats.summary(), "shots": rows}, f,
+                      ensure_ascii=False, indent=1)
+        print(f"  shot-list saved: {a.out}")
     return 0
 
 
@@ -1082,6 +1103,7 @@ def main(argv=None):
     pl.add_argument("script", help="visual/genspark script (beats + shots)")
     pl.add_argument("catalog", help="catalog.json, YA poori series ka folder "
                                     "(saari catalog.json merge ho jayengi)")
+    pl.add_argument("--out", default="", help="shot-list JSON kahan likhni hai")
     pl.set_defaults(func=cmd_plan)
 
     go = sub.add_parser("gold", parents=[common],
