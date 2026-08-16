@@ -516,11 +516,18 @@ def cmd_catalog(a):
         else:
             people = [p.strip() for p in raw_chars.split(";") if p.strip()]
 
+    cast_dir = (getattr(a, "cast", "") or "").strip()
+    if cast_dir and not os.path.isdir(cast_dir):
+        print(f"  --cast folder nahi mila: {cast_dir}")
+        print("  (har character ka subfolder + 5-8 photos: cast\\Victor\\1.jpg)")
+        return 1
+
     try:
         if is_folder:
             # A whole series/season: every episode into its own catalog.json.
             counts = catalog.run_folder(a.video, known_characters=people or None,
-                                        max_minutes=minutes, log=print)
+                                        max_minutes=minutes, cast_dir=cast_dir,
+                                        log=print)
             done = sum(1 for n in counts.values() if n)
             print(f"\n  {done}/{len(counts)} episode(s) catalogued — "
                   f"{sum(counts.values())} shots total")
@@ -528,7 +535,7 @@ def cmd_catalog(a):
             return 0
         lib = catalog.run(a.video, out_json=a.out or "",
                           known_characters=people or None,
-                          max_minutes=minutes, log=print)
+                          max_minutes=minutes, cast_dir=cast_dir, log=print)
     except RuntimeError as exc:
         print(f"  {exc}")
         print("  pehle chalao:  mi gemini   (key + endpoint check)")
@@ -1163,6 +1170,11 @@ def main(argv=None):
                     help="character naam consistent karne ke liye: file path "
                          "(ek line ek banda, aliases '=' ke baad) ya inline "
                          "'Arthur = Arthur Fleck, Joker; Murray = Murray Franklin'")
+    ct.add_argument("--cast", default="",
+                    help="cast folder: har character ka subfolder + 5-8 "
+                         "reference photos (cast\\Victor\\1.jpg). Isse model "
+                         "catalog banate waqt sahi character pehchanta hai — "
+                         "library ki foundation isi se bharosemand banti hai.")
     ct.set_defaults(func=cmd_catalog)
 
     pl = sub.add_parser("plan", parents=[common],

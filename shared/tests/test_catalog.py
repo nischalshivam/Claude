@@ -103,6 +103,70 @@ class TestCharacterCanon(unittest.TestCase):
         self.assertEqual(got, ["Arthur", "Randall"])
 
 
+class TestReferenceIdentity(unittest.TestCase):
+    """Reference photos at catalogue time are the foundation fix: without them
+    the model cannot name a minor character and every silent shot lands with
+    `characters: []`, so retrieval's character filter has nothing to surface."""
+
+    def _flatten(self, messages):
+        """All text across the user message, so a rule/image can be asserted."""
+        text = " ".join(m["content"] for m in messages
+                        if isinstance(m["content"], str))
+        for m in messages:
+            if isinstance(m["content"], list):
+                text += " " + " ".join(p.get("text", "") for p in m["content"]
+                                       if p.get("type") == "text")
+        return text
+
+    def _images(self, messages):
+        return [p for m in messages if isinstance(m["content"], list)
+                for p in m["content"] if p.get("type") == "image_url"]
+
+    def test_without_refs_the_prompt_still_refuses_to_guess(self):
+        msgs = catalog.tag_messages([b"\xff\xd8shot"])
+        text = self._flatten(msgs)
+        self.assertIn("Never guess", text)
+        # only the one shot frame, no reference images
+        self.assertEqual(len(self._images(msgs)), 1)
+
+    def test_refs_add_labelled_reference_images_before_the_shot(self):
+        refs = {"Victor": [b"\xff\xd8victorface"], "Hank": [b"\x89PNG\r\n\x1a\nhank"]}
+        msgs = catalog.tag_messages([b"\xff\xd8shot"], refs=refs)
+        text = self._flatten(msgs)
+        self.assertIn("Reference — Victor:", text)
+        self.assertIn("Reference — Hank:", text)
+        # match against references, not a blind guess
+        self.assertIn("SAME person", text)
+        # two reference images + one shot frame
+        self.assertEqual(len(self._images(msgs)), 3)
+
+    def test_refs_cap_photos_per_character(self):
+        refs = {"Victor": [b"\xff\xd8" + bytes([i]) for i in range(10)]}
+        msgs = catalog.tag_messages([b"\xff\xd8shot"], refs=refs)
+        # 3 reference photos max + 1 shot frame
+        self.assertEqual(len(self._images(msgs)), 4)
+
+    def test_build_catalog_threads_refs_into_every_shot_prompt(self):
+        seen = {}
+
+        def ask(messages):
+            seen["msgs"] = messages
+            return json.dumps({"description": "Victor at the cook",
+                               "characters": ["Victor"], "quality": "high"})
+        refs = {"Victor": [b"\xff\xd8face"]}
+        tmp = tempfile.mkdtemp(prefix="ref_")
+        try:
+            out = os.path.join(tmp, "c.json")
+            catalog.build_catalog("BB S04E01", "/e.mp4", 5.0, out,
+                                  lambda a, b: [b"\xff\xd8x"], ask,
+                                  windows=[(0.0, 5.0)], refs=refs)
+            imgs = [p for m in seen["msgs"] if isinstance(m["content"], list)
+                    for p in m["content"] if p.get("type") == "image_url"]
+            self.assertEqual(len(imgs), 2)   # 1 reference + 1 shot frame
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class TestBuildCatalog(unittest.TestCase):
 
     def setUp(self):

@@ -197,17 +197,45 @@ def dialogue_for(cues: list, start: float, end: float) -> str:
 # ---------------------------------------------------------------------------
 
 def tag_messages(frames: list, known_characters: list | None = None,
-                 dialogue: str = "") -> list:
+                 dialogue: str = "", refs: dict | None = None) -> list:
     """Messages asking the model to DESCRIBE a shot from its frames.
 
     Framed as description, never location: the model is shown real frames and
-    asked what is in them. A hint list of known character names nudges it to
-    use the right spelling, but it is told to say `unknown` rather than guess —
-    an invented name is worse than an honest blank, because the whole point of
-    the later verification pass is that names are claims, not truth.
+    asked what is in them.
+
+    ## Why references belong HERE, at catalogue time
+
+    Without reference photos the model has no way to know a minor character —
+    it can name Walter White from memory but not Victor, so every silent shot
+    of Victor lands with `characters: []`. Retrieval then filters by character
+    and those blank shots earn no bonus, so the right footage never surfaces
+    and no amount of later verification can rescue a candidate pool it was
+    never in. That is the whole "the character's clip never comes up" failure.
+
+    `refs` is {name: [photo_bytes, ...]}. Shown FIRST, labelled by name, they
+    turn "who is this?" (a guess the model is told to refuse) into "which of
+    these known people is this, if any?" (a comparison it can actually make).
+    The catalogue's character labels become reliable at the source, which is
+    the one place that fixes retrieval for every future video. A visible person
+    who matches no reference is still `unknown` — the honest-blank rule holds,
+    it just no longer swallows the main cast.
     """
-    from .gemini import _data_uri
+    from .gemini import _data_uri, _img_uri
+    refs = refs or {}
     known = ", ".join(known_characters) if known_characters else ""
+    if refs:
+        char_rule = (
+            "- characters: reference photos of the main cast are shown first, "
+            "labelled by name. For each person visible in the shot, if they are "
+            "clearly the SAME person as one of the references, use that "
+            "reference's exact name. A visible person who matches no reference, "
+            "or whom you cannot identify with confidence, is \"unknown\". Never "
+            "guess a name and never force a reference onto a different person.")
+    else:
+        char_rule = (
+            "- characters: only people you can actually see and recognise. If "
+            "you are not sure who someone is, use \"unknown\". Never guess a "
+            "name.")
     rules = (
         "You label footage for a searchable clip library. You are shown a few "
         "frames sampled from ONE short shot, in order. Describe only what is "
@@ -221,23 +249,33 @@ def tag_messages(frames: list, known_characters: list | None = None,
         '"quality": "<high|mid|low>", '
         '"safe": <true|false>}\n\n'
         "Rules:\n"
-        "- characters: only people you can actually see and recognise. If you "
-        "are not sure who someone is, use \"unknown\". Never guess a name.\n"
+        f"{char_rule}\n"
         "- safe=false if the shot has burned-in subtitles, captions, or large "
         "on-screen text/graphics; otherwise true.\n"
         "- quality: low if blurry, dark to the point of unreadable, or a "
         "transition/black frame.\n"
         "- tags: 4-8 concrete keywords (mood, setting, objects, action)."
     )
+    content = []
+    # Reference photos first, so the model has the faces in hand before it sees
+    # the shot it must name them in.
+    for name, imgs in refs.items():
+        for photo in imgs[:3]:
+            content.append({"type": "text", "text": f"Reference — {name}:"})
+            content.append({"type": "image_url",
+                            "image_url": {"url": _img_uri(photo)}})
     ask = "Describe this shot."
-    if known:
+    if refs:
+        ask += ("\nName any visible person ONLY by matching the reference "
+                "photos above; anyone unmatched is \"unknown\".")
+    elif known:
         ask += f"\nKnown characters in this title (use these spellings if you " \
                f"see them): {known}"
     if dialogue:
         ask += f'\nLine spoken during this shot (context only): "{dialogue}"'
-    content = [{"type": "text", "text": ask}]
+    content.append({"type": "text", "text": ask})
     for i, jpeg in enumerate(frames, 1):
-        content.append({"type": "text", "text": f"Frame {i}:"})
+        content.append({"type": "text", "text": f"Shot frame {i}:"})
         content.append({"type": "image_url",
                         "image_url": {"url": _data_uri(jpeg)}})
     return [{"role": "system", "content": rules},
@@ -401,7 +439,7 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
                   known_characters: list | None = None,
                   canon: dict | None = None,
                   windows: list | None = None, log=lambda *a: None,
-                  resume: bool = True) -> dict:
+                  resume: bool = True, refs: dict | None = None) -> dict:
     """Catalogue one video into `out_json`. Returns {id: Shot}.
 
     `grab(start, end) -> [jpeg_bytes, ...]` samples representative frames of a
@@ -410,6 +448,9 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
     so a run interrupted at shot 900 of 1500 resumes there — no frame is
     described twice, and nothing is lost to a crash. `canon` collapses the
     model's varied character labels (actor/persona/name) to one name each.
+    `refs` ({name: [photo_bytes]}) are shown to the model with every shot so it
+    identifies the cast against real faces instead of guessing — the single
+    fix that makes the catalogue's character labels trustworthy.
     """
     library = load_library(out_json) if resume else {}
     slug = _slug(file or source)
@@ -452,7 +493,7 @@ def build_catalog(source: str, file: str, duration: float, out_json: str,
         if frames:
             try:
                 tags = parse_tags(ask(tag_messages(
-                    frames, known_characters, line)))
+                    frames, known_characters, line, refs=refs)))
             except Exception as exc:
                 log(f"      shot {i} tag failed: {exc}")
                 tags = {}
@@ -519,12 +560,16 @@ def gemini_ask(cfg=None):
 
 
 def run(video_path: str, out_json: str = "", known_characters: list | None = None,
-        max_minutes: float = 0.0, log=lambda *a: None) -> dict:
+        max_minutes: float = 0.0, cast_dir: str = "",
+        refs: dict | None = None, log=lambda *a: None) -> dict:
     """Catalogue one local video end to end. The function the CLI/UI calls.
 
     `max_minutes` caps how far in it goes — set it to 20 for a cheap quality
     check before paying to tag a whole two-hour film. `out_json` defaults to
-    `<video>.catalog.json` beside the file.
+    `<video>.catalog.json` beside the file. `cast_dir` is a folder of
+    `Name/photo.jpg` reference photos; passing it makes the model identify the
+    cast against real faces at catalogue time, so the character labels it
+    writes are reliable enough for retrieval to filter on.
     """
     from .probe import probe
     from . import subtitles, naming, gemini
@@ -532,6 +577,13 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     ok, why = gemini.available()
     if not ok:
         raise RuntimeError(f"Gemini set nahi hai: {why}")
+
+    # Reference faces: load once here (or accept pre-loaded refs from a folder
+    # run, so a 62-episode series reads the cast photos a single time).
+    if refs is None and cast_dir:
+        from . import assemble
+        refs = assemble.load_refs(cast_dir)
+    refs = refs or None
 
     duration = probe(video_path).duration
     if max_minutes and max_minutes * 60.0 < duration:
@@ -571,6 +623,12 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     canon_names = sorted({v for v in canon.values()}) or (known_characters or [])
     if canon_names:
         log(f"  characters: {', '.join(canon_names)} (baaki ko 'unknown' rakhega)")
+    if refs:
+        log(f"  reference faces: {len(refs)} character(s) — "
+            f"{', '.join(sorted(refs)[:12])} (in faces se pehchan hogi)")
+    else:
+        log("  reference faces: koi nahi — model bina photo ke characters "
+            "guess karega (kam bharosemand). --cast folder do to accuracy badhegi.")
 
     cuts = detect_cuts(video_path)
     windows = (shots_from_cuts(cuts, duration) if cuts
@@ -580,22 +638,30 @@ def run(video_path: str, out_json: str = "", known_characters: list | None = Non
     return build_catalog(source, video_path, duration, out_json,
                          real_grab(video_path), gemini_ask(), cues=cues,
                          known_characters=canon_names, canon=canon,
-                         windows=windows, log=log)
+                         windows=windows, log=log, refs=refs)
 
 
 def run_folder(folder: str, known_characters: list | None = None,
-               max_minutes: float = 0.0, log=lambda *a: None) -> dict:
+               max_minutes: float = 0.0, cast_dir: str = "",
+               log=lambda *a: None) -> dict:
     """Catalogue every episode under a folder — a whole series in one go.
 
     Each episode gets its own `<episode>.catalog.json` beside it, so a night
     that stops at episode 20 of 62 resumes at 20, and an episode already fully
     catalogued is skipped in seconds. Returns {episode_path: shot_count}. One
-    bad episode is logged and stepped over, never fatal to the rest.
+    bad episode is logged and stepped over, never fatal to the rest. `cast_dir`
+    (reference face folder) is read once and reused for every episode.
     """
     from . import naming
     videos = list(naming.walk_media(folder))
     if not videos:
         raise RuntimeError(f"is folder me koi video nahi mila: {folder}")
+    refs = None
+    if cast_dir:
+        from . import assemble
+        refs = assemble.load_refs(cast_dir) or None
+        log(f"  reference faces: {len(refs or {})} character(s) loaded — "
+            "poori series me inhi se pehchan hogi")
     log(f"  {len(videos)} episode(s) mile — ek-ek karke catalogue honge")
     out = {}
     for i, video in enumerate(videos, 1):
@@ -603,7 +669,7 @@ def run_folder(folder: str, known_characters: list | None = None,
         log(f"\n  [{i}/{len(videos)}] {label}")
         try:
             lib = run(video, known_characters=known_characters,
-                      max_minutes=max_minutes, log=log)
+                      max_minutes=max_minutes, refs=refs, log=log)
             out[video] = sum(1 for s in lib.values() if s.description)
         except Exception as exc:              # one bad episode never dies a night
             log(f"      SKIP — {exc}")

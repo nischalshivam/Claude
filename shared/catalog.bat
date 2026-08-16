@@ -63,9 +63,18 @@ echo   File ka path daalo, ya skip karne ke liye Enter dabao:
 set /p "CHARS=  characters.txt (optional): "
 set CHARS=%CHARS:"=%
 
+echo.
+echo   (SABSE ZAROORI) Cast folder — har character ka subfolder + 5-8 reference
+echo   photos (jaise cast\Victor\1.jpg, cast\Hank\1.jpg). Isse model catalog
+echo   BANATE WAQT hi sahi character pehchanta hai (Victor ko Hank se alag).
+echo   Yehi library ki foundation accurate banata hai. Skip = Enter:
+set /p "CASTDIR=  Cast folder: "
+set CASTDIR=%CASTDIR:"=%
+
 set "ARGS=catalog "%VIDEO%""
 if defined MINS if not "!MINS!"=="" set "ARGS=!ARGS! --minutes "!MINS!""
 if defined CHARS if not "!CHARS!"=="" set "ARGS=!ARGS! --characters "!CHARS!""
+if defined CASTDIR if not "!CASTDIR!"=="" set "ARGS=!ARGS! --cast "!CASTDIR!""
 
 echo.
 echo   Chalu ho raha hai... (pehle 'mi gemini' se key check kar lena agar error aaye)
