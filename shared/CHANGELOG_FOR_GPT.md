@@ -11,6 +11,39 @@ and the gold evaluator is the first thing built to close it.
 
 ---
 
+## 2026-08-03 — BREAKTHROUGH: the multi-episode "greatest hits" case works
+
+The case that failed for weeks — a Hank/Gus-type essay whose shots are
+scattered across many episodes of a series — now resolves correctly. Setup:
+Breaking Bad Seasons 3+4 fully catalogued (**15,216 shots**), and the real
+"Gus Fring's Wordless Kill" genspark script (36 beats, 75 shots spanning
+S03E13, S04E01, S04E08, S04E11, S04E13) run through `mi plan` against the whole
+`E:\Movies\Breaking Bad` folder.
+
+Result: **75/75 shots placed, 37 by exact dialogue anchor**, and every shot in
+the CORRECT episode (S04E01×31, S03E13×8, S04E08×13, S04E11×2, S04E13×21).
+Spot-checked anchors land on the right second: "How's it coming?" on the cold
+open (00:41), "Well? Get back to work." at the box-cutter scene's end (37:06),
+"Look at him. You did this to him." in the S04E08 pool flashback, Gus's
+tie-straighten at his S04E13 death. This is the whole thesis proven on real
+data: episode + scene_range + exact_dialogue hints from the genspark script,
+matched against a language-described catalogue, place footage accurately
+across a series.
+
+What made it work, in order of leverage: (1) per-shot **episode scoping** from
+`season_episode` (stops a line matching the same words three episodes away);
+(2) **dialogue anchoring** on `exact_dialogue` against the shots' own subtitle
+text (37/75 pinned to an exact second); (3) **scene_range windowing**, now
+carried across a whole run so description-only shots don't drift within their
+episode (was ~11 drifting, now pinned).
+
+Honest remaining: accuracy is eyeballed on anchors + episode distribution, not
+yet a frozen gold pass; description-only shots inside a correct scene window
+are "right scene", not verified "right frame"; and this is a shot-LIST, not
+yet a cut video (Stage 3).
+
+---
+
 ## 2026-08-02 — Stage 2: script → catalogue retrieval (plan.py), working on real data
 
 With the Joker 15-min catalogue complete (descriptions + canonical characters
