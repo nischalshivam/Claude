@@ -56,6 +56,39 @@ class TestMatch(unittest.TestCase):
         self.assertFalse(m.placed)
 
 
+class TestScoping(unittest.TestCase):
+
+    def _series(self):
+        return {
+            "e1_a": catalog.Shot("e1_a", "Breaking Bad S04E01", "/1.mp4",
+                                 2450, 2455, description="Gus picks up a box cutter",
+                                 characters=["Gus Fring"], quality="high"),
+            "e1_b": catalog.Shot("e1_b", "Breaking Bad S04E01", "/1.mp4",
+                                 300, 305, description="Gale talks in the lab early on",
+                                 characters=["Gale Boetticher"], quality="high"),
+            "e11": catalog.Shot("e11", "Breaking Bad S04E11", "/11.mp4",
+                                340, 345, description="a box cutter on a table",
+                                characters=[], quality="high"),
+        }
+
+    def test_scope_confines_to_one_episode(self):
+        req = plan.Request(visual="box cutter")
+        m = plan.match(req, self._series(), scope="S04E01")
+        self.assertIn("S04E01", m.shot.source)
+
+    def test_scene_range_confines_within_the_episode(self):
+        # box-cutter scene is ~40 min in; the range must beat the early lab shot
+        req = plan.Request(visual="box cutter", source="S04E01",
+                           scene_range="40:00-45:00")
+        m = plan.match(req, self._series())
+        self.assertEqual(m.shot.id, "e1_a")
+
+    def test_range_parsing(self):
+        self.assertEqual(plan._range_seconds("40:00-45:00"), (2400.0, 2700.0))
+        self.assertEqual(plan._range_seconds("02:00-05:00"), (120.0, 300.0))
+        self.assertEqual(plan._range_seconds("nope"), ())
+
+
 class TestPlanWholeScript(unittest.TestCase):
 
     def test_beats_become_requests_and_a_plan_with_stats(self):

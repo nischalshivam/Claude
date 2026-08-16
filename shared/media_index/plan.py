@@ -46,6 +46,8 @@ class Request:
     visual: str = ""
     characters: list = field(default_factory=list)
     dialogue: str = ""            # a line the script says is spoken here
+    source: str = ""              # which title/episode the shot belongs to
+    scene_range: str = ""         # e.g. "40:00-45:00" — confines within source
 
     @property
     def character(self) -> str:
@@ -87,21 +89,84 @@ def dialogue_anchor(library: dict, line: str, limit: int = 5) -> list:
     return sorted(hits, key=lambda s: s.start)[:limit]
 
 
-def match(request: Request, library: dict) -> Match:
-    """The best catalogued shot for one request, precision first."""
+def _norm_ep(s: str) -> str:
+    """A comparable episode key from either spelling: 'S04E01', 'Season 4
+    Episode 1', 'Breaking Bad S04E01' all reduce to 's4e1'."""
+    from . import subtitles
+    key = subtitles.episode_key(s or "")
+    return f"s{key[0]}e{key[1]}" if key else ""
+
+
+def scoped(library: dict, source: str) -> dict:
+    """Only the shots from the named episode/title. A single-scene essay must
+    draw from ONE episode, and searching the whole series is exactly what
+    scatters its shots across the wrong ones."""
+    if not source:
+        return library
+    want = _norm_ep(source)
+    if want:                                  # an episode marker: match by it
+        return {k: s for k, s in library.items() if _norm_ep(s.source) == want}
+    low = source.lower()                      # a title/name: substring match
+    return {k: s for k, s in library.items() if low in s.source.lower()} or library
+
+
+def _range_seconds(text: str) -> tuple:
+    """('40:00-45:00' | '2400-2700') -> (2400.0, 2700.0), or () if unreadable."""
+    m = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?|\d+)\s*[-–]\s*"
+                  r"(\d{1,2}:\d{2}(?::\d{2})?|\d+)", text or "")
+    if not m:
+        return ()
+
+    def to_s(v):
+        if ":" in v:
+            parts = [int(p) for p in v.split(":")]
+            return sum(p * 60 ** i for i, p in enumerate(reversed(parts)))
+        return float(v)
+    lo, hi = to_s(m.group(1)), to_s(m.group(2))
+    return (lo, hi) if hi > lo else ()
+
+
+def windowed(pool: dict, scene_range: str, pad: float = 30.0) -> dict:
+    """Only shots overlapping the scene's time window (with a little padding).
+    This is what pins a single scene inside an episode — the box-cutter scene
+    is one five-minute stretch of a forty-seven-minute file."""
+    span = _range_seconds(scene_range)
+    if not span:
+        return pool
+    lo, hi = span[0] - pad, span[1] + pad
+    inside = {k: s for k, s in pool.items() if s.end > lo and s.start < hi}
+    return inside or pool                     # never strand a whole beat
+
+
+def match(request: Request, library: dict, scope: str = "") -> Match:
+    """The best catalogued shot for one request, precision first.
+
+    `scope` (or the request's own `source`) confines the search to one
+    episode/title before ranking — the single biggest accuracy lever on a
+    series, because it stops a box-cutter line from matching the word
+    "box cutter" three episodes away.
+    """
+    pool = scoped(library, scope or request.source)
+    if not pool:                              # scope named nothing we have
+        pool = library
+    if request.scene_range:                   # confine to the scene's window
+        pool = windowed(pool, request.scene_range)
+
     if request.dialogue:
-        anchored = dialogue_anchor(library, request.dialogue)
+        anchored = dialogue_anchor(pool, request.dialogue)
         if anchored:
             top = anchored[0]
             return Match(shot=top, method="dialogue",
                          why=f'line at {top.start:.0f}s: "{request.dialogue[:48]}"')
 
-    hits = catalog.search(library, f"{request.visual} {request.dialogue}",
+    hits = catalog.search(pool, f"{request.visual} {request.dialogue}",
                           character=request.character)
     if hits:
+        where = hits[0].source
         return Match(shot=hits[0], method="description",
                      why=(f"visual+character match"
-                          + (f" ({request.character})" if request.character else "")))
+                          + (f" ({request.character})" if request.character else "")
+                          + (f" in {where}" if scope or request.source else "")))
 
     return Match(method="none", why="koi match nahi — NEEDS VISUAL card")
 
@@ -118,7 +183,10 @@ def requests_from_beats(beats: list) -> list:
                 characters=catalog.list_entries(
                     shot.get("characters") or shot.get("people")),
                 dialogue=str(shot.get("exact_dialogue")
-                             or shot.get("dialogue") or "").strip()))
+                             or shot.get("dialogue") or "").strip(),
+                source=str(shot.get("season_episode")
+                           or shot.get("source") or "").strip(),
+                scene_range=str(shot.get("scene_range") or "").strip()))
     return out
 
 
@@ -141,11 +209,52 @@ class PlanStats:
                 f"({self.coverage * 100:.0f}%) — {parts}")
 
 
-def plan(beats: list, library: dict) -> tuple:
-    """(list of (Request, Match), PlanStats) for a whole script."""
+def known_names(library: dict) -> list:
+    """Every character name the catalogue knows, longest first so 'Walter
+    White' is tried before 'Walt' when scanning a sentence."""
+    names = {c for shot in library.values() for c in shot.characters}
+    return sorted(names, key=lambda n: -len(n))
+
+
+def requests_from_text(text: str, names: list | None = None) -> list:
+    """Turn a plain narration script into shot-requests, one per sentence.
+
+    A clean narration is prose about meaning, but a good essay's narration is
+    also highly visual — "He steps into a red hazmat suit", "he picks up a box
+    cutter" — so each sentence is a fair query for the footage that should sit
+    under it. Any catalogue character named in the sentence becomes its
+    character filter, which is what turns "he kills Victor" into a search that
+    actually prefers Victor's shots.
+    """
+    names = names or []
+    sentences = re.split(r"(?<=[.!?])\s+", (text or "").replace("\n", " "))
+    out = []
+    for i, s in enumerate(sentences, 1):
+        s = s.strip()
+        if len(s) < 12:                       # skip stubs and headers
+            continue
+        low = s.lower()
+        found = [n for n in names if n.lower() in low
+                 or n.split()[0].lower() in low.split()]
+        out.append(Request(beat=i, visual=s, characters=found[:3]))
+    return out
+
+
+def plan(source, library: dict, scope: str = "") -> tuple:
+    """(list of (Request, Match), PlanStats) for a whole script.
+
+    `source` may be parsed genspark beats (a list of beat dicts) or a plain
+    narration string — the retrieval is the same either way. `scope` confines
+    the WHOLE script to one episode/title, which is what a single-scene essay
+    (e.g. the box-cutter scene, all of it in S04E01) needs.
+    """
+    if isinstance(source, str):
+        reqs = requests_from_text(source, known_names(library))
+    else:
+        reqs = requests_from_beats(source)
     pairs, stats = [], PlanStats()
-    for req in requests_from_beats(beats):
-        m = match(req, library)
+    for req in reqs:
+        m = match(req, library, scope=scope)
         pairs.append((req, m))
         stats.total += 1
         stats.by_method[m.method] = stats.by_method.get(m.method, 0) + 1

@@ -556,16 +556,33 @@ def cmd_plan(a):
     if not os.path.isfile(a.script):
         print(f"  script nahi mila: {a.script}")
         return 1
-    if not os.path.isfile(a.catalog):
-        print(f"  catalog.json nahi mila: {a.catalog}")
-        print("  pehle chalao:  mi catalog <video>   (library banane ke liye)")
+    # A catalogue is a single catalog.json OR a whole-series folder.
+    if not (os.path.isfile(a.catalog) or os.path.isdir(a.catalog)):
+        print(f"  catalogue nahi mila: {a.catalog}")
+        print("  ek catalog.json do, ya poori series ka folder "
+              "(jaise E:\\Movies\\Breaking Bad)")
         return 1
-    beats = jobs.read_beats(a.script)
     library = catalog.load_library(a.catalog)
     if not library:
-        print("  catalog khaali hai — pehle movie ko catalog karo")
+        print(f"  is jagah koi catalog.json nahi mili: {a.catalog}")
+        print("  pehle chalao:  catalog.bat   (library banane ke liye)")
         return 1
-    pairs, stats = plan.plan(beats, library)
+
+    # A visual (genspark) script parses as JSON beats; a clean narration is
+    # plain prose. Try the rich one first, fall back to sentence-per-line text
+    # so a narration script works too.
+    try:
+        source = jobs.read_beats(a.script)
+        kind = "visual script"
+    except Exception:
+        with open(a.script, "r", encoding="utf-8-sig") as f:
+            source = f.read()
+        kind = "narration (prose)"
+    scope = (a.scope or "").strip()
+    if scope:
+        print(f"  scope: sirf {scope} ke shots use honge")
+    print(f"  script: {kind}  ·  catalogue: {len(library)} shots")
+    pairs, stats = plan.plan(source, library, scope=scope)
     icon = {"dialogue": "🗣", "description": "🎬", "none": "▢"}
     for req, m in pairs:
         tag = icon.get(m.method, "?")
@@ -1104,6 +1121,9 @@ def main(argv=None):
     pl.add_argument("catalog", help="catalog.json, YA poori series ka folder "
                                     "(saari catalog.json merge ho jayengi)")
     pl.add_argument("--out", default="", help="shot-list JSON kahan likhni hai")
+    pl.add_argument("--scope", default="",
+                    help="poore script ko ek episode/title tak seemit karo "
+                         "(jaise S04E01) — single-scene essay ke liye")
     pl.set_defaults(func=cmd_plan)
 
     go = sub.add_parser("gold", parents=[common],
