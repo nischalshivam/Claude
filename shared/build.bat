@@ -49,12 +49,19 @@ set AUD=%AUD:"=%
 if not defined AUD ( echo   Koi audio nahi diya. & pause & exit /b 1 )
 
 echo.
-echo   4) (Optional) Sirf ek episode tak seemit? (jaise S04E01)
+echo   4) (Recommended) Clean narration (poori) script ka path — accurate
+echo      timing ke liye. Skip karne ke liye Enter dabao:
+set /p "NARR=  Clean narration: "
+set NARR=%NARR:"=%
+
+echo.
+echo   5) (Optional) Sirf ek episode tak seemit? (jaise S04E01)
 echo      Poore essay ke liye khaali chhod ke Enter dabao:
 set /p "SCOPE=  Scope: "
 set SCOPE=%SCOPE:"=%
 
 set "ARGS=makevideo "%SCRIPT%" "%CAT%" "%AUD%""
+if defined NARR if not "!NARR!"=="" set "ARGS=!ARGS! --narration "!NARR!""
 if defined SCOPE if not "!SCOPE!"=="" set "ARGS=!ARGS! --scope "!SCOPE!""
 
 echo.

@@ -123,23 +123,52 @@ def _title(beats: list) -> str:
 
 def make_video(script_beats: list, library: dict, audio: str, out_dir: str,
                total_seconds: float = 0.0, scope: str = "", pace: str = "normal",
-               log=lambda *a: None) -> str:
+               clean: str = "", log=lambda *a: None) -> str:
     """Whole of Stage 3: cut the shots, time them to the voiceover, render.
 
-    Returns the finished mp4 path. Reuses `timeline` (pacing) and `render`
+    Returns the finished mp4 path. Reuses `timeline` (pacing), `narration`
+    (aligning each beat to the second its line is actually spoken) and `render`
     (cut→concat→audio) unchanged; only the manifest in between is new.
+
+    `clean` is the full narration text. It matters because a genspark script
+    covers only the visual beats — maybe a third of what is spoken — so the
+    beats have to be located inside the FULL narration first, then that
+    narration aligned to the audio. Without it (or without a transcriber) the
+    timing falls back to an even-read estimate, which still renders but drifts
+    wherever the narrator paused.
     """
-    from . import timeline, render
+    from . import timeline, render, narration, probe
     os.makedirs(out_dir, exist_ok=True)
+
+    if not total_seconds and os.path.isfile(audio):
+        try:
+            total_seconds = probe.probe(audio).duration
+        except Exception:
+            total_seconds = 0.0
 
     log("  cutting matched shots...")
     build_manifest(script_beats, library, out_dir, scope=scope, log=log)
     manifest = timeline.load_manifest(out_dir)
 
-    log("  timing shots to the voiceover...")
+    # Word-sync: place each beat where its line is actually spoken. Graceful —
+    # no transcriber or a failed listen just leaves `spans` None and the
+    # timeline uses its even-read estimate.
+    spans = None
+    log("  voiceover ke saath timing align kar rahe hain...")
+    try:
+        heard = narration.align_audio(script_beats, audio,
+                                      total_seconds=total_seconds, clean=clean,
+                                      log=log)
+        log(heard.summary())
+        if heard.ok:
+            spans = heard.spans
+    except Exception as exc:
+        log(f"      alignment skip ({exc}) — even-read estimate use hoga")
+
     tl = timeline.plan(script_beats, manifest, total_seconds=total_seconds,
-                       audio=audio, pace=pace)
+                       audio=audio, pace=pace, spans=spans)
     timeline.write(tl, out_dir)
+    log(tl.summary())
 
     log("  rendering final video...")
     res = render.render_folder(out_dir, audio=audio, log=log)

@@ -644,11 +644,18 @@ def cmd_makevideo(a):
               "nahi. Stage 3 shots + timings ke liye genspark chahiye.")
         return 1
 
+    clean = ""
+    if a.narration and os.path.isfile(a.narration):
+        from . import narration as narr
+        clean = narr.read_clean(a.narration)
+    elif a.narration:
+        print(f"  (narration file nahi mili, timing estimate se hogi: {a.narration})")
+
     out_dir = a.out or os.path.join(os.path.dirname(os.path.abspath(a.audio)),
                                     "video_build")
     print(f"  build folder: {out_dir}")
     video = assemble.make_video(beats, library, a.audio, out_dir,
-                                scope=a.scope, pace=a.pace, log=print)
+                                scope=a.scope, pace=a.pace, clean=clean, log=print)
     if os.path.isfile(video):
         print(f"\n  ✓ video ban gaya:  {video}")
     else:
@@ -1172,6 +1179,8 @@ def main(argv=None):
     mv.add_argument("script", help="genspark (visual) script")
     mv.add_argument("catalog", help="catalog.json ya series folder")
     mv.add_argument("audio", help="voiceover / narration audio (mp3/wav)")
+    mv.add_argument("--narration", default="",
+                    help="clean narration (poori) script — accurate timing ke liye")
     mv.add_argument("--out", default="", help="build folder (default: audio ke paas)")
     mv.add_argument("--scope", default="", help="ek episode tak seemit (jaise S04E01)")
     mv.add_argument("--pace", default="normal", help="normal | fast | cinematic")
