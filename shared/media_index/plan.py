@@ -83,11 +83,12 @@ def dialogue_anchor(library: dict, line: str, limit: int = 5) -> list:
     q = _norm(line)
     if len(q) < MIN_ANCHOR_CHARS:
         return []
-    hits = []
-    for shot in library.values():
-        d = _norm(shot.dialogue)
-        if d and (q in d or d in q):
-            hits.append(shot)
+    # The script's line must appear INSIDE the shot's subtitle text (q in d).
+    # The reverse (d in q) was a bug: a shot whose whole dialogue is a short
+    # fragment — "nothing.", "you" — is a substring of almost any longer line,
+    # so it matched the wrong moment by coincidence.
+    hits = [s for s in library.values()
+            if _norm(s.dialogue) and q in _norm(s.dialogue)]
     return sorted(hits, key=lambda s: s.start)[:limit]
 
 
@@ -148,19 +149,27 @@ def match(request: Request, library: dict, scope: str = "") -> Match:
     series, because it stops a box-cutter line from matching the word
     "box cutter" three episodes away.
     """
-    pool = scoped(library, scope or request.source)
-    if not pool:                              # scope named nothing we have
-        pool = library
-    if request.scene_range:                   # confine to the scene's window
-        pool = windowed(pool, request.scene_range)
+    ep_pool = scoped(library, scope or request.source)
+    if not ep_pool:                           # scope named nothing we have
+        ep_pool = library
 
+    # Dialogue is the most precise locator there is — the exact subtitle
+    # timestamp. It searches the whole EPISODE, never the guessed scene window:
+    # a genspark `scene_range` is the model's estimate ("range_confidence:
+    # medium"), and letting a wrong guess window out the real line is what put
+    # "You kill me, you have nothing" at 32:48 instead of the 10:14 it is
+    # actually spoken. The guess must never override the fact.
     if request.dialogue:
-        anchored = dialogue_anchor(pool, request.dialogue)
+        anchored = dialogue_anchor(ep_pool, request.dialogue)
         if anchored:
             top = anchored[0]
             return Match(shot=top, method="dialogue",
                          why=f'line at {top.start:.0f}s: "{request.dialogue[:48]}"')
 
+    # Only description — which has no precise locator — leans on the scene
+    # window to narrow an episode down to the right minutes.
+    pool = (windowed(ep_pool, request.scene_range)
+            if request.scene_range else ep_pool)
     hits = catalog.search(pool, f"{request.visual} {request.dialogue}",
                           character=request.character)
     if hits:
