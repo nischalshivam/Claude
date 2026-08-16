@@ -40,49 +40,77 @@ def _grab_clip(cut_clip, source_file, start, want_s, out):
         return False
 
 
-def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
-                   cut_clip=None, extract_frame=None,
-                   log=lambda *a: None) -> dict:
-    """Cut every matched shot and return the manifest the timeline consumes.
+# How many ranked candidates to visually check before giving a shot up.
+MAX_VERIFY_TRIES = 4
+# A confident "no" below this is ignored — the model must be fairly sure to
+# reject, so a hesitant verifier never throws away a decent shot.
+REJECT_BELOW = 0.55
 
-    `cut_clip(path, start, end, out)` and `extract_frame(path, t, out, width)`
-    are injected (default to the real ffmpeg ones) so this is testable offline.
-    Assets land in `out_dir/scene_NNN/`, exactly where `render` looks for them.
+
+def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
+                   verify: bool = True, cut_clip=None, extract_frame=None,
+                   grab_frames=None, confirm=None, log=lambda *a: None) -> dict:
+    """Cut a verified shot for each request and return the manifest.
+
+    For every shot the script wants, the ranked candidates are checked in
+    order: a few frames of a candidate are shown to Gemini, which says whether
+    the shot actually depicts the described moment. The FIRST candidate it
+    confirms is cut; if none pass, the shot becomes a gap (NEEDS VISUAL) rather
+    than a confident wrong clip. This is the friend's brief's second pass — the
+    thing that keeps the video accurate rather than approximate.
+
+    Everything external is injected (`cut_clip`, `extract_frame`, `grab_frames`
+    for verification, `confirm` = the model call) so the whole loop is tested
+    offline. Verification fails OPEN: an unconfigured or unreachable model
+    accepts the top candidate, so the tool still builds, just unverified.
     """
     if cut_clip is None or extract_frame is None:
         from .cutter import cut_clip as _cc, extract_frame as _ef
         cut_clip = cut_clip or _cc
         extract_frame = extract_frame or _ef
+    if grab_frames is None:
+        grab_frames = _real_frames
+    if confirm is None:
+        from . import gemini
+        confirm = gemini.confirm_shot
 
-    pairs, stats = plan_mod.plan(beats, library, scope=scope)
-    log(f"  {stats.summary()}")
+    verify_on = verify and _verifier_ready(confirm)
+    log(f"  visual verify: {'ON (Gemini)' if verify_on else 'OFF'}")
 
     by_beat = defaultdict(list)
-    for req, m in pairs:
-        by_beat[req.beat].append((req, m))
+    for req in plan_mod.requests_from_beats(beats):
+        by_beat[req.beat].append(req)
 
     scenes = []
-    cut, skipped = 0, 0
+    cut, gap, rejected = 0, 0, 0
     for beat in beats:
         bn = beat.get("beat") or 0
         scene_dir = os.path.join(out_dir, f"scene_{bn:03d}")
         os.makedirs(scene_dir, exist_ok=True)
         assets = []
-        for idx, (req, m) in enumerate(by_beat.get(bn, [])):
-            if not m.placed:
-                skipped += 1
+        for idx, req in enumerate(by_beat.get(bn, [])):
+            cands = plan_mod.candidates(req, library, scope=scope)
+            chosen = None
+            for cand in cands[:MAX_VERIFY_TRIES]:
+                if verify_on:
+                    frames = _try(grab_frames, cand.shot.file,
+                                  cand.shot.start, cand.shot.end) or []
+                    ok, conf, why = confirm(req.visual, req.characters, frames)
+                    if not ok and conf >= REJECT_BELOW:
+                        rejected += 1
+                        continue
+                chosen = cand
+                break
+            if chosen is None:
+                gap += 1
                 continue
-            shot = m.shot
+
+            shot = chosen.shot
             if req.kind == "still":
                 name = f"still_{idx:02d}.jpg"
                 mid = (shot.start + shot.end) / 2.0
-                ok = False
-                try:
-                    extract_frame(shot.file, mid, os.path.join(scene_dir, name),
-                                  STILL_WIDTH)
-                    ok = True
-                except Exception:
-                    ok = False
+                ok = _try(extract_frame, shot.file, mid,
+                          os.path.join(scene_dir, name), STILL_WIDTH) is not None
                 kind = "image"
             else:
                 name = f"clip_{idx:02d}.mp4"
@@ -91,26 +119,51 @@ def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
                                 os.path.join(scene_dir, name))
                 kind = "video"
             if not ok:
-                skipped += 1
+                gap += 1
                 continue
             assets.append({
                 "file": name, "kind": kind, "source": shot.source,
                 "source_start": round(shot.start, 2),
-                "placed_by": m.method, "confidence": m.why[:60]})
+                "placed_by": chosen.method, "confidence": chosen.why[:60]})
             cut += 1
-        scenes.append({
-            "scene": bn, "narration": beat.get("narration", ""),
-            "assets": assets})
+        scenes.append({"scene": bn, "narration": beat.get("narration", ""),
+                       "assets": assets})
         if bn % 5 == 0 or bn == (beats[-1].get("beat") if beats else 0):
-            log(f"      scene {bn}: {len(assets)} asset(s) cut")
+            log(f"      scene {bn}: {len(assets)} verified asset(s)")
 
     manifest = {"video": _title(beats), "scenes": scenes,
-                "cut": cut, "skipped": skipped}
+                "cut": cut, "gap": gap, "rejected": rejected}
     with open(os.path.join(out_dir, "manifest.json"), "w",
               encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
-    log(f"  {cut} shots cut, {skipped} skipped  →  {out_dir}")
+    log(f"  {cut} shots cut · {rejected} rejected by verify · {gap} left as gaps")
     return manifest
+
+
+def _try(fn, *args):
+    try:
+        return fn(*args) or True
+    except Exception:
+        return None
+
+
+def _verifier_ready(confirm) -> bool:
+    """Only turn verification on when the model is actually reachable, so a
+    build never grinds through 300 failing calls."""
+    try:
+        from . import gemini
+        if confirm is not gemini.confirm_shot:
+            return True                       # an injected verifier (tests)
+        ok, _why = gemini.available()
+        return ok
+    except Exception:
+        return False
+
+
+def _real_frames(path: str, start: float, end: float, n: int = 2) -> list:
+    """A couple of JPEG frames of a window, for the verifier."""
+    from . import catalog
+    return catalog.real_grab(path, n=n)(start, end)
 
 
 def _title(beats: list) -> str:
@@ -123,7 +176,8 @@ def _title(beats: list) -> str:
 
 def make_video(script_beats: list, library: dict, audio: str, out_dir: str,
                total_seconds: float = 0.0, scope: str = "", pace: str = "normal",
-               clean: str = "", log=lambda *a: None) -> str:
+               clean: str = "", verify: bool = True,
+               log=lambda *a: None) -> str:
     """Whole of Stage 3: cut the shots, time them to the voiceover, render.
 
     Returns the finished mp4 path. Reuses `timeline` (pacing), `narration`
@@ -146,8 +200,9 @@ def make_video(script_beats: list, library: dict, audio: str, out_dir: str,
         except Exception:
             total_seconds = 0.0
 
-    log("  cutting matched shots...")
-    build_manifest(script_beats, library, out_dir, scope=scope, log=log)
+    log("  cutting + verifying matched shots...")
+    build_manifest(script_beats, library, out_dir, scope=scope, verify=verify,
+                   log=log)
     manifest = timeline.load_manifest(out_dir)
 
     # Word-sync: place each beat where its line is actually spoken. Graceful —

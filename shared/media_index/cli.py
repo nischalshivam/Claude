@@ -655,7 +655,8 @@ def cmd_makevideo(a):
                                     "video_build")
     print(f"  build folder: {out_dir}")
     video = assemble.make_video(beats, library, a.audio, out_dir,
-                                scope=a.scope, pace=a.pace, clean=clean, log=print)
+                                scope=a.scope, pace=a.pace, clean=clean,
+                                verify=not a.no_verify, log=print)
     if os.path.isfile(video):
         print(f"\n  ✓ video ban gaya:  {video}")
     else:
@@ -1184,6 +1185,8 @@ def main(argv=None):
     mv.add_argument("--out", default="", help="build folder (default: audio ke paas)")
     mv.add_argument("--scope", default="", help="ek episode tak seemit (jaise S04E01)")
     mv.add_argument("--pace", default="normal", help="normal | fast | cinematic")
+    mv.add_argument("--no-verify", action="store_true",
+                    help="Gemini se har clip verify mat karo (tez, par kam accurate)")
     mv.set_defaults(func=cmd_makevideo)
 
     go = sub.add_parser("gold", parents=[common],

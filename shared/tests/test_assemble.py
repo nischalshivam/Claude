@@ -49,15 +49,16 @@ class TestBuildManifest(unittest.TestCase):
                  "exact_dialogue": "How's it coming?"}]},
         ]
 
+    def _yes(self, desc, chars, frames):
+        return True, 0.9, "looks right"
+
     def test_clips_and_stills_are_cut_into_scene_folders(self):
         m = assemble.build_manifest(self._beats(), _lib(), self.tmp,
                                     cut_clip=self._cut, extract_frame=self._frame,
-                                    log=lambda *a: None)
+                                    verify=False, log=lambda *a: None)
         self.assertEqual(len(m["scenes"]), 2)
-        # a clip is a "video" asset, a still is an "image" asset
         self.assertEqual(m["scenes"][0]["assets"][0]["kind"], "video")
         self.assertEqual(m["scenes"][1]["assets"][0]["kind"], "image")
-        # files land in scene_NNN folders
         self.assertTrue(os.path.isfile(
             os.path.join(self.tmp, "scene_001", "clip_00.mp4")))
         self.assertTrue(os.path.isfile(
@@ -65,27 +66,50 @@ class TestBuildManifest(unittest.TestCase):
 
     def test_a_clip_is_cut_a_little_longer_than_the_target(self):
         assemble.build_manifest(self._beats(), _lib(), self.tmp,
-                                cut_clip=self._cut, extract_frame=self._frame)
+                                cut_clip=self._cut, extract_frame=self._frame,
+                                verify=False)
         path, s, e = self.cuts[0]
-        self.assertGreaterEqual(e - s, assemble.MIN_CLIP_S)   # never too short
+        self.assertGreaterEqual(e - s, assemble.MIN_CLIP_S)
 
     def test_manifest_is_written_and_reloadable_by_the_timeline(self):
         assemble.build_manifest(self._beats(), _lib(), self.tmp,
-                                cut_clip=self._cut, extract_frame=self._frame)
+                                cut_clip=self._cut, extract_frame=self._frame,
+                                verify=False)
         from media_index import timeline
         loaded = timeline.load_manifest(self.tmp)
         self.assertEqual(len(loaded["scenes"]), 2)
         self.assertEqual(loaded["scenes"][0]["assets"][0]["source"],
                          "Breaking Bad S04E01")
 
-    def test_a_failed_cut_is_skipped_not_fatal(self):
+    def test_a_failed_cut_becomes_a_gap_not_a_crash(self):
         def boom(*a):
             raise RuntimeError("ffmpeg gone")
         m = assemble.build_manifest(self._beats(), _lib(), self.tmp,
                                     cut_clip=boom, extract_frame=boom,
-                                    log=lambda *a: None)
+                                    verify=False, log=lambda *a: None)
         self.assertEqual(m["cut"], 0)
-        self.assertEqual(m["skipped"], 2)               # both skipped, no crash
+        self.assertEqual(m["gap"], 2)
+
+    def test_a_verifier_that_says_no_rejects_the_shot(self):
+        # confirm always rejects, confidently -> nothing survives -> all gaps
+        def always_no(desc, chars, frames):
+            return False, 0.9, "wrong"
+        m = assemble.build_manifest(
+            self._beats(), _lib(), self.tmp, cut_clip=self._cut,
+            extract_frame=self._frame, grab_frames=lambda *a: [b"x"],
+            confirm=always_no, log=lambda *a: None)
+        self.assertEqual(m["cut"], 0)
+        self.assertGreater(m["rejected"], 0)
+        self.assertEqual(m["gap"], 2)
+
+    def test_the_first_accepted_candidate_is_used(self):
+        # accept everything -> both shots cut
+        m = assemble.build_manifest(
+            self._beats(), _lib(), self.tmp, cut_clip=self._cut,
+            extract_frame=self._frame, grab_frames=lambda *a: [b"x"],
+            confirm=self._yes, log=lambda *a: None)
+        self.assertEqual(m["cut"], 2)
+        self.assertEqual(m["rejected"], 0)
 
 
 if __name__ == "__main__":

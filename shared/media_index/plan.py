@@ -182,6 +182,36 @@ def match(request: Request, library: dict, scope: str = "") -> Match:
     return Match(method="none", why="koi match nahi — NEEDS VISUAL card")
 
 
+def candidates(request: Request, library: dict, scope: str = "",
+               limit: int = 8) -> list:
+    """A RANKED list of Matches for one request, best first.
+
+    `match` returns only the top pick; a visual verifier needs runners-up, so
+    that when the first candidate turns out not to show what the script asked
+    for, there is a second and a third to check before giving up. Dialogue
+    anchors come first (a precise locator), then description hits.
+    """
+    ep_pool = scoped(library, scope or request.source) or library
+    out, seen = [], set()
+
+    def add(shot, method, why):
+        if shot.id not in seen:
+            seen.add(shot.id)
+            out.append(Match(shot=shot, method=method, why=why))
+
+    if request.dialogue:
+        for s in dialogue_anchor(ep_pool, request.dialogue, limit=3):
+            add(s, "dialogue", f'line at {s.start:.0f}s: "{request.dialogue[:40]}"')
+
+    pool = (windowed(ep_pool, request.scene_range)
+            if request.scene_range else ep_pool)
+    for s in catalog.search(pool, f"{request.visual} {request.dialogue}",
+                            character=request.character, limit=limit):
+        add(s, "description", f"visual+character match ({request.character})"
+            if request.character else "visual match")
+    return out
+
+
 def requests_from_beats(beats: list) -> list:
     """Turn a visual (genspark) script's shots into shot-requests.
 

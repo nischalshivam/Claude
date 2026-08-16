@@ -338,6 +338,70 @@ def ping(cfg: Config, with_image: bool = False) -> tuple:
     return False, detail
 
 
+def confirm_messages(description: str, characters: list, frames: list) -> list:
+    """Ask, yes/no, whether these frames show what the script described."""
+    who = ", ".join(characters) if characters else ""
+    rules = (
+        "You are quality-checking footage for a video essay. You are shown a "
+        "few frames from ONE candidate shot. Decide whether this shot could "
+        "honestly play under the described moment.\n\n"
+        "Answer ONLY strict JSON:\n"
+        '{"match": true|false, "confidence": <0..1>, "reason": "<short>"}\n\n'
+        "Rules:\n"
+        "- match=true only if the frames plausibly show the described action/"
+        "subject. A blurry frame, a random hand, a text/logo card, an empty "
+        "room, or the wrong scene is match=false.\n"
+        "- If specific people are required, they must be plausibly the ones "
+        "on screen; a clearly different person is match=false.\n"
+        "- Judge only what is visible. When unsure, match=false."
+    )
+    ask = f"Described moment: {description}"
+    if who:
+        ask += f"\nMust plausibly show: {who}"
+    content = [{"type": "text", "text": ask}]
+    for i, jpeg in enumerate(frames, 1):
+        content.append({"type": "text", "text": f"Frame {i}:"})
+        content.append({"type": "image_url",
+                        "image_url": {"url": _data_uri(jpeg)}})
+    return [{"role": "system", "content": rules},
+            {"role": "user", "content": content}]
+
+
+def confirm_shot(description: str, characters: list, frames: list,
+                 cfg: Config | None = None) -> tuple:
+    """(matches, confidence, reason). Never raises.
+
+    The visual verification pass a friend's brief calls the thing that keeps
+    the final videos accurate rather than approximate: before a clip is used,
+    a second look confirms it actually shows what the line is about. Fails
+    OPEN by design — not configured, network error, or an unparseable answer
+    returns (True, 0.0, ...) so a verifier that is down never blocks a build;
+    only a clear, confident "no" rejects a shot.
+    """
+    if not frames:
+        return True, 0.0, "no frames to check"
+    cfg = cfg or config()
+    if not cfg.ok:
+        return True, 0.0, "gemini not configured"
+    text, detail = call(cfg, confirm_messages(description, characters, frames))
+    if text is None:
+        return True, 0.0, f"verifier unreachable ({detail[:40]})"
+    raw = text.strip()
+    a, b = raw.find("{"), raw.rfind("}")
+    if a < 0 or b <= a:
+        return True, 0.0, "unparseable"
+    try:
+        obj = json.loads(raw[a:b + 1])
+    except (ValueError, TypeError):
+        return True, 0.0, "unparseable"
+    match = bool(obj.get("match", True))
+    try:
+        conf = float(obj.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    return match, conf, str(obj.get("reason") or "")[:120]
+
+
 def verify(intent: str, frames: list, must_be_visible=None,
            cfg: Config | None = None) -> Choice:
     """Ask the model which frame is the moment. Never raises.
