@@ -172,11 +172,27 @@ def match(request: Request, library: dict, scope: str = "") -> Match:
 
 
 def requests_from_beats(beats: list) -> list:
-    """Turn a visual (genspark) script's shots into shot-requests."""
+    """Turn a visual (genspark) script's shots into shot-requests.
+
+    A genspark run marks its `scene_range` on the FIRST shot only; the rest of
+    the run belongs to the same scene but carries no range, so on its own each
+    of those shots would scope to the whole episode and drift. The range is
+    carried forward across shots of the same source until a new range appears
+    (a new scene) or the source changes (a new episode) — so every shot of a
+    scene is pinned to that scene's window, not just its opening frame.
+    """
     out = []
+    cur_source, cur_range = "", ""
     for b in beats:
         bn = b.get("beat") or 0
         for shot in (b.get("shots") or []):
+            src = str(shot.get("season_episode")
+                      or shot.get("source") or "").strip()
+            rng = str(shot.get("scene_range") or "").strip()
+            if src != cur_source:             # new episode: forget the window
+                cur_source, cur_range = src, ""
+            if rng:                           # new scene: adopt its window
+                cur_range = rng
             out.append(Request(
                 beat=bn,
                 visual=str(shot.get("visual") or ""),
@@ -184,9 +200,8 @@ def requests_from_beats(beats: list) -> list:
                     shot.get("characters") or shot.get("people")),
                 dialogue=str(shot.get("exact_dialogue")
                              or shot.get("dialogue") or "").strip(),
-                source=str(shot.get("season_episode")
-                           or shot.get("source") or "").strip(),
-                scene_range=str(shot.get("scene_range") or "").strip()))
+                source=src,
+                scene_range=rng or cur_range))
     return out
 
 

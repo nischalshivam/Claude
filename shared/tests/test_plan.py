@@ -107,6 +107,23 @@ class TestPlanWholeScript(unittest.TestCase):
         self.assertEqual(stats.placed, 2)
         self.assertAlmostEqual(stats.coverage, 2 / 3)
 
+    def test_scene_range_carries_across_a_run_but_resets_on_new_episode(self):
+        beats = [
+            {"beat": 1, "shots": [
+                {"visual": "a", "season_episode": "S04E01",
+                 "scene_range": "27:00-35:00"},
+                {"visual": "b", "season_episode": "S04E01"},          # inherits
+                {"visual": "c", "season_episode": "S04E01",
+                 "scene_range": "00:00-03:30"}]},                     # new scene
+            {"beat": 2, "shots": [
+                {"visual": "d", "season_episode": "S03E13"}]},        # new episode
+        ]
+        reqs = plan.requests_from_beats(beats)
+        self.assertEqual(reqs[0].scene_range, "27:00-35:00")
+        self.assertEqual(reqs[1].scene_range, "27:00-35:00")          # carried
+        self.assertEqual(reqs[2].scene_range, "00:00-03:30")          # replaced
+        self.assertEqual(reqs[3].scene_range, "")                     # reset
+
     def test_a_stringified_character_field_is_parsed(self):
         reqs = plan.requests_from_beats(
             [{"beat": 1, "shots": [{"visual": "x", "characters": "['Arthur']"}]}])
