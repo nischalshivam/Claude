@@ -48,6 +48,8 @@ class Request:
     dialogue: str = ""            # a line the script says is spoken here
     source: str = ""              # which title/episode the shot belongs to
     scene_range: str = ""         # e.g. "40:00-45:00" — confines within source
+    kind: str = "clip"            # clip (moving) | still (frozen frame)
+    duration: float = 0.0         # duration_target_sec the script asked for
 
     @property
     def character(self) -> str:
@@ -201,7 +203,9 @@ def requests_from_beats(beats: list) -> list:
                 dialogue=str(shot.get("exact_dialogue")
                              or shot.get("dialogue") or "").strip(),
                 source=src,
-                scene_range=rng or cur_range))
+                scene_range=rng or cur_range,
+                kind=str(shot.get("kind") or "clip").strip().lower(),
+                duration=float(shot.get("duration_target_sec") or 0) or 0.0))
     return out
 
 

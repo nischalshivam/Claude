@@ -615,6 +615,47 @@ def cmd_plan(a):
     return 0
 
 
+def cmd_makevideo(a):
+    """Stage 3: script + catalogue + voiceover -> a finished video.
+
+    Cuts the matched shots out of the source episodes, times them to the
+    voiceover, and renders the mp4 — reusing the existing timeline + render
+    pipeline. Runs where the footage lives (needs ffmpeg + the source files).
+    """
+    from . import jobs, catalog, assemble                  # noqa: PLC0415
+
+    if not os.path.isfile(a.script):
+        print(f"  script nahi mila: {a.script}")
+        return 1
+    if not (os.path.isfile(a.catalog) or os.path.isdir(a.catalog)):
+        print(f"  catalogue nahi mila: {a.catalog}")
+        return 1
+    if not os.path.isfile(a.audio):
+        print(f"  voiceover (audio) nahi mila: {a.audio}")
+        return 1
+    library = catalog.load_library(a.catalog)
+    if not library:
+        print(f"  is jagah koi catalog.json nahi mili: {a.catalog}")
+        return 1
+    try:
+        beats = jobs.read_beats(a.script)
+    except Exception:
+        print("  ye ek genspark (visual) script honi chahiye — clean narration "
+              "nahi. Stage 3 shots + timings ke liye genspark chahiye.")
+        return 1
+
+    out_dir = a.out or os.path.join(os.path.dirname(os.path.abspath(a.audio)),
+                                    "video_build")
+    print(f"  build folder: {out_dir}")
+    video = assemble.make_video(beats, library, a.audio, out_dir,
+                                scope=a.scope, pace=a.pace, log=print)
+    if os.path.isfile(video):
+        print(f"\n  ✓ video ban gaya:  {video}")
+    else:
+        print("\n  video nahi bana — upar ka render report dekho")
+    return 0
+
+
 def cmd_look(a):
     """Index what the footage LOOKS like, so shots can be checked, not guessed.
 
@@ -1125,6 +1166,16 @@ def main(argv=None):
                     help="poore script ko ek episode/title tak seemit karo "
                          "(jaise S04E01) — single-scene essay ke liye")
     pl.set_defaults(func=cmd_plan)
+
+    mv = sub.add_parser("makevideo", parents=[common],
+                        help="Stage 3: script + catalog + voiceover se video banao")
+    mv.add_argument("script", help="genspark (visual) script")
+    mv.add_argument("catalog", help="catalog.json ya series folder")
+    mv.add_argument("audio", help="voiceover / narration audio (mp3/wav)")
+    mv.add_argument("--out", default="", help="build folder (default: audio ke paas)")
+    mv.add_argument("--scope", default="", help="ek episode tak seemit (jaise S04E01)")
+    mv.add_argument("--pace", default="normal", help="normal | fast | cinematic")
+    mv.set_defaults(func=cmd_makevideo)
 
     go = sub.add_parser("gold", parents=[common],
                         help="ek build ko haath se label karke asli accuracy naapo")
