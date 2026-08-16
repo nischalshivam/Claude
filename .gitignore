@@ -1,2 +1,35 @@
+# Rendered video and audio never belong in version control. Eight sample
+# MP4s once sat in auto_editor/sample_output and made this repository 169 MB,
+# 166 MB of which was those files. update.bat downloads the branch as a zip,
+# so every single update pulled all of them again — the reason updating took
+# hours instead of seconds. They are still in the history if one is needed:
+#
+#   git show HEAD~1:auto_editor/sample_output/pro_demo.mp4 > pro_demo.mp4
+#
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.wav
+*.mp3
+*.m4a
+
+# Built by the tool, per machine
+library.db
+library.db-wal
+library.db-shm
+settings.txt
+
+# The picture model, and the vectors it produces. Both are large, both are
+# reproducible from the footage on the machine that holds it, and neither
+# means anything on another machine — the weights are a 1 GB download and the
+# vectors are ~4 MB per episode. Tracking either would put this repository
+# straight back into the state that made update.bat take hours.
+models/
+*_visual/
+proof/
+built/
+out/
 __pycache__/
 *.pyc
