@@ -255,7 +255,9 @@ def canonicalize(names: list, canon: dict) -> list:
     """
     out, seen = [], set()
     for raw in names:
-        key = re.sub(r"\s+", " ", str(raw).strip().lower())
+        # Trailing punctuation ("Walt Jr." vs "Walt Jr") must not split one
+        # person into two catalogue entries, so it is stripped for the lookup.
+        key = re.sub(r"\s+", " ", str(raw).strip().lower()).strip(" .,-'\"")
         name = canon.get(key, raw)
         if name.lower() not in seen:
             out.append(name)
