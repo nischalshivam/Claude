@@ -31,6 +31,54 @@ MIN_CLIP_S = 5.0
 STILL_WIDTH = 1920
 
 
+_IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def load_refs(cast_dir: str, per: int = 4) -> dict:
+    """{character_name_lower: [photo_bytes, ...]} from a cast folder.
+
+    Layout is one subfolder per character — `cast/Victor/1.jpg`,
+    `cast/Hank/1.jpg` — the same shape the tool's cast feature already uses.
+    These reference photos are what let the verifier tell one character from
+    another instead of guessing.
+    """
+    refs = {}
+    if not cast_dir or not os.path.isdir(cast_dir):
+        return refs
+    for name in sorted(os.listdir(cast_dir)):
+        d = os.path.join(cast_dir, name)
+        if not os.path.isdir(d):
+            continue
+        photos = []
+        for f in sorted(os.listdir(d)):
+            if f.lower().endswith(_IMG_EXT):
+                try:
+                    with open(os.path.join(d, f), "rb") as fh:
+                        photos.append(fh.read())
+                except OSError:
+                    pass
+                if len(photos) >= per:
+                    break
+        if photos:
+            refs[name.strip().lower()] = photos
+    return refs
+
+
+def _refs_for(characters: list, refs: dict) -> dict:
+    """The reference photos for the people a shot requires, by loose name
+    match ('Gus' finds the 'Gus Fring' folder and vice-versa)."""
+    if not refs or not characters:
+        return {}
+    out = {}
+    for c in characters:
+        key = c.strip().lower()
+        for name, photos in refs.items():
+            if key and (key in name or name in key):
+                out[c] = photos
+                break
+    return out
+
+
 def _grab_clip(cut_clip, source_file, start, want_s, out):
     """Cut [start, start+want_s] of the source into `out`. Returns True/ok."""
     try:
@@ -48,7 +96,8 @@ REJECT_BELOW = 0.55
 
 
 def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
-                   verify: bool = True, cut_clip=None, extract_frame=None,
+                   verify: bool = True, refs: dict | None = None,
+                   cut_clip=None, extract_frame=None,
                    grab_frames=None, confirm=None, log=lambda *a: None) -> dict:
     """Cut a verified shot for each request and return the manifest.
 
@@ -74,8 +123,11 @@ def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
         from . import gemini
         confirm = gemini.confirm_shot
 
+    refs = refs or {}
     verify_on = verify and _verifier_ready(confirm)
-    log(f"  visual verify: {'ON (Gemini)' if verify_on else 'OFF'}")
+    log(f"  visual verify: {'ON (Gemini)' if verify_on else 'OFF'}"
+        + (f" · {len(refs)} character reference(s)" if refs else
+           " · NO reference photos (identity is a guess — add a cast folder)"))
 
     by_beat = defaultdict(list)
     for req in plan_mod.requests_from_beats(beats):
@@ -95,7 +147,8 @@ def build_manifest(beats: list, library: dict, out_dir: str, scope: str = "",
                 if verify_on:
                     frames = _try(grab_frames, cand.shot.file,
                                   cand.shot.start, cand.shot.end) or []
-                    ok, conf, why = confirm(req.visual, req.characters, frames)
+                    ok, conf, why = confirm(req.visual, req.characters, frames,
+                                            _refs_for(req.characters, refs))
                     if not ok and conf >= REJECT_BELOW:
                         rejected += 1
                         continue
@@ -176,7 +229,7 @@ def _title(beats: list) -> str:
 
 def make_video(script_beats: list, library: dict, audio: str, out_dir: str,
                total_seconds: float = 0.0, scope: str = "", pace: str = "normal",
-               clean: str = "", verify: bool = True,
+               clean: str = "", verify: bool = True, cast_dir: str = "",
                log=lambda *a: None) -> str:
     """Whole of Stage 3: cut the shots, time them to the voiceover, render.
 
@@ -200,9 +253,12 @@ def make_video(script_beats: list, library: dict, audio: str, out_dir: str,
         except Exception:
             total_seconds = 0.0
 
+    refs = load_refs(cast_dir)
+    if cast_dir and not refs:
+        log(f"  (cast folder me koi character folder nahi mila: {cast_dir})")
     log("  cutting + verifying matched shots...")
     build_manifest(script_beats, library, out_dir, scope=scope, verify=verify,
-                   log=log)
+                   refs=refs, log=log)
     manifest = timeline.load_manifest(out_dir)
 
     # Word-sync: place each beat where its line is actually spoken. Graceful —

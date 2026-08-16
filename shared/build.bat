@@ -55,13 +55,21 @@ set /p "NARR=  Clean narration: "
 set NARR=%NARR:"=%
 
 echo.
-echo   5) (Optional) Sirf ek episode tak seemit? (jaise S04E01)
+echo   5) (IMPORTANT) Cast folder — har character ka subfolder + 5-8 reference
+echo      photos (jaise cast\Victor\1.jpg, cast\Hank\1.jpg). Isse tool sahi
+echo      character verify karta hai (Victor ko Hank se alag). Skip = Enter:
+set /p "CASTDIR=  Cast folder: "
+set CASTDIR=%CASTDIR:"=%
+
+echo.
+echo   6) (Optional) Sirf ek episode tak seemit? (jaise S04E01)
 echo      Poore essay ke liye khaali chhod ke Enter dabao:
 set /p "SCOPE=  Scope: "
 set SCOPE=%SCOPE:"=%
 
 set "ARGS=makevideo "%SCRIPT%" "%CAT%" "%AUD%""
 if defined NARR if not "!NARR!"=="" set "ARGS=!ARGS! --narration "!NARR!""
+if defined CASTDIR if not "!CASTDIR!"=="" set "ARGS=!ARGS! --cast "!CASTDIR!""
 if defined SCOPE if not "!SCOPE!"=="" set "ARGS=!ARGS! --scope "!SCOPE!""
 
 echo.

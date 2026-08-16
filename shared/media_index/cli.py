@@ -656,7 +656,8 @@ def cmd_makevideo(a):
     print(f"  build folder: {out_dir}")
     video = assemble.make_video(beats, library, a.audio, out_dir,
                                 scope=a.scope, pace=a.pace, clean=clean,
-                                verify=not a.no_verify, log=print)
+                                verify=not a.no_verify, cast_dir=a.cast,
+                                log=print)
     if os.path.isfile(video):
         print(f"\n  ✓ video ban gaya:  {video}")
     else:
@@ -1187,6 +1188,9 @@ def main(argv=None):
     mv.add_argument("--pace", default="normal", help="normal | fast | cinematic")
     mv.add_argument("--no-verify", action="store_true",
                     help="Gemini se har clip verify mat karo (tez, par kam accurate)")
+    mv.add_argument("--cast", default="",
+                    help="cast folder — har character ka subfolder + reference "
+                         "photos (identity reliably verify karne ke liye)")
     mv.set_defaults(func=cmd_makevideo)
 
     go = sub.add_parser("gold", parents=[common],

@@ -49,7 +49,7 @@ class TestBuildManifest(unittest.TestCase):
                  "exact_dialogue": "How's it coming?"}]},
         ]
 
-    def _yes(self, desc, chars, frames):
+    def _yes(self, desc, chars, frames, refs=None):
         return True, 0.9, "looks right"
 
     def test_clips_and_stills_are_cut_into_scene_folders(self):
@@ -92,7 +92,7 @@ class TestBuildManifest(unittest.TestCase):
 
     def test_a_verifier_that_says_no_rejects_the_shot(self):
         # confirm always rejects, confidently -> nothing survives -> all gaps
-        def always_no(desc, chars, frames):
+        def always_no(desc, chars, frames, refs=None):
             return False, 0.9, "wrong"
         m = assemble.build_manifest(
             self._beats(), _lib(), self.tmp, cut_clip=self._cut,
@@ -110,6 +110,45 @@ class TestBuildManifest(unittest.TestCase):
             confirm=self._yes, log=lambda *a: None)
         self.assertEqual(m["cut"], 2)
         self.assertEqual(m["rejected"], 0)
+
+    def test_reference_photos_for_the_required_character_are_passed(self):
+        seen = {}
+
+        def capture(desc, chars, frames, refs=None):
+            seen["refs"] = refs
+            return True, 0.9, "ok"
+        refs = {"gus fring": [b"\xff\xd8gusphoto"], "hank schrader": [b"\xff\xd8h"]}
+        assemble.build_manifest(
+            self._beats(), _lib(), self.tmp, cut_clip=self._cut,
+            extract_frame=self._frame, grab_frames=lambda *a: [b"x"],
+            confirm=capture, refs=refs, log=lambda *a: None)
+        # the beat requires "Gus" -> only Gus's photos reach the verifier
+        self.assertIn("Gus", seen["refs"])
+        self.assertNotIn("Hank Schrader", seen["refs"])
+
+
+class TestReferenceLoading(unittest.TestCase):
+
+    def test_load_refs_reads_one_folder_per_character(self):
+        room = tempfile.mkdtemp(prefix="cast_")
+        try:
+            for who in ("Victor", "Hank"):
+                d = os.path.join(room, who)
+                os.makedirs(d)
+                with open(os.path.join(d, "1.jpg"), "wb") as f:
+                    f.write(b"\xff\xd8jpeg")
+            refs = assemble.load_refs(room)
+            self.assertIn("victor", refs)
+            self.assertIn("hank", refs)
+            self.assertEqual(refs["victor"][0][:2], b"\xff\xd8")
+        finally:
+            shutil.rmtree(room, ignore_errors=True)
+
+    def test_refs_for_matches_a_loose_name(self):
+        refs = {"gus fring": [b"g"], "victor": [b"v"]}
+        got = assemble._refs_for(["Gus"], refs)
+        self.assertIn("Gus", got)
+        self.assertEqual(got["Gus"], [b"g"])
 
 
 if __name__ == "__main__":

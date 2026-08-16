@@ -175,6 +175,18 @@ def _data_uri(jpeg: bytes) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
 
 
+def _img_uri(data: bytes) -> str:
+    """A data URI whose mime is guessed from the bytes — reference photos come
+    as jpg/png/webp, and a jpeg label on a png makes some proxies reject it."""
+    if data[:8].startswith(b"\x89PNG"):
+        mime = "image/png"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        mime = "image/webp"
+    else:
+        mime = "image/jpeg"
+    return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+
+
 def build_messages(intent: str, must_be_visible: list, frames: list) -> list:
     """The prompt. One system rule, then the frames, numbered, then the ask.
 
@@ -338,29 +350,50 @@ def ping(cfg: Config, with_image: bool = False) -> tuple:
     return False, detail
 
 
-def confirm_messages(description: str, characters: list, frames: list) -> list:
-    """Ask, yes/no, whether these frames show what the script described."""
+def confirm_messages(description: str, characters: list, frames: list,
+                     refs: dict | None = None) -> list:
+    """Ask, yes/no, whether these frames show what the script described.
+
+    `refs` is {character_name: [reference_jpeg, ...]} — a few real photos of
+    each required person. Shown FIRST, they turn "is this plausibly Victor?"
+    (a guess) into "is the man in the frame the SAME man as these reference
+    photos?" (a comparison), which is the only way to tell Victor from Hank.
+    """
+    refs = refs or {}
     who = ", ".join(characters) if characters else ""
+    id_rule = (
+        "- IDENTITY: reference photos of the required people are given first, "
+        "labelled by name. match=true only if the SAME person is clearly in "
+        "the candidate frames. A different actor/character — even in the same "
+        "kind of scene — is match=false. This is the whole point of the check."
+        if refs else
+        "- If specific people are required, they must be plausibly on screen; "
+        "a clearly different person is match=false.")
     rules = (
-        "You are quality-checking footage for a video essay. You are shown a "
-        "few frames from ONE candidate shot. Decide whether this shot could "
-        "honestly play under the described moment.\n\n"
+        "You are quality-checking footage for a video essay. Decide whether "
+        "the CANDIDATE frames could honestly play under the described moment.\n\n"
         "Answer ONLY strict JSON:\n"
         '{"match": true|false, "confidence": <0..1>, "reason": "<short>"}\n\n'
         "Rules:\n"
         "- match=true only if the frames plausibly show the described action/"
         "subject. A blurry frame, a random hand, a text/logo card, an empty "
         "room, or the wrong scene is match=false.\n"
-        "- If specific people are required, they must be plausibly the ones "
-        "on screen; a clearly different person is match=false.\n"
+        f"{id_rule}\n"
         "- Judge only what is visible. When unsure, match=false."
     )
+    content = []
+    for name, imgs in refs.items():
+        for photo in imgs[:3]:
+            content.append({"type": "text", "text": f"Reference — {name}:"})
+            content.append({"type": "image_url",
+                            "image_url": {"url": _img_uri(photo)}})
     ask = f"Described moment: {description}"
     if who:
-        ask += f"\nMust plausibly show: {who}"
-    content = [{"type": "text", "text": ask}]
+        ask += f"\nMust be the SAME person(s) as the reference photos: {who}" \
+            if refs else f"\nMust plausibly show: {who}"
+    content.append({"type": "text", "text": ask})
     for i, jpeg in enumerate(frames, 1):
-        content.append({"type": "text", "text": f"Frame {i}:"})
+        content.append({"type": "text", "text": f"Candidate frame {i}:"})
         content.append({"type": "image_url",
                         "image_url": {"url": _data_uri(jpeg)}})
     return [{"role": "system", "content": rules},
@@ -368,22 +401,24 @@ def confirm_messages(description: str, characters: list, frames: list) -> list:
 
 
 def confirm_shot(description: str, characters: list, frames: list,
-                 cfg: Config | None = None) -> tuple:
+                 refs: dict | None = None, cfg: Config | None = None) -> tuple:
     """(matches, confidence, reason). Never raises.
 
     The visual verification pass a friend's brief calls the thing that keeps
     the final videos accurate rather than approximate: before a clip is used,
-    a second look confirms it actually shows what the line is about. Fails
-    OPEN by design — not configured, network error, or an unparseable answer
-    returns (True, 0.0, ...) so a verifier that is down never blocks a build;
-    only a clear, confident "no" rejects a shot.
+    a second look confirms it actually shows what the line is about — and, with
+    `refs` (reference photos per character), that it is the RIGHT person, not
+    just a plausible one. Fails OPEN by design — not configured, network error,
+    or an unparseable answer returns (True, 0.0, ...) so a verifier that is
+    down never blocks a build; only a clear, confident "no" rejects a shot.
     """
     if not frames:
         return True, 0.0, "no frames to check"
     cfg = cfg or config()
     if not cfg.ok:
         return True, 0.0, "gemini not configured"
-    text, detail = call(cfg, confirm_messages(description, characters, frames))
+    text, detail = call(cfg, confirm_messages(description, characters, frames,
+                                              refs=refs))
     if text is None:
         return True, 0.0, f"verifier unreachable ({detail[:40]})"
     raw = text.strip()
